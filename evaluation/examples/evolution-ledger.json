@@ -1,0 +1,12 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "EvolutionLedger",
+  "spec": {
+    "generations": 2,
+    "candidatesEvaluated": 4,
+    "updaterTokens": 40000,
+    "solverTokens": 80000,
+    "costUsd": 12,
+    "wallTimeMs": 900000
+  }
+}

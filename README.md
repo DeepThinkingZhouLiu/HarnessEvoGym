@@ -5,7 +5,7 @@ English | [中文](README.zh.md)
 **An adapter-based recursive self-improvement control plane for coding agents, with DeepSeek Harness as the first Solver and Updater runtime.**
 
 > [!IMPORTANT]
-> The repository now has the independent control-plane layout, upstream submodule, and adapter/isolation contracts. The executable Controller loop is not implemented yet; this document defines intended system boundaries rather than claiming unattended self-evolution today.
+> The repository now has the independent control-plane layout, upstream submodule, adapter/isolation contracts, and an initial Benchmark validator plus paired Evaluator CLI. The full Controller evolution loop is not implemented yet, so this is not a claim of unattended self-evolution today.
 
 ## Why this is no longer a DeepSeek Harness fork
 
@@ -60,6 +60,8 @@ The Controller chooses one level per run. Prompt instructions explain the scope,
 ├── adapters/
 │   ├── targets/                # Solver source, launch protocol, and L1/L2/L3 paths
 │   └── updaters/               # Coding-agent runtime used for an Updater session
+├── benchmarks/                 # Pinned data revision, instance IDs, and three-way split
+├── evaluation/                 # Paired metrics, promotion policy, normalized results
 ├── environments/              # Task, trajectory, and evaluation environment protocol
 ├── prompts/                    # Shared high-level Updater instruction
 ├── sources/
@@ -78,6 +80,28 @@ The Controller chooses one level per run. Prompt instructions explain the scope,
 - Only the Controller can register a Candidate, advance the baseline pointer, or roll back.
 
 See the [architecture document](docs/architecture.md) for the complete decision and runtime layout.
+
+## Benchmark and Evaluator entry point
+
+The CLI validates a Benchmark manifest and compares normalized Baseline/Candidate results:
+
+```bash
+npm run rsi -- benchmark validate \
+  --config benchmarks/examples/swebench-rsi-smoke/benchmark.json
+
+npm run rsi -- evaluate compare \
+  --benchmark benchmarks/examples/swebench-rsi-smoke/benchmark.json \
+  --policy evaluation/policies/rsi-mvp.json \
+  --baseline evaluation/examples/selection-baseline.jsonl \
+  --candidate evaluation/examples/selection-candidate.jsonl \
+  --run-id smoke-selection-001 \
+  --baseline-revision baseline-demo-v1 \
+  --candidate-revision candidate-demo-v2 \
+  --partitions feedback,selection \
+  --evolution evaluation/examples/evolution-ledger.json
+```
+
+It reports resolved rate, paired net improvement, regressions, bootstrap intervals, tokens, cost, latency, policy violations, and promotion gates. Launching the official SWE-bench Docker harness and normalizing its report is the next integration step; see [Evaluator documentation](evaluation/README.md).
 
 ## Clone
 
@@ -99,9 +123,10 @@ The submodule is configured to follow upstream `master`, while the superproject 
 
 ## Next steps
 
-- Define and validate Target, Updater, and Environment Adapter schemas.
+- Add formal schema validation for Target, Updater, and Environment Adapters.
 - Implement Candidate materialization, sandbox mounts, and final diff allowlist checks.
-- Complete the minimal `task -> feedback -> Updater -> Candidate -> paired evaluation -> decision` loop.
+- Implement the SWE-bench Runner/Normalizer that produces normalized Solver Results.
+- Complete the full `task -> feedback -> Updater -> Candidate -> paired evaluation -> decision` loop.
 - Start with DeepSeek Harness L1 experiments, then L2; enable L3 only after isolation and rollback are reliable.
 - Add a pi-agent adapter to verify that the Controller is genuinely agent-agnostic.
 

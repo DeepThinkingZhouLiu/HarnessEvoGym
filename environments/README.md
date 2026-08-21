@@ -12,3 +12,5 @@ Environment 把“什么叫做更好”接入 RSI 闭环，但不把最终裁判
 - 质量、回归、成本和安全 Gate 如何共同决定 Candidate 是否有资格晋升。
 
 `examples/coding-task.example.yml` 只是协议占位。真实接入时，训练任务可以向 Updater 返回详细 Bad Case；隐藏任务只能返回聚合信号，不能泄露题目、答案或 Rubric 细节。
+
+`swe-bench.yml` 定义官方 SWE-bench Docker Harness 的外部执行与结果归一化契约。当前 Controller 已能消费归一化 JSONL 并计算指标，但 Harness Runner/Normalizer 尚未实现。

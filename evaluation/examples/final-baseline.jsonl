@@ -1,0 +1,2 @@
+{"instance_id":"demo__gamma-1","status":"unresolved","cost_usd":0.5,"input_tokens":1000,"output_tokens":200,"latency_ms":1000,"policy_violations":[]}
+{"instance_id":"demo__delta-1","status":"resolved","cost_usd":0.5,"input_tokens":1000,"output_tokens":200,"latency_ms":1000,"policy_violations":[]}

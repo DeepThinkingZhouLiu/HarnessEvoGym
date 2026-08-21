@@ -1,0 +1,47 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "Benchmark",
+  "metadata": {
+    "id": "swebench-rsi-smoke-v1",
+    "name": "SWE-bench-compatible RSI smoke benchmark"
+  },
+  "spec": {
+    "source": {
+      "adapter": "swe-bench",
+      "dataset": "local/harness-rsi-demo",
+      "split": "test",
+      "revision": "demo-fixture-v1"
+    },
+    "evaluator": {
+      "adapter": "swe-bench",
+      "resultFormat": "harness-rsi/solver-result-jsonl-v1"
+    },
+    "partitions": {
+      "feedback": {
+        "visibility": "detailed",
+        "expectedCount": 2,
+        "instanceIds": [
+          "demo__alpha-1",
+          "demo__beta-1"
+        ]
+      },
+      "selection": {
+        "visibility": "aggregate-only",
+        "expectedCount": 2,
+        "instanceIds": [
+          "demo__alpha-2",
+          "demo__beta-2"
+        ]
+      },
+      "final": {
+        "visibility": "sealed",
+        "expectedCount": 2,
+        "instanceIds": [
+          "demo__gamma-1",
+          "demo__delta-1"
+        ]
+      }
+    },
+    "expectedTotal": 6
+  }
+}

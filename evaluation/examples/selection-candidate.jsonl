@@ -1,0 +1,4 @@
+{"instance_id":"demo__alpha-1","status":"resolved","cost_usd":0.55,"input_tokens":1050,"output_tokens":210,"latency_ms":1100,"policy_violations":[]}
+{"instance_id":"demo__beta-1","status":"resolved","cost_usd":0.55,"input_tokens":1050,"output_tokens":210,"latency_ms":1100,"policy_violations":[]}
+{"instance_id":"demo__alpha-2","status":"resolved","cost_usd":0.55,"input_tokens":1050,"output_tokens":210,"latency_ms":1100,"policy_violations":[]}
+{"instance_id":"demo__beta-2","status":"resolved","cost_usd":0.55,"input_tokens":1050,"output_tokens":210,"latency_ms":1100,"policy_violations":[]}

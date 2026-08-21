@@ -1,0 +1,52 @@
+apiVersion: harness-rsi/v1alpha1
+kind: EnvironmentAdapter
+
+metadata:
+  id: swe-bench
+  name: SWE-bench Official Harness
+
+spec:
+  benchmark:
+    source: benchmark-manifest
+    instanceSelection: explicit-ids
+
+  workspace:
+    strategy: official-docker-harness
+    disposable: true
+
+  solver:
+    input:
+      - instance_id
+      - repo
+      - base_commit
+      - problem_statement
+    output:
+      format: swe-bench-predictions-jsonl
+      fields:
+        - instance_id
+        - model_name_or_path
+        - model_patch
+
+  evaluator:
+    trust: controller-owned
+    protocol: external-command
+    command:
+      - python
+      - -m
+      - swebench.harness.run_evaluation
+    arguments:
+      datasetName: '{{ benchmark.source.dataset }}'
+      split: '{{ benchmark.source.split }}'
+      instanceIds: '{{ benchmark.partition.instanceIds }}'
+      predictionsPath: '{{ artifacts.predictionsPath }}'
+      runId: '{{ run.id }}'
+      timeout: '{{ limits.perInstanceTimeoutSeconds }}'
+
+  normalizer:
+    input: swe-bench-evaluation-report
+    output: harness-rsi/solver-result-jsonl-v1
+
+  feedback:
+    feedback: detailed
+    selection: aggregate-only
+    final: sealed

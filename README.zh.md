@@ -5,7 +5,7 @@
 **一个面向 Coding Agent 的 Adapter 化递归自我改进控制平面，以 DeepSeek Harness 作为第一个 Solver 与 Updater Runtime。**
 
 > [!IMPORTANT]
-> 当前仓库已经完成“独立主仓 + 上游子模块 + Adapter/隔离契约”的结构重建，但 Controller 可执行闭环尚未实现。这里描述的是将要落地的系统边界，不代表已经具备无人值守自进化能力。
+> 当前仓库已经完成“独立主仓 + 上游子模块 + Adapter/隔离契约”的结构重建，并提供第一版 Benchmark 校验与配对 Evaluator CLI；完整 Controller 进化闭环尚未实现，不代表已经具备无人值守自进化能力。
 
 ## 为什么不再做 DeepSeek Harness Fork
 
@@ -60,6 +60,8 @@ Controller 每轮只选择一个层级。Prompt 会告诉 Updater 能改什么�
 ├── adapters/
 │   ├── targets/                # Solver 源码、启动协议与 L1/L2/L3 路径
 │   └── updaters/               # 用哪个 Coding Agent 启动 Updater Session
+├── benchmarks/                 # 固定数据版本、Instance ID 与三段 Split
+├── evaluation/                 # 配对指标、晋升 Policy 与标准化结果协议
 ├── environments/              # 任务、Trajectory 与评测环境协议
 ├── prompts/                    # Updater 的共享高层指令
 ├── sources/
@@ -78,6 +80,28 @@ Controller 每轮只选择一个层级。Prompt 会告诉 Updater 能改什么�
 - 只有 Controller 可以登记 Candidate、更新基线指针或执行回滚。
 
 更完整的决策与运行目录见 [架构文档](docs/architecture.zh.md)。
+
+## Benchmark 与 Evaluator 入口
+
+当前 CLI 可以校验 Benchmark Manifest，并对标准化 Baseline/Candidate 结果做配对比较：
+
+```bash
+npm run rsi -- benchmark validate \
+  --config benchmarks/examples/swebench-rsi-smoke/benchmark.json
+
+npm run rsi -- evaluate compare \
+  --benchmark benchmarks/examples/swebench-rsi-smoke/benchmark.json \
+  --policy evaluation/policies/rsi-mvp.json \
+  --baseline evaluation/examples/selection-baseline.jsonl \
+  --candidate evaluation/examples/selection-candidate.jsonl \
+  --run-id smoke-selection-001 \
+  --baseline-revision baseline-demo-v1 \
+  --candidate-revision candidate-demo-v2 \
+  --partitions feedback,selection \
+  --evolution evaluation/examples/evolution-ledger.json
+```
+
+它已经计算 Resolved Rate、配对净提升、回退、Bootstrap 区间、Token、成本、延迟、安全违规和晋升 Gate。SWE-bench Docker Harness 的自动启动及官方报告归一化是下一步，详见 [Evaluator 说明](evaluation/README.md)。
 
 ## 获取仓库
 
@@ -99,9 +123,10 @@ git commit -m "chore: update DeepSeek Harness submodule"
 
 ## 下一步
 
-- 定义并校验 Target、Updater、Environment Adapter Schema。
+- 为 Target、Updater、Environment Adapter 补充正式 Schema 校验。
 - 实现 Candidate 实例化、沙箱挂载和 Diff 白名单校验。
-- 跑通 `任务 -> 反馈包 -> Updater -> Candidate -> 配对评测 -> 决策` 的最小闭环。
+- 实现 SWE-bench Runner/Normalizer，将官方报告转换为标准 Solver Result。
+- 跑通 `任务 -> 反馈包 -> Updater -> Candidate -> 配对评测 -> 决策` 的完整闭环。
 - 先用 DeepSeek Harness 做 L1 实验，再进入 L2；L3 等隔离与回滚稳定后再开放。
 - 增加 pi-agent Adapter，验证 Controller 是否真正与具体 Agent 解耦。
 

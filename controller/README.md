@@ -15,3 +15,14 @@ Controller 只负责以下事情：
 Controller 不相信 Candidate 自报分数，不把隐藏任务交给 Updater，也不允许 Updater 直接操作 Source Submodule 或 Git 晋升指针。
 
 第一版实现应保持粗粒度：`orchestrate -> materialize -> update -> evaluate -> decide`。只有出现明确复用边界后，再拆分内部模块。
+
+## 当前可执行入口
+
+`src/cli.mjs` 已实现第一段可信评测入口：
+
+- `benchmark validate` 校验不可变数据版本、三段 Split、可见性、数量与重复 ID。
+- `evaluate compare` 读取标准化 Baseline/Candidate JSONL，计算覆盖率、Resolved Rate、成本、Token、延迟和配对改进。
+- Evaluation Policy 负责覆盖率、净提升、回退、成本与安全 Gate。
+- sealed `final` 必须显式解锁，且单独运行时只形成最终报告，不参与 Candidate 选择。
+
+它目前不负责启动 Solver、SWE-bench Docker Harness 或 Updater；这些仍属于后续的 `materialize/run/normalize` 闭环。

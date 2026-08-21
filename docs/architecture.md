@@ -75,17 +75,26 @@ A Feedback Packet contains aggregate metrics, representative successes and failu
 
 Promotion checks at least training improvement, held-out improvement, historical replay tolerance, cost/latency budgets, and safety against privilege changes, cross-task contamination, and irreversible effects. A Candidate may affect task-solving behavior but never tasks, final scoring, resource accounting, or promotion rules.
 
+## Benchmark and two-level evaluation
+
+A Task Evaluator decides whether one task is resolved; for SWE-bench, the official harness applies a Solver patch and runs tests. The RSI Evaluator consumes normalized per-instance results, compares Baseline and Candidate on the same instances and budgets, and applies quality, regression, cost, and safety gates.
+
+The Benchmark manifest pins a dataset revision and three disjoint partitions: `feedback`, `selection`, and `final`. Feedback may expose detailed bad cases, selection is used for in-loop Candidate choice, and final remains sealed until the Final Candidate is locked. Reusing final every generation turns it into validation data.
+
+`controller/src/cli.mjs` now implements manifest validation, normalized result validation, paired metrics, bootstrap intervals, Evolution Ledger accounting, and gates. The official SWE-bench Runner/Normalizer remains an Environment Adapter integration.
+
 ## Submodule update semantics
 
 The superproject pins a DeepSeek Harness SHA, making every experiment reproducible. `git submodule update --remote` fetches an upstream revision locally; it becomes a trusted Source Revision only after the new submodule pointer is committed. Existing Candidates retain their original SHA.
 
 ## Implementation order
 
-1. Adapter schemas and static validation.
-2. Source revision and Candidate materialization.
-3. L1 writable mounts and final diff validation.
-4. Feedback Packet and one Updater session.
-5. Paired evaluation and immutable registry.
-6. L2 sandbox and rollback.
-7. L3 full-instance isolation.
-8. A second agent Target to test adapter generalization.
+1. Benchmark manifest, normalized Solver Result, paired metrics, and Evaluation Policy. (Initial version available.)
+2. SWE-bench Runner/Normalizer and a pinned 100-instance manifest.
+3. Adapter schemas and static validation.
+4. Source revision and Candidate materialization.
+5. L1 writable mounts and final diff validation.
+6. Feedback Packet and one Updater session.
+7. Immutable registry, L2 sandbox, and rollback.
+8. L3 full-instance isolation.
+9. A second agent Target to test adapter generalization.

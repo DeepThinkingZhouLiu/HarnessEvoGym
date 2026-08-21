@@ -83,17 +83,26 @@ Feedback Packet 应包含聚合指标、代表性成功/失败案例、Trajector
 
 Candidate 只能影响解题过程，不能影响题目、最终评分、资源计量或晋升规则。
 
+## Benchmark 与双层评测
+
+Task Evaluator 负责判断单道任务是否解决，例如 SWE-bench 官方 Harness 应用 Solver Patch 并运行测试。RSI Evaluator 读取标准化逐题结果，在相同 Instance、模型与预算下配对比较 Baseline/Candidate，再执行质量、回退、成本和安全 Gate。
+
+Benchmark Manifest 固定数据集 Revision 与 `feedback/selection/final` 三个互斥 Partition。`feedback` 可以返回详细 Bad Case；`selection` 只用于进化期 Candidate 选择；`final` 在 Final Candidate 锁定前保持 sealed。直接在每一代使用 Final Test 会把它降级为 Validation。
+
+当前 `controller/src/cli.mjs` 已实现 Manifest 校验、标准结果校验、配对指标、Bootstrap 区间、Evolution Ledger 与 Gate。官方 SWE-bench Runner/Normalizer 仍需由 Environment Adapter 落地。
+
 ## 子模块更新语义
 
 主仓固定一个 DeepSeek Harness SHA，所以每轮实验的 Source 可复现。`git submodule update --remote` 只是在本地取得上游新提交；只有把新的子模块指针提交到主仓后，它才成为新的可信 Source Revision。旧 Candidate 仍记录旧 SHA，不随上游更新漂移。
 
 ## 实现顺序
 
-1. Adapter Schema 与静态校验。
-2. Source Revision 与 Candidate 实例化。
-3. L1 可写挂载和最终 Diff 校验。
-4. Feedback Packet 与单 Updater Session。
-5. Baseline/Candidate 配对评测和不可变 Registry。
-6. L2 沙箱与回滚。
-7. L3 完整实例隔离。
-8. 第二个 Agent Target，验证 Adapter 泛化。
+1. Benchmark Manifest、标准 Solver Result、配对指标与 Evaluation Policy。（已具备第一版）
+2. SWE-bench Runner/Normalizer 与固定 100 题 Manifest。
+3. Adapter Schema 与静态校验。
+4. Source Revision 与 Candidate 实例化。
+5. L1 可写挂载和最终 Diff 校验。
+6. Feedback Packet 与单 Updater Session。
+7. 不可变 Registry、L2 沙箱与回滚。
+8. L3 完整实例隔离。
+9. 第二个 Agent Target，验证 Adapter 泛化。

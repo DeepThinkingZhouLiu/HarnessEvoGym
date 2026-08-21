@@ -1,0 +1,29 @@
+apiVersion: harness-rsi/v1alpha1
+kind: EnvironmentAdapter
+
+metadata:
+  id: coding-task-example
+  name: Coding Task Example
+
+spec:
+  workspace:
+    strategy: disposable-copy
+
+  runner:
+    protocol: command
+    command: []
+    trajectory: adapter-jsonl
+
+  feedback:
+    trainingCases: detailed
+    hiddenCases: aggregate-only
+
+  evaluation:
+    mode: paired-baseline-candidate
+    fixedSeed: true
+    equalModelBudget: true
+    gates:
+      - quality-improves
+      - replay-within-tolerance
+      - cost-within-budget
+      - safety-passes

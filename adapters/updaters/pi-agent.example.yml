@@ -1,0 +1,28 @@
+apiVersion: harness-rsi/v1alpha1
+kind: UpdaterAdapter
+
+metadata:
+  id: pi-agent
+  name: pi-agent Updater
+
+spec:
+  runtime:
+    sourceRef: pi-agent
+    isolation: dedicated-read-only-instance
+    protocol: command
+    command: []
+
+  prompt:
+    path: prompts/updater.md
+
+  inputs:
+    targetSource: read-only
+    candidateSource: active-level-write
+    feedbackPacket: read-only
+    mutationPolicy: read-only
+
+  output:
+    candidate: working-tree-diff
+    mutationReport:
+      kind: controller-artifact
+      name: mutation-report.json

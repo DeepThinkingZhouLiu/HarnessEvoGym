@@ -1,0 +1,30 @@
+# RSI 运行时状态：候选实例、轨迹、评测产物与决策记录
+/.rsi/
+
+# 本地 Worktree 与生成报告
+/.WorkTrees/
+/docs/repo-report/
+
+# 凭据与本地覆盖
+/.env
+/.env.*
+!/.env.example
+*.local.yml
+*.local.yaml
+
+# 常见依赖、缓存与构建产物
+node_modules/
+.pnpm-store/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+coverage/
+dist/
+lib/
+*.tsbuildinfo
+
+# 编辑器与操作系统文件
+.DS_Store
+.idea/
+.vscode/

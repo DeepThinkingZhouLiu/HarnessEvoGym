@@ -1,0 +1,28 @@
+apiVersion: harness-rsi/v1alpha1
+kind: UpdaterAdapter
+
+metadata:
+  id: deepseek-harness
+  name: DeepSeek Harness Updater
+
+spec:
+  runtime:
+    sourceRef: deepseek-harness
+    isolation: dedicated-read-only-instance
+    protocol: dsh-headless
+    profile: headless
+
+  prompt:
+    path: prompts/updater.md
+
+  inputs:
+    targetSource: read-only
+    candidateSource: active-level-write
+    feedbackPacket: read-only
+    mutationPolicy: read-only
+
+  output:
+    candidate: working-tree-diff
+    mutationReport:
+      kind: controller-artifact
+      name: mutation-report.json

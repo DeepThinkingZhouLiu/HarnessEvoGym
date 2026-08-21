@@ -1,0 +1,39 @@
+apiVersion: harness-rsi/v1alpha1
+kind: TargetAdapter
+
+metadata:
+  id: pi-agent
+  name: pi-agent
+
+spec:
+  source:
+    # 接入时把真实仓库注册为另一个 Submodule，或由 Source Adapter 提供固定 Revision。
+    kind: git-submodule
+    path: sources/pi-agent
+    revision: pinned
+
+  materialization:
+    strategy: controller-owned-git-worktree
+    runtimeRoot: .rsi/instances
+    hideGitMetadataFromUpdater: true
+
+  solver:
+    protocol: command
+    command: []
+    trajectory: adapter-jsonl
+
+  mutation:
+    alwaysReadOnly:
+      - .git
+      - .git/**
+      - '**/.env'
+      - '**/.env.*'
+
+    # 接入真实仓库后必须按其目录填写；空白列表必须让 Controller 拒绝启动。
+    levels:
+      l1:
+        writable: []
+      l2:
+        writable: []
+      l3:
+        writable: []

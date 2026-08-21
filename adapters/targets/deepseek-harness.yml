@@ -1,0 +1,80 @@
+apiVersion: harness-rsi/v1alpha1
+kind: TargetAdapter
+
+metadata:
+  id: deepseek-harness
+  name: DeepSeek Harness
+
+spec:
+  source:
+    kind: git-submodule
+    path: sources/deepseek-harness
+    revision: pinned
+    updateBranch: master
+
+  materialization:
+    strategy: controller-owned-git-worktree
+    runtimeRoot: .rsi/instances
+    hideGitMetadataFromUpdater: true
+
+  solver:
+    protocol: dsh-headless
+    profile: headless
+    trajectory: dsh-session-log
+
+  mutation:
+    # 永久只读优先于任一层级的 writable 配置。
+    alwaysReadOnly:
+      - .git
+      - .git/**
+      - .github/**
+      - vendor/**
+      - packages/credentials/**
+      - packages/interaction/permission-presets/**
+      - packages/interaction/user-approval/**
+      - packages/llm/token-meter/**
+      - packages/sandbox/**
+      - '**/.env'
+      - '**/.env.*'
+      - '**/*credentials*.yml'
+      - '**/*credentials*.yaml'
+
+    levels:
+      l1:
+        description: 只修改声明式解题策略，不修改 TypeScript、JavaScript 或 Python 实现。
+        writable:
+          - apps/cli/config/agent-presets/**
+
+      l2:
+        description: 修改扩展点行为、工具与策略，不修改 Agent Loop 或 Session Core。
+        writable:
+          - apps/cli/config/agent-presets/**
+          - packages/compaction/**
+          - packages/context/**
+          - packages/extensions/**
+          - packages/guard/**
+          - packages/hooks/**
+          - packages/llm/llm-retry/**
+          - packages/plan/**
+          - packages/preset/**
+          - packages/skill/**
+          - packages/subagent/**
+          - packages/todo/**
+          - packages/workflow/**
+          - packages/web/**
+          - packages/fs/tool-*/**
+          - packages/interaction/tool-*/**
+          - packages/shell/tool-*/**
+
+      l3:
+        description: 允许修改 Solver Core；外部 Controller、Evaluator、安全根和上游 Source 仍冻结。
+        writable:
+          - apps/**
+          - examples/**
+          - native/**
+          - packages/**
+          - python/**
+          - package.json
+          - pnpm-lock.yaml
+          - pnpm-workspace.yaml
+          - tsconfig*.json

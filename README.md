@@ -106,7 +106,7 @@ It reports resolved rate, paired net improvement, regressions, bootstrap interva
 ## Clone
 
 ```bash
-git clone --branch hzy_dev --recurse-submodules https://github.com/ZhaoyangHan04/Deepseek-Harness-RSI.git
+git clone --branch hzy_dev --recurse-submodules https://github.com/DeepThinkingZhouLiu/Deepseek-Harness-RSI.git
 cd Deepseek-Harness-RSI
 git submodule update --init --recursive
 ```

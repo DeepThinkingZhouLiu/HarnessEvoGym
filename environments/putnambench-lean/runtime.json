@@ -2,13 +2,13 @@
   "apiVersion": "harness-rsi/v1alpha1",
   "kind": "PutnamBenchRuntime",
   "solver": {
-    "smokeConcurrency": 4,
-    "initialConcurrency": 8,
-    "maximumConcurrency": 16,
+    "smokeConcurrency": 2,
+    "initialConcurrency": 2,
+    "maximumConcurrency": 2,
     "taskTimeoutSeconds": 1800,
     "maximumModelRequestsPerTask": 16,
     "maximumResponseTokens": 32768,
-    "gatewayConcurrencyPerTask": 4,
+    "gatewayConcurrencyPerTask": 2,
     "infrastructureRetries": 2
   },
   "updater": {

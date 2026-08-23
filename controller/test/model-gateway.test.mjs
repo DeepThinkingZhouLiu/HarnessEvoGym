@@ -175,18 +175,28 @@ test('只接受目标 POST、dummy auth，并限制请求体与总请求数', as
     activeRequests: 0,
     totalRequests: 1,
     remainingRequests: 0,
+    localConcurrencyRejectedRequests: 0,
+    localBudgetRejectedRequests: 1,
+    requestSequence: 5,
   })
 })
 
 test('并发上限拒绝额外请求且 Client abort 会中止上游', async (t) => {
   let releaseFirst
   let firstArrived
+  let upstreamRequests = 0
   const firstArrivedPromise = new Promise((resolve) => { firstArrived = resolve })
   const upstream = http.createServer((request, response) => {
     request.resume()
-    firstArrived()
-    releaseFirst = () => {
-      if (response.destroyed) return
+    upstreamRequests += 1
+    if (upstreamRequests === 1) {
+      firstArrived()
+      releaseFirst = () => {
+        if (response.destroyed) return
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.end('data: [DONE]\n\n')
+      }
+    } else {
       response.writeHead(200, { 'content-type': 'text/event-stream' })
       response.end('data: [DONE]\n\n')
     }
@@ -209,6 +219,15 @@ test('并发上限拒绝额外请求且 Client abort 会中止上游', async (t)
   await firstArrivedPromise
   const second = await gatewayFetch(gateway)
   assert.equal(second.status, 429)
+  assert.match(await second.text(), /concurrency limit/u)
+  assert.deepEqual(gateway.stats(), {
+    activeRequests: 1,
+    totalRequests: 1,
+    remainingRequests: 2,
+    localConcurrencyRejectedRequests: 1,
+    localBudgetRejectedRequests: 0,
+    requestSequence: 2,
+  })
   controller.abort()
   await assert.rejects(first, /abort/iu)
 
@@ -217,6 +236,122 @@ test('并发上限拒绝额外请求且 Client abort 会中止上游', async (t)
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
   assert.equal(gateway.stats().activeRequests, 0)
+
+  releaseFirst?.()
+  assert.equal((await gatewayFetch(gateway)).status, 200)
+  assert.equal((await gatewayFetch(gateway)).status, 200)
+  assert.equal(gateway.stats().totalRequests, 3)
+  assert.equal(gateway.stats().remainingRequests, 0)
+})
+
+test('waitForIdle includes asynchronous audit completion', async (t) => {
+  const upstream = http.createServer((request, response) => {
+    request.resume()
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    response.end('data: [DONE]\n\n')
+  })
+  const upstreamUrl = await listen(upstream)
+  let releaseAudit
+  const auditBarrier = new Promise((resolve) => { releaseAudit = resolve })
+  const gateway = await startModelGateway({
+    upstreamBaseUrl: `${upstreamUrl}/v1`,
+    getApiKey: () => 'real-key-audit-barrier-test',
+    audit: () => auditBarrier,
+  })
+  t.after(async () => {
+    releaseAudit()
+    await gateway.close()
+    await close(upstream)
+  })
+
+  assert.equal((await gatewayFetch(gateway)).status, 200)
+  let idle = false
+  const waiting = gateway.waitForIdle().then(() => { idle = true })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(idle, false)
+  releaseAudit()
+  await waiting
+  assert.equal(idle, true)
+})
+
+test('rotating the dummy credential quarantines late requests without spending budget', async (t) => {
+  const upstream = http.createServer((request, response) => {
+    request.resume()
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    response.end('data: [DONE]\n\n')
+  })
+  const upstreamUrl = await listen(upstream)
+  const originalKey = 'attempt-one-dummy-key'
+  const nextKey = 'attempt-two-dummy-key'
+  const gateway = await startModelGateway({
+    upstreamBaseUrl: `${upstreamUrl}/v1`,
+    getApiKey: () => 'real-key-rotation-test',
+    candidateApiKey: originalKey,
+    maxRequests: 2,
+  })
+  t.after(async () => {
+    await gateway.close()
+    await close(upstream)
+  })
+
+  gateway.rotateCandidateApiKey(nextKey)
+  assert.equal(gateway.candidateApiKey, nextKey)
+  const stale = await fetch(`${gateway.url}/responses`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${originalKey}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ input: 'stale attempt' }),
+  })
+  assert.equal(stale.status, 401)
+  assert.equal(gateway.stats().totalRequests, 0)
+
+  const current = await fetch(`${gateway.url}/responses`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${nextKey}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ input: 'current attempt' }),
+  })
+  assert.equal(current.status, 200)
+  assert.equal(gateway.stats().totalRequests, 1)
+})
+
+test('close flushes a pending audit from a locally rejected request', async (t) => {
+  const upstream = http.createServer((request, response) => {
+    request.resume()
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    response.end('data: [DONE]\n\n')
+  })
+  const upstreamUrl = await listen(upstream)
+  let releaseAudit
+  const auditBarrier = new Promise((resolve) => { releaseAudit = resolve })
+  const gateway = await startModelGateway({
+    upstreamBaseUrl: `${upstreamUrl}/v1`,
+    getApiKey: () => 'real-key-close-audit-test',
+    audit: () => auditBarrier,
+  })
+  t.after(async () => {
+    releaseAudit()
+    await gateway.close()
+    await close(upstream)
+  })
+
+  const rejected = await fetch(`${gateway.url}/responses`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  })
+  assert.equal(rejected.status, 401)
+  let closed = false
+  const closing = gateway.close().then(() => { closed = true })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(closed, false)
+  releaseAudit()
+  await closing
+  assert.equal(closed, true)
 })
 
 test('上游非 2xx 保留状态与安全 headers，同时从 body/header/audit 脱敏', async (t) => {

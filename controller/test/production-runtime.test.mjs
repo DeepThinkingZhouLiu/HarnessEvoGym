@@ -722,7 +722,7 @@ test('Updater always uses frozen baseline runtime, feedback prompt, and a fresh 
   assert.equal(context.getApiKeyCalls, 0)
 })
 
-test('Updater callback failures after the latest provider/credential audit pause as infrastructure', async (context) => {
+test('Updater callback failures after any provider/credential audit pause as infrastructure', async (context) => {
   function auditedGateway(audits) {
     return async (options) => {
       for (const record of audits) await options.audit(record)
@@ -788,7 +788,7 @@ test('Updater callback failures after the latest provider/credential audit pause
     )
   })
 
-  await context.test('only the final audit controls classification', async () => {
+  await context.test('a later local audit cannot erase an earlier provider failure', async () => {
     const callbackError = new Error('candidate-side malformed proposal')
     const fixtureContext = await fixture({
       dependencyOverrides: {
@@ -804,7 +804,38 @@ test('Updater callback failures after the latest provider/credential audit pause
     })
     await assert.rejects(
       () => fixtureContext.runtime.propose(mutation(fixtureContext.paths)),
-      (error) => error === callbackError,
+      (error) => error instanceof ProductionRuntimeError
+        && error.kind === 'infrastructure'
+        && error.operation === 'updater-proposal'
+        && error.cause === callbackError,
+    )
+  })
+
+  await context.test('a delayed older provider audit still invalidates a failed session', async () => {
+    const callbackError = new Error('candidate-side malformed proposal')
+    const fixtureContext = await fixture({
+      dependencyOverrides: {
+        startGateway: auditedGateway([
+          {
+            requestSequence: 2,
+            status: 429,
+            origin: 'gateway',
+            localReason: 'request_budget',
+          },
+          { requestSequence: 1, status: 503, origin: 'upstream' },
+        ]),
+        async proposalRunner() { throw callbackError },
+      },
+    })
+    await fixtureContext.runtime.buildCandidate({
+      candidateId: 'baseline', candidateRoot: fixtureContext.paths.baselineSource, level: 'baseline',
+    })
+    await assert.rejects(
+      () => fixtureContext.runtime.propose(mutation(fixtureContext.paths)),
+      (error) => error instanceof ProductionRuntimeError
+        && error.kind === 'infrastructure'
+        && error.operation === 'updater-proposal'
+        && error.cause === callbackError,
     )
   })
 })

@@ -1191,7 +1191,7 @@ export class PutnamEvolutionRuntime {
     const dummyKey = this.#nextDummyKey()
     let gateway
     let gatewayLease
-    let latestAudit = null
+    let providerInfrastructureSeen = false
     try {
       gateway = await this.startGateway({
         ...this.gatewayOptions,
@@ -1201,9 +1201,7 @@ export class PutnamEvolutionRuntime {
         candidateApiKey: dummyKey,
         maxOutputTokens: 32_768,
         audit: (record) => {
-          latestAudit = record === null || typeof record !== 'object'
-            ? null
-            : { ...record }
+          if (isProviderInfrastructureAudit(record)) providerInfrastructureSeen = true
           return this.gatewayAudit({ operation, candidateId, ...record })
         },
       })
@@ -1232,13 +1230,14 @@ export class PutnamEvolutionRuntime {
     try {
       return await callback(gateway, dummyKey)
     } catch (error) {
+      if (typeof gateway.waitForIdle === 'function') await gateway.waitForIdle()
       if (error?.kind === 'infrastructure') {
         throw infrastructureError(operation, 'Updater infrastructure phase failed', error)
       }
-      if (isProviderInfrastructureAudit(latestAudit)) {
+      if (providerInfrastructureSeen) {
         throw infrastructureError(
           operation,
-          'Updater failed after a terminal provider or credential response',
+          'Updater failed after observing a terminal provider or credential response',
           error,
         )
       }

@@ -30,6 +30,7 @@ const INSTANCE_PATTERN = /^putnam_\d{4}_[ab][1-6]$/u
 const REPORTABLE_STATES = new Set(['CLOSED', 'REPORTED'])
 const USAGE_FIELDS = ['requests', 'inputTokens', 'outputTokens', 'totalTokens']
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u
+const VALIDATION_TRACE_REF_PATTERN = /^traces\/([A-Za-z0-9][A-Za-z0-9._-]*)\.jsonl$/u
 const UPDATER_FEEDBACK_MTIME = new Date('2000-01-01T00:00:00.000Z')
 const ABSOLUTE_TIME_TEXT = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})\b/gu
 const ABSOLUTE_TIME_FIELDS = new Set([
@@ -424,24 +425,28 @@ export class CampaignStore {
         )
 
         const traceSource = join(source, 'traces')
-        let traceEntries
-        try {
-          traceEntries = await readdir(traceSource, { withFileTypes: true })
-        } catch (error) {
-          if (error.code !== 'ENOENT') throw error
-          traceEntries = []
-        }
-        for (const entry of traceEntries.sort((left, right) => left.name.localeCompare(right.name))) {
-          if (!entry.isFile() || !entry.name.endsWith('.jsonl')) {
-            throw new ProtocolError(`Validation trace 目录包含非法条目：${entry.name}`)
+        const referencedTraceNames = new Set()
+        for (const [index, record] of records.entries()) {
+          const match = VALIDATION_TRACE_REF_PATTERN.exec(record?.traceRef ?? '')
+          if (!match) {
+            throw new ProtocolError(
+              `Validation feedback traceRef 损坏：${candidateId}/record[${index}]`,
+            )
           }
-          const sourcePath = join(traceSource, entry.name)
+          referencedTraceNames.add(`${match[1]}.jsonl`)
+        }
+        // A crashed infrastructure attempt can leave a durable raw trace with
+        // no accepted checkpoint/record. Only the completed ledger's reachable
+        // traces are evidence; copying the whole directory would leak orphaned
+        // infrastructure noise into the next mutation proposal.
+        for (const name of [...referencedTraceNames].sort((left, right) => left.localeCompare(right))) {
+          const sourcePath = join(traceSource, name)
           const stat = await lstat(sourcePath)
           if (!stat.isFile() || stat.isSymbolicLink()) {
-            throw new ProtocolError(`Validation trace 必须是普通文件：${entry.name}`)
+            throw new ProtocolError(`Validation trace 必须是普通文件：${name}`)
           }
           await atomicWrite(
-            join(destination, 'traces', entry.name),
+            join(destination, 'traces', name),
             projectTraceText(await readFile(sourcePath, 'utf8')),
           )
         }

@@ -277,7 +277,30 @@ function remainingGatewayRequests(gateway) {
 }
 
 function providerInfrastructureFailure(audits) {
-  return isProviderInfrastructureAudit(audits.at(-1))
+  // A failed attempt that observed any terminal provider/credential response is
+  // not clean evidence about Candidate quality. Retry the complete task rather
+  // than guessing which concurrent request ultimately caused the Harness exit.
+  return audits.some((audit) => isProviderInfrastructureAudit(audit))
+}
+
+function auditsForAttempt(audits, startIndex, requestWatermark) {
+  if (Number.isSafeInteger(requestWatermark) && requestWatermark >= 0) {
+    const hasSequencedAudit = audits.some((audit) => (
+      Number.isSafeInteger(audit?.requestSequence) && audit.requestSequence >= 1
+    ))
+    if (hasSequencedAudit) {
+      // Returning an empty set is meaningful: all observed sequenced audits
+      // belong to an earlier attempt. Falling back to completion-order slicing
+      // here would reintroduce exactly the cross-attempt contamination the
+      // watermark is intended to prevent.
+      return audits.filter((audit) => (
+        Number.isSafeInteger(audit?.requestSequence)
+        && audit.requestSequence > requestWatermark
+      ))
+    }
+  }
+  // Compatibility for injected/legacy runtimes that do not emit sequence IDs.
+  return audits.slice(startIndex)
 }
 
 function classifyProviderFailure(solver, audits) {
@@ -292,7 +315,8 @@ function classifyProviderFailure(solver, audits) {
 
 async function runOneTask(options, problemId, opaqueRunRoot) {
   const audits = []
-  const dummyKey = `rsi-${randomBytes(24).toString('base64url')}`
+  const nextDummyKey = () => `rsi-${randomBytes(24).toString('base64url')}`
+  let dummyKey = nextDummyKey()
   let gateway
   let gatewayLease
   const trace = new TraceAccumulator(options.traceMaximumBytes)
@@ -381,13 +405,22 @@ async function runOneTask(options, problemId, opaqueRunRoot) {
             })
           : rawInvocation
         const attemptAuditStart = audits.length
+        const attemptRequestWatermark = gateway.stats?.().requestSequence
         lastSolver = await options.runtime.runHarnessSolver({
           invocation,
           sandboxed: options.sandboxed,
           timeoutMs: options.taskTimeoutMs,
           signal: options.signal,
         })
-        lastSolver = classifyProviderFailure(lastSolver, audits.slice(attemptAuditStart))
+        if (typeof gateway.rotateCandidateApiKey === 'function') {
+          dummyKey = nextDummyKey()
+          gateway.rotateCandidateApiKey(dummyKey)
+        }
+        if (typeof gateway.waitForIdle === 'function') await gateway.waitForIdle()
+        lastSolver = classifyProviderFailure(
+          lastSolver,
+          auditsForAttempt(audits, attemptAuditStart, attemptRequestWatermark),
+        )
         latencyMs += lastSolver.timing.durationMs
         trace.add(`${JSON.stringify({ solverAttempt: solverAttempts, solver: lastSolver })}\n`)
         await appendJsonlFiles(sessionRoot, trace)
@@ -585,6 +618,7 @@ export async function runPartition({
   const records = new Array(instanceIds.length)
   let nextIndex = 0
   let completed = 0
+  let stopScheduling = false
   let completionCallbacks = Promise.resolve()
   const emitCompletion = (record, event) => {
     completionCallbacks = completionCallbacks.then(async () => {
@@ -595,26 +629,38 @@ export async function runPartition({
   }
   const workers = Array.from({ length: Math.min(concurrency, instanceIds.length) }, async () => {
     while (true) {
-      if (signal?.aborted) return
+      if (signal?.aborted || stopScheduling) return
       const index = nextIndex
       nextIndex += 1
       if (index >= instanceIds.length) return
       const problemId = instanceIds[index]
       const opaqueTaskRoot = join(runRoot, `job-${randomUUID()}`)
-      records[index] = await runOneTask(taskOptions, problemId, opaqueTaskRoot)
-      if (records[index].failureKind === 'cancelled') return
-      completed += 1
-      const checkpoint = structuredClone(records[index])
-      Object.freeze(checkpoint.usage)
-      await emitCompletion(Object.freeze(checkpoint), sealed
-        ? { type: 'sealed-task-complete', completed, total: instanceIds.length }
-        : {
-            type: 'validation-task-complete',
-            problemId,
-            status: records[index].status,
-            completed,
-            total: instanceIds.length,
-          })
+      try {
+        records[index] = await runOneTask(taskOptions, problemId, opaqueTaskRoot)
+        if (records[index].failureKind === 'cancelled') {
+          stopScheduling = true
+          return
+        }
+        if (records[index].failureKind === 'infrastructure') stopScheduling = true
+        completed += 1
+        const checkpoint = structuredClone(records[index])
+        Object.freeze(checkpoint.usage)
+        await emitCompletion(Object.freeze(checkpoint), sealed
+          ? { type: 'sealed-task-complete', completed, total: instanceIds.length }
+          : {
+              type: 'validation-task-complete',
+              problemId,
+              status: records[index].status,
+              completed,
+              total: instanceIds.length,
+            })
+      } catch (error) {
+        // Direct setup, gateway, trace, or checkpoint failures do not produce a
+        // record from which the normal infrastructure flag can be derived.
+        // Stop workers from claiming untouched tasks before propagating them.
+        stopScheduling = true
+        throw error
+      }
     }
   })
 

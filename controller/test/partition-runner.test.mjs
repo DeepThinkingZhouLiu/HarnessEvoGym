@@ -224,6 +224,211 @@ test('terminal upstream/provider failures are infrastructure while local policy 
   assert.equal(rejected.records[0].attempts, 1)
 })
 
+test('any provider failure makes a failed concurrent attempt infrastructure', async () => {
+  const { options } = await fixture()
+  let audit
+  let requestSequence = 0
+  const runtime = {
+    async startModelGateway(gatewayOptions) {
+      audit = gatewayOptions.audit
+      return {
+        url: 'http://127.0.0.1:54321/v1',
+        stats: () => ({ totalRequests: 1, remainingRequests: 0, requestSequence }),
+        async waitForIdle() {},
+        async close() {},
+      }
+    },
+    buildHarnessInvocation: (value) => ({
+      command: '/fake/node', args: [], cwd: value.workdir,
+      env: { DSH_SESSION_ROOT: value.sessionRoot },
+    }),
+    async runHarnessSolver() {
+      // Completion order is deliberately the inverse of arrival order. Without
+      // request-id causality, a real provider failure makes this attempt unsafe
+      // to score as Candidate evidence even when a newer local rejection exists.
+      audit({ requestSequence: 2, status: 429, origin: 'gateway', localReason: 'request_budget' })
+      audit({ requestSequence: 1, status: 429, origin: 'upstream' })
+      requestSequence = 2
+      return solverResult('candidate_error', 'candidate')
+    },
+    async verifyTask() { throw new Error('verifier must not run') },
+  }
+  await assert.rejects(
+    () => runPartition({
+      ...options,
+      maximumModelRequestsPerTask: 1,
+      runtime,
+    }),
+    (error) => error instanceof InfrastructurePartitionError && error.errorCount === 1,
+  )
+})
+
+test('attempt watermark returns an empty set instead of reusing a late older audit', async () => {
+  const { options } = await fixture()
+  let audit
+  let requestSequence = 0
+  let solverCalls = 0
+  const runtime = {
+    async startModelGateway(gatewayOptions) {
+      audit = gatewayOptions.audit
+      return {
+        url: 'http://127.0.0.1:54321/v1',
+        stats: () => ({
+          totalRequests: 2,
+          remainingRequests: 1,
+          requestSequence,
+        }),
+        async waitForIdle() {},
+        async close() {},
+      }
+    },
+    buildHarnessInvocation: (value) => ({
+      command: '/fake/node', args: [], cwd: value.workdir,
+      env: { DSH_SESSION_ROOT: value.sessionRoot },
+    }),
+    async runHarnessSolver() {
+      solverCalls += 1
+      if (solverCalls === 1) {
+        requestSequence = 1
+        audit({ requestSequence: 1, status: 503, origin: 'upstream' })
+        // A second request from attempt 1 was accepted, but its audit has not
+        // completed when the first attempt's barrier incorrectly returns.
+        requestSequence = 2
+      } else {
+        // The old audit completes after attempt 2 captured watermark 2.
+        audit({ requestSequence: 2, status: 503, origin: 'upstream' })
+      }
+      return solverResult('candidate_error', 'candidate')
+    },
+    async verifyTask() { throw new Error('verifier must not run') },
+  }
+  const result = await runPartition({
+    ...options,
+    maximumModelRequestsPerTask: 3,
+    infrastructureRetries: 1,
+    runtime,
+  })
+  assert.equal(solverCalls, 2)
+  assert.equal(result.records[0].status, 'unresolved')
+  assert.equal(result.records[0].failureKind, 'candidate')
+})
+
+test('solver retries rotate the per-attempt dummy credential', async () => {
+  const { options } = await fixture()
+  let audit
+  let requestSequence = 0
+  let totalRequests = 0
+  let solverCalls = 0
+  const invocationKeys = []
+  const rotatedKeys = []
+  const runtime = {
+    async startModelGateway(gatewayOptions) {
+      audit = gatewayOptions.audit
+      return {
+        url: 'http://127.0.0.1:54321/v1',
+        stats: () => ({
+          totalRequests,
+          remainingRequests: 2 - totalRequests,
+          requestSequence,
+        }),
+        rotateCandidateApiKey(value) { rotatedKeys.push(value) },
+        async waitForIdle() {},
+        async close() {},
+      }
+    },
+    buildHarnessInvocation(value) {
+      invocationKeys.push(value.gatewayDummyKey)
+      return {
+        command: '/fake/node', args: [], cwd: value.workdir,
+        env: { DSH_SESSION_ROOT: value.sessionRoot },
+      }
+    },
+    async runHarnessSolver() {
+      solverCalls += 1
+      totalRequests += 1
+      requestSequence += 1
+      audit(solverCalls === 1
+        ? { requestSequence, status: 503, origin: 'upstream' }
+        : {
+            requestSequence,
+            status: 200,
+            origin: 'upstream',
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          })
+      return solverCalls === 1
+        ? solverResult('candidate_error', 'candidate')
+        : solverResult('completed', null)
+    },
+    async verifyTask() { return verifierResult('verified', null) },
+  }
+  const result = await runPartition({
+    ...options,
+    maximumModelRequestsPerTask: 2,
+    infrastructureRetries: 1,
+    runtime,
+  })
+  assert.equal(result.summary.verified, 1)
+  assert.equal(invocationKeys.length, 2)
+  assert.notEqual(invocationKeys[0], invocationKeys[1])
+  assert.equal(rotatedKeys[0], invocationKeys[1])
+  assert.notEqual(rotatedKeys[1], invocationKeys[1])
+})
+
+test('first infrastructure record stops scheduling untouched partition work', async () => {
+  const ids = [
+    'putnam_1962_a1',
+    'putnam_1962_a2',
+    'putnam_1962_a3',
+    'putnam_1962_a4',
+  ]
+  const { options } = await fixture(ids)
+  const scripted = scriptedRuntime({
+    solvers: [solverResult('infrastructure_error', 'infrastructure')],
+  })
+  await assert.rejects(
+    () => runPartition({
+      ...options,
+      concurrency: 1,
+      infrastructureRetries: 0,
+      runtime: scripted.runtime,
+    }),
+    (error) => error instanceof InfrastructurePartitionError
+      && error.errorCount === 1
+      && error.total === ids.length,
+  )
+  assert.equal(scripted.counts().solverCalls, 1)
+})
+
+test('a direct task exception stops scheduling untouched partition work', async () => {
+  const ids = [
+    'putnam_1962_a1',
+    'putnam_1962_a2',
+    'putnam_1962_a3',
+    'putnam_1962_a4',
+  ]
+  const { options } = await fixture(ids)
+  let gatewayStarts = 0
+  let releaseInFlight
+  const inFlight = new Promise((resolve) => { releaseInFlight = resolve })
+  const runtime = {
+    async startModelGateway() {
+      gatewayStarts += 1
+      if (gatewayStarts === 2) releaseInFlight()
+      await inFlight
+      throw new Error('gateway setup failed')
+    },
+  }
+  await assert.rejects(
+    () => runPartition({ ...options, concurrency: 2, runtime }),
+    (error) => error instanceof InfrastructurePartitionError
+      && error.errorCount === 2
+      && error.total === ids.length,
+  )
+  // The two already in-flight workers may finish, but neither may claim one of
+  // the two untouched tasks after the shared stop flag is set.
+  assert.equal(gatewayStarts, 2)
+})
+
 test('verifier infrastructure retry reuses the proof without another model call', async () => {
   const { options } = await fixture()
   const scripted = scriptedRuntime({

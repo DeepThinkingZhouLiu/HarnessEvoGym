@@ -51,6 +51,13 @@ function requirePositiveInteger(value, name) {
   return value
 }
 
+function normalizeCandidateApiKey(value) {
+  if (typeof value !== 'string' || value.length < 8 || /[\r\n]/u.test(value)) {
+    throw new TypeError('candidateApiKey must be a non-empty dummy value without newlines')
+  }
+  return value
+}
+
 function normalizeUpstreamEndpoint(value) {
   let base
   try {
@@ -161,21 +168,29 @@ function sendJson(response, status, value, headers = {}) {
   response.end(body)
 }
 
-function publicError(status) {
+function publicError(status, localReason) {
   if (status === 400) return 'Invalid JSON request body'
   if (status === 401) return 'Dummy gateway authorization required'
   if (status === 404) return 'Not found'
   if (status === 405) return 'Method not allowed'
   if (status === 413) return 'Request body too large'
+  if (status === 429 && localReason === 'concurrency_limit') {
+    return 'Gateway concurrency limit reached'
+  }
   if (status === 429) return 'Gateway request limit reached'
   if (status === 499) return 'Client closed request'
   if (status === 504) return 'Upstream request timed out'
   return 'Upstream request failed'
 }
 
-function rejectRequest(request, response, status, extraHeaders) {
+function rejectRequest(request, response, status, extraHeaders, localReason) {
   request.resume()
-  sendJson(response, status, { error: { message: publicError(status), type: 'gateway_error' } }, extraHeaders)
+  sendJson(response, status, {
+    error: {
+      message: publicError(status, localReason),
+      type: 'gateway_error',
+    },
+  }, extraHeaders)
 }
 
 function readRequestBody(request, maximumBytes) {
@@ -512,10 +527,9 @@ function normalizeOptions(options) {
     options.maxErrorBytes ?? DEFAULT_MAX_ERROR_BYTES,
     'maxErrorBytes',
   )
-  const candidateApiKey = options.candidateApiKey ?? DEFAULT_CANDIDATE_API_KEY
-  if (typeof candidateApiKey !== 'string' || candidateApiKey.length < 8 || /[\r\n]/u.test(candidateApiKey)) {
-    throw new TypeError('candidateApiKey must be a non-empty dummy value without newlines')
-  }
+  const candidateApiKey = normalizeCandidateApiKey(
+    options.candidateApiKey ?? DEFAULT_CANDIDATE_API_KEY,
+  )
   if (options.audit !== undefined && typeof options.audit !== 'function') {
     throw new TypeError('audit must be a function')
   }
@@ -543,35 +557,66 @@ function normalizeOptions(options) {
  */
 export function createModelGateway(options) {
   const config = normalizeOptions(options ?? {})
-  const counters = { active: 0, total: 0 }
+  const counters = {
+    active: 0,
+    total: 0,
+    localConcurrencyRejected: 0,
+    localBudgetRejected: 0,
+    requestSequence: 0,
+  }
   let boundUrl
+  let candidateApiKey = config.candidateApiKey
+  const pendingAudits = new Set()
+  const idleWaiters = new Set()
 
-  const safeAudit = async (record) => {
+  const notifyIdle = () => {
+    if (counters.active !== 0 || pendingAudits.size !== 0) return
+    for (const resolve of idleWaiters) resolve()
+    idleWaiters.clear()
+  }
+
+  const safeAudit = (record) => {
     const safeRecord = Object.freeze({
       timestamp: record.timestamp,
       requestId: record.requestId,
+      requestSequence: record.requestSequence,
       status: record.status,
       origin: record.origin,
+      ...(record.localReason ? { localReason: record.localReason } : {}),
       ...(record.usage ? { usage: Object.freeze({ ...record.usage }) } : {}),
     })
+    let sinkResult
     try {
-      await config.audit(safeRecord)
+      // Invoke the sink synchronously so an in-process ledger observes the
+      // record before the downstream client can finish. Still track an async
+      // sink so callers can establish a complete classification barrier.
+      sinkResult = config.audit(safeRecord)
     } catch {
       // Audit sink failures must never expose its error, request content, or credentials.
     }
+    const pending = Promise.resolve(sinkResult).catch(() => {})
+    pendingAudits.add(pending)
+    pending.then(() => {
+      pendingAudits.delete(pending)
+      notifyIdle()
+    })
+    return pending
   }
 
   const server = http.createServer((request, response) => {
     const requestId = randomUUID()
+    const requestSequence = ++counters.requestSequence
     let audited = false
-    const audit = async (status, usage, origin = 'gateway') => {
+    const audit = async (status, usage, origin = 'gateway', localReason) => {
       if (audited) return
       audited = true
       await safeAudit({
         timestamp: new Date().toISOString(),
         requestId,
+        requestSequence,
         status,
         origin,
+        localReason,
         usage,
       })
     }
@@ -596,22 +641,28 @@ export function createModelGateway(options) {
       const authorization = Array.isArray(request.headers.authorization)
         ? request.headers.authorization[0]
         : request.headers.authorization
-      if (!constantTimeTextEqual(authorization ?? '', `Bearer ${config.candidateApiKey}`)) {
+      if (!constantTimeTextEqual(authorization ?? '', `Bearer ${candidateApiKey}`)) {
         rejectRequest(request, response, 401)
         await audit(401)
         return
       }
       if (counters.total >= config.maxRequests) {
-        rejectRequest(request, response, 429)
-        await audit(429)
+        counters.localBudgetRejected += 1
+        rejectRequest(request, response, 429, undefined, 'request_budget')
+        await audit(429, undefined, 'gateway', 'request_budget')
+        return
+      }
+      if (counters.active >= config.maxConcurrency) {
+        // A request rejected before reaching the upstream is not model work and
+        // must not consume the Candidate's finite model-request budget. Counting
+        // these retries used to make parallel Harness sessions burn the entire
+        // budget without receiving a model response.
+        counters.localConcurrencyRejected += 1
+        rejectRequest(request, response, 429, undefined, 'concurrency_limit')
+        await audit(429, undefined, 'gateway', 'concurrency_limit')
         return
       }
       counters.total += 1
-      if (counters.active >= config.maxConcurrency) {
-        rejectRequest(request, response, 429)
-        await audit(429)
-        return
-      }
 
       counters.active += 1
       try {
@@ -663,6 +714,7 @@ export function createModelGateway(options) {
         await audit(outcome.status, outcome.usage, 'upstream')
       } finally {
         counters.active -= 1
+        notifyIdle()
       }
     }
 
@@ -674,7 +726,9 @@ export function createModelGateway(options) {
 
   const gateway = {
     server,
-    candidateApiKey: config.candidateApiKey,
+    get candidateApiKey() {
+      return candidateApiKey
+    },
     get url() {
       return boundUrl
     },
@@ -683,7 +737,21 @@ export function createModelGateway(options) {
         activeRequests: counters.active,
         totalRequests: counters.total,
         remainingRequests: Math.max(0, config.maxRequests - counters.total),
+        localConcurrencyRejectedRequests: counters.localConcurrencyRejected,
+        localBudgetRejectedRequests: counters.localBudgetRejected,
+        requestSequence: counters.requestSequence,
       })
+    },
+    async waitForIdle() {
+      if (counters.active === 0 && pendingAudits.size === 0) return
+      await new Promise((resolve) => idleWaiters.add(resolve))
+    },
+    rotateCandidateApiKey(value) {
+      // The Controller rotates this untrusted, loopback-only credential after
+      // each Solver process exits. Requests still queued from an old attempt
+      // then fail authentication instead of crossing the next attempt's audit
+      // and model-request budget boundary.
+      candidateApiKey = normalizeCandidateApiKey(value)
     },
     async start({ host = '127.0.0.1', port = 0 } = {}) {
       if (!isLoopbackHost(host)) throw new TypeError('model gateway host must be 127.0.0.1 or ::1')
@@ -708,13 +776,20 @@ export function createModelGateway(options) {
       return gateway
     },
     async close() {
-      config.apiKeyLoader.clear()
       boundUrl = undefined
-      if (!server.listening) return
-      await new Promise((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()))
-        server.closeIdleConnections?.()
-      })
+      try {
+        if (server.listening) {
+          await new Promise((resolve, reject) => {
+            server.close((error) => (error ? reject(error) : resolve()))
+            server.closeIdleConnections?.()
+          })
+        }
+        // server.close() drains accepted connections, while waitForIdle() also
+        // flushes asynchronous audit sinks before their evidence can be discarded.
+        await gateway.waitForIdle()
+      } finally {
+        config.apiKeyLoader.clear()
+      }
     },
   }
 

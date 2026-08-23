@@ -261,6 +261,11 @@ test('Updater feedback is absolute-time-free while relative validation timing re
       ].join('\n'),
     },
   })
+  await store.writeValidationTrace(
+    'baseline',
+    'orphan-infrastructure-attempt',
+    '{"failureKind":"infrastructure"}\n',
+  )
   const receipt = await store.sealTest('baseline', {
     summary: {
       candidateId: 'baseline', verified: 100, total: 172,
@@ -307,6 +312,13 @@ test('Updater feedback is absolute-time-free while relative validation timing re
   assert.match(projectedTrace, /trace-grounded reasoning survives/u)
   assert.match(projectedTrace, /\[NORMALIZED_TIME\]/u)
   assert.match(projectedTrace, /"timing":\{"durationMs":10000\}/u)
+  await assert.rejects(
+    () => readFile(
+      join(store.feedbackRoot, 'baseline', 'traces', 'orphan-infrastructure-attempt.jsonl'),
+      'utf8',
+    ),
+    (error) => error.code === 'ENOENT',
+  )
   assert.doesNotMatch(
     `${await readFile(projectedSummaryPath, 'utf8')}\n${JSON.stringify(projectedRecord)}\n${projectedTrace}`,
     /2026-03-01|completedAt|startedAt|endedAt|timestamp/iu,

@@ -48,6 +48,8 @@ const SAFE_ENVIRONMENT_KEYS = new Set([
 ])
 const CANDIDATE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const LEVELS = new Set(['baseline', 'l1', 'l2', 'l3'])
+const HOST_BUILD_ATTEMPTS = 2
+const SOURCE_SMOKE_ATTEMPTS = 2
 
 export const SOURCE_SMOKE_SANDBOX_PATHS = Object.freeze({
   runtime: '/opt/harness-rsi/candidate-runtime',
@@ -152,15 +154,19 @@ function processExitCode(result) {
 }
 
 function processSucceeded(result) {
-  if (result?.ok === true) return true
-  return processExitCode(result) === 0
+  return (result?.ok === true || processExitCode(result) === 0)
     && result?.timedOut !== true
     && result?.aborted !== true
     && result?.outputExceeded !== true
+    && (result?.signal === null || result?.signal === undefined || result?.signal === '')
 }
 
 function processOperationalFailure(result) {
-  return result?.timedOut === true || result?.aborted === true || result?.outputExceeded === true
+  return result?.timedOut === true
+    || result?.aborted === true
+    || result?.outputExceeded === true
+    || (typeof result?.signal === 'string' && result.signal.length > 0)
+    || (!processSucceeded(result) && processExitCode(result) === null)
 }
 
 async function walkTree(root, visit) {
@@ -1023,7 +1029,15 @@ export class PutnamEvolutionRuntime {
           // Fresh source checkouts cannot boot the normal headless profile until
           // its generated host-side typert exports exist. Build them inside the
           // same unprivileged, no-network sandbox before freezing the runtime.
-          hostBuildResult = await executeBuildStep(hostBuildArguments)
+          for (let attempt = 1; attempt <= HOST_BUILD_ATTEMPTS; attempt += 1) {
+            hostBuildResult = await executeBuildStep(hostBuildArguments)
+            // A plain nonzero can be caused by a transient filesystem read on
+            // network-backed runtime storage. Retry it once in the same sealed
+            // build sandbox. Operational failures must remain infrastructure.
+            if (processSucceeded(hostBuildResult) || processOperationalFailure(hostBuildResult)) {
+              break
+            }
+          }
         }
       } finally {
         await this.removePath(buildRunRoot).catch(() => {})
@@ -1070,42 +1084,48 @@ export class PutnamEvolutionRuntime {
         uid: this.trustedUid,
         gid: this.trustedGid,
       })
-      const sourceSmokeRunRoot = join(
-        this.sourceSmokeRoot,
-        `${candidateId}-${randomUUID()}`,
-      )
       let smoke
-      try {
-        await this.removePath(sourceSmokeRunRoot)
-        for (const path of [
-          sourceSmokeRunRoot,
-          join(sourceSmokeRunRoot, 'work'),
-          join(sourceSmokeRunRoot, 'home'),
-          join(sourceSmokeRunRoot, 'tmp'),
-        ]) {
-          await this.prepareOwnedDirectory({
-            path,
-            uid: this.solverUid,
-            gid: this.solverGid,
-            mode: 0o700,
+      for (let attempt = 1; attempt <= SOURCE_SMOKE_ATTEMPTS; attempt += 1) {
+        const sourceSmokeRunRoot = join(
+          this.sourceSmokeRoot,
+          `${candidateId}-${randomUUID()}`,
+        )
+        try {
+          await this.removePath(sourceSmokeRunRoot)
+          for (const path of [
+            sourceSmokeRunRoot,
+            join(sourceSmokeRunRoot, 'work'),
+            join(sourceSmokeRunRoot, 'home'),
+            join(sourceSmokeRunRoot, 'tmp'),
+          ]) {
+            await this.prepareOwnedDirectory({
+              path,
+              uid: this.solverUid,
+              gid: this.solverGid,
+              mode: 0o700,
+            })
+          }
+          smoke = await this.smokeRuntime({
+            runtimeRoot: temporaryRoot,
+            sourceSmokeRoot: sourceSmokeRunRoot,
+            nodePath: this.nodePath,
+            bwrapPath: this.bwrapPath,
+            setprivPath: this.setprivPath,
+            solverUid: this.solverUid,
+            solverGid: this.solverGid,
+            environment: safeEnvironment(this.baseEnvironment, this.solverHome),
+            timeoutMs: this.smokeTimeoutMs,
+            signal: this.signal,
+            secretValues: this.secretValues,
+            executeProcess: this.executeProcess,
           })
+        } finally {
+          await this.removePath(sourceSmokeRunRoot).catch(() => {})
         }
-        smoke = await this.smokeRuntime({
-          runtimeRoot: temporaryRoot,
-          sourceSmokeRoot: sourceSmokeRunRoot,
-          nodePath: this.nodePath,
-          bwrapPath: this.bwrapPath,
-          setprivPath: this.setprivPath,
-          solverUid: this.solverUid,
-          solverGid: this.solverGid,
-          environment: safeEnvironment(this.baseEnvironment, this.solverHome),
-          timeoutMs: this.smokeTimeoutMs,
-          signal: this.signal,
-          secretValues: this.secretValues,
-          executeProcess: this.executeProcess,
-        })
-      } finally {
-        await this.removePath(sourceSmokeRunRoot).catch(() => {})
+        // Retry only an ordinary nonzero Candidate launch. Timeouts, aborts,
+        // and output-limit failures are operational and must retain their
+        // infrastructure classification even if a later attempt might pass.
+        if (processSucceeded(smoke) || processOperationalFailure(smoke)) break
       }
       if (processOperationalFailure(smoke)) {
         throw new Error('candidate source launch timed out, aborted, or exceeded output limits')

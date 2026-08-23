@@ -61,7 +61,9 @@ async function fixture({
   dependencyOverrides = {},
   installResult,
   hostBuildResult,
+  hostBuildResults,
   smokeResult,
+  smokeResults,
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'production-runtime-'))
   const paths = {
@@ -137,6 +139,8 @@ async function fixture({
     },
   }
   let getApiKeyCalls = 0
+  let hostBuildCalls = 0
+  let sourceSmokeCalls = 0
   const getApiKey = async () => {
     getApiKeyCalls += 1
     return 'provider-real-secret-value'
@@ -159,13 +163,21 @@ async function fixture({
         return installResult ?? { ok: true, exitCode: 0, stdout: '', stderr: '' }
       }
       if (options.args.includes('build:lib:host')) {
-        if (hostBuildResult instanceof Error) throw hostBuildResult
-        return hostBuildResult ?? { ok: true, exitCode: 0, stdout: '', stderr: '' }
+        const configuredBuild = Array.isArray(hostBuildResults)
+          ? hostBuildResults[Math.min(hostBuildCalls, hostBuildResults.length - 1)]
+          : hostBuildResult
+        hostBuildCalls += 1
+        if (configuredBuild instanceof Error) throw configuredBuild
+        return configuredBuild ?? { ok: true, exitCode: 0, stdout: '', stderr: '' }
       }
       if (options.args.some((argument) => argument.endsWith('/apps/cli/src/bin.ts'))
           && options.args.includes('--version')) {
-        if (smokeResult instanceof Error) throw smokeResult
-        return smokeResult ?? { ok: true, exitCode: 0, stdout: '0.0.0\n', stderr: '' }
+        const configuredSmoke = Array.isArray(smokeResults)
+          ? smokeResults[Math.min(sourceSmokeCalls, smokeResults.length - 1)]
+          : smokeResult
+        sourceSmokeCalls += 1
+        if (configuredSmoke instanceof Error) throw configuredSmoke
+        return configuredSmoke ?? { ok: true, exitCode: 0, stdout: '0.0.0\n', stderr: '' }
       }
       throw new Error('unexpected process invocation')
     },
@@ -607,6 +619,26 @@ test('candidate install nonzero is a candidate failure; operational failures are
     assert.equal(result.kind, 'candidate')
     assert.equal(result.exitCode, 2)
     assert.match(result.message, /host artifact build/u)
+    const hostBuilds = fixtureContext.calls.processes.filter((entry) => (
+      entry.args.includes('build:lib:host')
+    ))
+    assert.equal(hostBuilds.length, 2)
+  })
+  await context.test('transient host build nonzero is retried once', async () => {
+    const fixtureContext = await fixture({
+      hostBuildResults: [
+        { ok: false, exitCode: 1, stdout: '', stderr: 'transient NFS read failure' },
+        { ok: true, exitCode: 0, stdout: '', stderr: '' },
+      ],
+    })
+    const result = await fixtureContext.runtime.buildCandidate({
+      candidateId: 'c0001-l1', candidateRoot: fixtureContext.paths.candidateSource, level: 'l1',
+    })
+    assert.equal(result.ok, true)
+    const hostBuilds = fixtureContext.calls.processes.filter((entry) => (
+      entry.args.includes('build:lib:host')
+    ))
+    assert.equal(hostBuilds.length, 2)
   })
   await context.test('host build timeout', async () => {
     const fixtureContext = await fixture({
@@ -618,6 +650,49 @@ test('candidate install nonzero is a candidate failure; operational failures are
       }),
       (error) => error instanceof ProductionRuntimeError && error.kind === 'infrastructure',
     )
+  })
+  await context.test('operational host build failure is never hidden by a later success', async () => {
+    for (const operational of [
+      { ok: false, exitCode: null, timedOut: true, stdout: '', stderr: '' },
+      { ok: false, exitCode: null, aborted: true, stdout: '', stderr: '' },
+      { ok: false, exitCode: null, outputExceeded: true, stdout: '', stderr: '' },
+      { ok: false, exitCode: null, signal: 'SIGKILL', stdout: '', stderr: '' },
+    ]) {
+      const fixtureContext = await fixture({
+        hostBuildResults: [
+          operational,
+          { ok: true, exitCode: 0, stdout: '', stderr: '' },
+        ],
+      })
+      await assert.rejects(
+        () => fixtureContext.runtime.buildCandidate({
+          candidateId: 'c0001-l1', candidateRoot: fixtureContext.paths.candidateSource, level: 'l1',
+        }),
+        (error) => error instanceof ProductionRuntimeError && error.kind === 'infrastructure',
+      )
+      const hostBuilds = fixtureContext.calls.processes.filter((entry) => (
+        entry.args.includes('build:lib:host')
+      ))
+      assert.equal(hostBuilds.length, 1)
+    }
+  })
+  await context.test('host build spawn error is infrastructure without retry', async () => {
+    const fixtureContext = await fixture({
+      hostBuildResults: [
+        new Error('spawn failed'),
+        { ok: true, exitCode: 0, stdout: '', stderr: '' },
+      ],
+    })
+    await assert.rejects(
+      () => fixtureContext.runtime.buildCandidate({
+        candidateId: 'c0001-l1', candidateRoot: fixtureContext.paths.candidateSource, level: 'l1',
+      }),
+      (error) => error instanceof ProductionRuntimeError && error.kind === 'infrastructure',
+    )
+    const hostBuilds = fixtureContext.calls.processes.filter((entry) => (
+      entry.args.includes('build:lib:host')
+    ))
+    assert.equal(hostBuilds.length, 1)
   })
   await context.test('missing source entry', async () => {
     const fixtureContext = await fixture({
@@ -643,6 +718,22 @@ test('candidate install nonzero is a candidate failure; operational failures are
     assert.equal(result.kind, 'candidate')
     assert.match(result.message, /source launch/u)
   })
+  await context.test('transient source launch nonzero is retried once', async () => {
+    const fixtureContext = await fixture({
+      smokeResults: [
+        { ok: false, exitCode: 1, stdout: '', stderr: 'transient NFS read failure' },
+        { ok: true, exitCode: 0, stdout: '0.0.0\n', stderr: '' },
+      ],
+    })
+    const result = await fixtureContext.runtime.buildCandidate({
+      candidateId: 'c0001-l1', candidateRoot: fixtureContext.paths.candidateSource, level: 'l1',
+    })
+    assert.equal(result.ok, true)
+    const sourceSmokes = fixtureContext.calls.processes.filter((entry) => (
+      entry.args.some((argument) => argument.endsWith('/apps/cli/src/bin.ts'))
+    ))
+    assert.equal(sourceSmokes.length, 2)
+  })
   await context.test('source launch timeout', async () => {
     const fixtureContext = await fixture({
       smokeResult: { ok: false, exitCode: null, timedOut: true, stdout: '', stderr: '' },
@@ -653,6 +744,49 @@ test('candidate install nonzero is a candidate failure; operational failures are
       }),
       (error) => error instanceof ProductionRuntimeError && error.kind === 'infrastructure',
     )
+  })
+  await context.test('operational source failure is never hidden by a later success', async () => {
+    for (const operational of [
+      { ok: false, exitCode: null, timedOut: true, stdout: '', stderr: '' },
+      { ok: false, exitCode: null, aborted: true, stdout: '', stderr: '' },
+      { ok: false, exitCode: null, outputExceeded: true, stdout: '', stderr: '' },
+      { ok: false, exitCode: null, signal: 'SIGKILL', stdout: '', stderr: '' },
+    ]) {
+      const fixtureContext = await fixture({
+        smokeResults: [
+          operational,
+          { ok: true, exitCode: 0, stdout: '0.0.0\n', stderr: '' },
+        ],
+      })
+      await assert.rejects(
+        () => fixtureContext.runtime.buildCandidate({
+          candidateId: 'c0001-l1', candidateRoot: fixtureContext.paths.candidateSource, level: 'l1',
+        }),
+        (error) => error instanceof ProductionRuntimeError && error.kind === 'infrastructure',
+      )
+      const sourceSmokes = fixtureContext.calls.processes.filter((entry) => (
+        entry.args.some((argument) => argument.endsWith('/apps/cli/src/bin.ts'))
+      ))
+      assert.equal(sourceSmokes.length, 1)
+    }
+  })
+  await context.test('source launch spawn error is infrastructure without retry', async () => {
+    const fixtureContext = await fixture({
+      smokeResults: [
+        new Error('spawn failed'),
+        { ok: true, exitCode: 0, stdout: '0.0.0\n', stderr: '' },
+      ],
+    })
+    await assert.rejects(
+      () => fixtureContext.runtime.buildCandidate({
+        candidateId: 'c0001-l1', candidateRoot: fixtureContext.paths.candidateSource, level: 'l1',
+      }),
+      (error) => error instanceof ProductionRuntimeError && error.kind === 'infrastructure',
+    )
+    const sourceSmokes = fixtureContext.calls.processes.filter((entry) => (
+      entry.args.some((argument) => argument.endsWith('/apps/cli/src/bin.ts'))
+    ))
+    assert.equal(sourceSmokes.length, 1)
   })
 })
 

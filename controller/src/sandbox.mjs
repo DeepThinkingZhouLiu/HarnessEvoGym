@@ -451,14 +451,14 @@ export async function attestSandboxRuntime({
     const chain = await checkedExecute(
       execute,
       firewall,
-      ['-w', '5', '-n', '-S', 'DSH_RSI_EGRESS'],
+      ['-w', '5', '-S', 'DSH_RSI_EGRESS'],
       `${firewall} DSH_RSI_EGRESS`,
     )
     assertFirewallChain(chain, firewall)
     const output = await checkedExecute(
       execute,
       firewall,
-      ['-w', '5', '-n', '-S', 'OUTPUT'],
+      ['-w', '5', '-S', 'OUTPUT'],
       `${firewall} OUTPUT`,
     )
     assertOutputOwnerRules(output, firewall, restrictedUids)

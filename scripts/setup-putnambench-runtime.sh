@@ -7,6 +7,7 @@ NODE_SHA256=14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647
 PNPM_VERSION=11.7.0
 ELAN_VERSION=4.2.3
 ELAN_SHA256=df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2
+LEAN_VERSION=4.27.0
 LEAN_TOOLCHAIN=leanprover/lean4:v4.27.0
 PUTNAMBENCH_REVISION=dfb0a47a1c1ec3a10f2a9acfdf41a2043920f33c
 DEEPSEEK_HARNESS_REVISION=3289531e06e924abb790685f44baf67311f26ec9
@@ -201,7 +202,17 @@ if [[ ! -x ${elan_home}/bin/elan ]]; then
   tar -xzf "$elan_archive" -C "$download_root"
   ELAN_HOME="$elan_home" "${download_root}/elan-init" -y --no-modify-path --default-toolchain none
 fi
-ELAN_HOME="$elan_home" "${elan_home}/bin/elan" toolchain install "$LEAN_TOOLCHAIN"
+if ! ELAN_HOME="$elan_home" "${elan_home}/bin/elan" toolchain list \
+    | awk '{ print $1 }' \
+    | grep -Fxq "$LEAN_TOOLCHAIN"; then
+  ELAN_HOME="$elan_home" "${elan_home}/bin/elan" toolchain install "$LEAN_TOOLCHAIN"
+fi
+lean_version=$(ELAN_HOME="$elan_home" "${elan_home}/bin/elan" \
+  run "$LEAN_TOOLCHAIN" lean --version)
+if [[ $lean_version != "Lean (version ${LEAN_VERSION},"* ]]; then
+  printf 'Lean version attestation failed: %s\n' "$lean_version" >&2
+  exit 1
+fi
 
 dataset_parent="${runtime_root}/datasets"
 dataset_root="${dataset_parent}/PutnamBench"
@@ -338,7 +349,7 @@ for firewall in /usr/sbin/iptables /usr/sbin/ip6tables; do
   done
 
   "$firewall" -w 5 -C DSH_RSI_EGRESS -j REJECT >/dev/null
-  chain_rule_count=$("$firewall" -w 5 -n -S DSH_RSI_EGRESS \
+  chain_rule_count=$("$firewall" -w 5 -S DSH_RSI_EGRESS \
     | awk '$1 == "-A" && $2 == "DSH_RSI_EGRESS" { count += 1 } END { print count + 0 }')
   if [[ $chain_rule_count -ne 1 ]]; then
     printf 'DSH_RSI_EGRESS must contain only its terminal REJECT rule: %s\n' "$firewall" >&2

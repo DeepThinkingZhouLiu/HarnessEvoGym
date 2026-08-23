@@ -152,8 +152,10 @@ function firewallOutput(uids) {
 test('live sandbox attestation accepts only a fail-closed dual-stack owner firewall', async () => {
   const uids = [1101, 1103, 1104]
   const commands = []
+  const argumentLists = []
   const execute = async ({ command, args }) => {
     commands.push(command)
+    argumentLists.push([...args])
     if (command === '/bin/true') return { exitCode: 0, stdout: 'bubblewrap 0.6.1\n' }
     if (command === '/usr/bin/env') return { exitCode: 0, stdout: 'setpriv from util-linux 2.39\n' }
     if (args.at(-1) === 'DSH_RSI_EGRESS') {
@@ -175,6 +177,10 @@ test('live sandbox attestation accepts only a fail-closed dual-stack owner firew
   assert.equal(result.ipv6, 'attested')
   assert.ok(commands.includes('/usr/sbin/iptables'))
   assert.ok(commands.includes('/usr/sbin/ip6tables'))
+  assert.equal(
+    argumentLists.filter((args) => args.includes('-S')).every((args) => !args.includes('-n')),
+    true,
+  )
 
   await assert.rejects(
     () => attestSandboxRuntime({

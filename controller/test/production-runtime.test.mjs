@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -60,6 +60,7 @@ async function fixture({
   optionOverrides = {},
   dependencyOverrides = {},
   installResult,
+  hostBuildResult,
   smokeResult,
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'production-runtime-'))
@@ -156,6 +157,10 @@ async function fixture({
       if (options.args.includes('install')) {
         if (installResult instanceof Error) throw installResult
         return installResult ?? { ok: true, exitCode: 0, stdout: '', stderr: '' }
+      }
+      if (options.args.includes('build:lib:host')) {
+        if (hostBuildResult instanceof Error) throw hostBuildResult
+        return hostBuildResult ?? { ok: true, exitCode: 0, stdout: '', stderr: '' }
       }
       if (options.args.some((argument) => argument.endsWith('/apps/cli/src/bin.ts'))
           && options.args.includes('--version')) {
@@ -428,6 +433,46 @@ test('builds baseline and candidates offline inside the no-network build sandbox
     assert.equal(invocation.env.DASHSCOPE_API_KEY, undefined)
     assert.equal(invocation.env.NODE_OPTIONS, undefined)
   }
+  const hostBuilds = context.calls.processes.filter((entry) => (
+    entry.args.includes('build:lib:host')
+  ))
+  assert.equal(hostBuilds.length, 2)
+  for (const invocation of hostBuilds) {
+    assert.equal(invocation.command, '/usr/bin/setpriv')
+    assert.equal(invocation.args.includes('--reuid=1102'), true)
+    assert.equal(invocation.args.includes('--regid=2102'), true)
+    assert.equal(invocation.args.includes('--no-new-privs'), true)
+    assert.equal(invocation.args.includes('/usr/bin/bwrap'), true)
+    assert.equal(invocation.args.includes('--unshare-net'), true)
+    assert.equal(invocation.args.includes('--config.minimum-release-age=0'), true)
+    assert.equal(invocation.args.includes('--config.trust-policy=off'), true)
+    assert.equal(invocation.args.includes('--config.update-notifier=false'), true)
+    assert.equal(invocation.args.includes('run'), true)
+    assert.equal(invocation.args.includes('build:lib:host'), true)
+    assert.equal(invocation.args.includes('--offline'), false)
+    assert.equal(invocation.args.includes('--ignore-scripts'), false)
+    assert.equal(mountMode(
+      invocation.args,
+      context.paths.store,
+      BUILD_SANDBOX_PATHS.store,
+    ), '--ro-bind')
+    const runtimeMount = explicitMounts(invocation.args).find((entry) => (
+      entry[2] === BUILD_SANDBOX_PATHS.runtime
+    ))
+    assert.equal(runtimeMount?.[0], '--bind')
+    assert.equal(explicitMounts(invocation.args).length, 4)
+    assert.equal(invocation.args.includes(context.paths.baselineSource), false)
+    assert.equal(invocation.args.includes(context.paths.candidateSource), false)
+    assert.equal(invocation.args.includes(context.paths.feedback), false)
+    assert.equal(invocation.args.includes(context.paths.dataset), false)
+    const boundary = invocation.args.lastIndexOf('--')
+    assert.equal(invocation.args.slice(boundary + 1).join(' ').includes(context.root), false)
+    assert.equal(invocation.env.HOME, `${BUILD_SANDBOX_PATHS.workspace}/home`)
+    assert.equal(invocation.env.TMPDIR, `${BUILD_SANDBOX_PATHS.workspace}/tmp`)
+    assert.equal(invocation.env.ZCLOUD_API_KEY, undefined)
+    assert.equal(invocation.env.DASHSCOPE_API_KEY, undefined)
+    assert.equal(invocation.env.NODE_OPTIONS, undefined)
+  }
   assert.deepEqual(context.calls.storeValidations, [{
     root: context.paths.store,
     trustedUid: 0,
@@ -544,6 +589,29 @@ test('candidate install nonzero is a candidate failure; operational failures are
   })
   await context.test('spawn error', async () => {
     const fixtureContext = await fixture({ installResult: new Error('spawn failed') })
+    await assert.rejects(
+      () => fixtureContext.runtime.buildCandidate({
+        candidateId: 'c0001-l1', candidateRoot: fixtureContext.paths.candidateSource, level: 'l1',
+      }),
+      (error) => error instanceof ProductionRuntimeError && error.kind === 'infrastructure',
+    )
+  })
+  await context.test('host build nonzero', async () => {
+    const fixtureContext = await fixture({
+      hostBuildResult: { ok: false, exitCode: 2, stdout: '', stderr: 'compile failed' },
+    })
+    const result = await fixtureContext.runtime.buildCandidate({
+      candidateId: 'c0001-l1', candidateRoot: fixtureContext.paths.candidateSource, level: 'l1',
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.kind, 'candidate')
+    assert.equal(result.exitCode, 2)
+    assert.match(result.message, /host artifact build/u)
+  })
+  await context.test('host build timeout', async () => {
+    const fixtureContext = await fixture({
+      hostBuildResult: { ok: false, exitCode: null, timedOut: true, stdout: '', stderr: '' },
+    })
     await assert.rejects(
       () => fixtureContext.runtime.buildCandidate({
         candidateId: 'c0001-l1', candidateRoot: fixtureContext.paths.candidateSource, level: 'l1',
@@ -998,6 +1066,8 @@ test('smoke builds then reuses baseline and runs only caller-provided validation
     candidateRoot: context.paths.baselineSource,
     instanceIds: ids,
   })
+  // Simulate a fresh Controller process reusing the persisted baseline.
+  context.runtime.baselineBuilt = false
   const second = await context.runtime.smoke({
     candidateRoot: context.paths.baselineSource,
     instanceIds: ids.slice(0, 1),
@@ -1018,6 +1088,10 @@ test('smoke builds then reuses baseline and runs only caller-provided validation
   assert.equal(context.calls.traces.length, 0)
   assert.equal(context.calls.copies.length, 1)
   assert.equal(context.calls.processes.filter((entry) => entry.args.includes('install')).length, 1)
+  assert.deepEqual(context.calls.frozenRuntimeValidations, [{
+    root: join(context.paths.runtimes, 'baseline'),
+    trustedUid: 0,
+  }])
 
   await assert.rejects(
     () => context.runtime.smoke({
@@ -1193,19 +1267,39 @@ test('evaluation runtime critical launch closure must remain trusted-owned and f
   const root = join(parent, 'candidate-parent')
   const sourceEntry = join(root, 'apps', 'cli', 'src', 'bin.ts')
   const tsxEntry = join(root, 'node_modules', 'tsx', 'dist', 'esm', 'index.mjs')
+  const commandsTypert = join(
+    root, 'packages', 'interaction', 'commands', 'lib', 'typert.host.js',
+  )
+  const goalTypert = join(root, 'packages', 'goal', 'goal', 'lib', 'typert.host.js')
   await Promise.all([
     mkdir(join(root, 'apps', 'cli', 'src'), { recursive: true }),
     mkdir(join(root, 'node_modules', 'tsx', 'dist', 'esm'), { recursive: true }),
+    mkdir(join(root, 'packages', 'interaction', 'commands', 'lib'), { recursive: true }),
+    mkdir(join(root, 'packages', 'goal', 'goal', 'lib'), { recursive: true }),
   ])
   await Promise.all([
     writeFile(sourceEntry, 'export {}\n'),
     writeFile(tsxEntry, 'export {}\n'),
+    writeFile(commandsTypert, 'export {}\n'),
+    writeFile(goalTypert, 'export {}\n'),
   ])
-  await Promise.all([chmod(sourceEntry, 0o444), chmod(tsxEntry, 0o444)])
+  await Promise.all([
+    chmod(sourceEntry, 0o444),
+    chmod(tsxEntry, 0o444),
+    chmod(commandsTypert, 0o444),
+    chmod(goalTypert, 0o444),
+  ])
   for (const directory of [
     join(root, 'apps', 'cli', 'src'),
     join(root, 'apps', 'cli'),
     join(root, 'apps'),
+    join(root, 'packages', 'interaction', 'commands', 'lib'),
+    join(root, 'packages', 'interaction', 'commands'),
+    join(root, 'packages', 'interaction'),
+    join(root, 'packages', 'goal', 'goal', 'lib'),
+    join(root, 'packages', 'goal', 'goal'),
+    join(root, 'packages', 'goal'),
+    join(root, 'packages'),
     join(root, 'node_modules', 'tsx', 'dist', 'esm'),
     join(root, 'node_modules', 'tsx', 'dist'),
     join(root, 'node_modules', 'tsx'),
@@ -1218,5 +1312,107 @@ test('evaluation runtime critical launch closure must remain trusted-owned and f
   await assert.rejects(
     () => validateFrozenEvaluationRuntime({ root, trustedUid: process.getuid() }),
     /trusted-owned and frozen/u,
+  )
+})
+
+test('evaluation runtime accepts only a frozen internal pnpm tsx link', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'production-evaluation-pnpm-link-'))
+  const root = join(parent, 'candidate-parent')
+  const nodeModules = join(root, 'node_modules')
+  const pnpmRoot = join(nodeModules, '.pnpm')
+  const packageRoot = join(pnpmRoot, 'tsx@4.22.4')
+  const packageNodeModules = join(packageRoot, 'node_modules')
+  const tsxTarget = join(packageNodeModules, 'tsx')
+  const tsxLink = join(nodeModules, 'tsx')
+  const sourceEntry = join(root, 'apps', 'cli', 'src', 'bin.ts')
+  const tsxEntry = join(tsxTarget, 'dist', 'esm', 'index.mjs')
+  const commandsTypert = join(
+    root, 'packages', 'interaction', 'commands', 'lib', 'typert.host.js',
+  )
+  const goalTypert = join(root, 'packages', 'goal', 'goal', 'lib', 'typert.host.js')
+  const internalTarget = join('.pnpm', 'tsx@4.22.4', 'node_modules', 'tsx')
+
+  await Promise.all([
+    mkdir(join(root, 'apps', 'cli', 'src'), { recursive: true }),
+    mkdir(join(tsxTarget, 'dist', 'esm'), { recursive: true }),
+    mkdir(join(root, 'packages', 'interaction', 'commands', 'lib'), { recursive: true }),
+    mkdir(join(root, 'packages', 'goal', 'goal', 'lib'), { recursive: true }),
+  ])
+  await Promise.all([
+    writeFile(sourceEntry, 'export {}\n'),
+    writeFile(tsxEntry, 'export {}\n'),
+    writeFile(commandsTypert, 'export {}\n'),
+    writeFile(goalTypert, 'export {}\n'),
+    symlink(internalTarget, tsxLink),
+  ])
+  await Promise.all([
+    chmod(sourceEntry, 0o444),
+    chmod(tsxEntry, 0o444),
+    chmod(commandsTypert, 0o444),
+    chmod(goalTypert, 0o444),
+  ])
+  for (const directory of [
+    join(root, 'apps', 'cli', 'src'),
+    join(root, 'apps', 'cli'),
+    join(root, 'apps'),
+    join(root, 'packages', 'interaction', 'commands', 'lib'),
+    join(root, 'packages', 'interaction', 'commands'),
+    join(root, 'packages', 'interaction'),
+    join(root, 'packages', 'goal', 'goal', 'lib'),
+    join(root, 'packages', 'goal', 'goal'),
+    join(root, 'packages', 'goal'),
+    join(root, 'packages'),
+    join(tsxTarget, 'dist', 'esm'),
+    join(tsxTarget, 'dist'),
+    tsxTarget,
+    packageNodeModules,
+    packageRoot,
+    pnpmRoot,
+    nodeModules,
+    root,
+  ]) await chmod(directory, 0o555)
+
+  const trustedUid = process.getuid()
+  await validateFrozenEvaluationRuntime({ root, trustedUid })
+
+  await chmod(pnpmRoot, 0o755)
+  await assert.rejects(
+    () => validateFrozenEvaluationRuntime({ root, trustedUid }),
+    /symlink target is not trusted-owned and frozen/u,
+  )
+  await chmod(pnpmRoot, 0o555)
+
+  const replaceLink = async (target) => {
+    await chmod(nodeModules, 0o755)
+    await unlink(tsxLink)
+    await symlink(target, tsxLink)
+    await chmod(nodeModules, 0o555)
+  }
+
+  await replaceLink(tsxTarget)
+  await assert.rejects(
+    () => validateFrozenEvaluationRuntime({ root, trustedUid }),
+    /symlink must be relative/u,
+  )
+
+  await replaceLink(join('..', '..', 'outside-runtime'))
+  await assert.rejects(
+    () => validateFrozenEvaluationRuntime({ root, trustedUid }),
+    /symlink target must be normalized/u,
+  )
+
+  await replaceLink(join('.pnpm', 'missing', 'node_modules', 'tsx'))
+  await assert.rejects(
+    () => validateFrozenEvaluationRuntime({ root, trustedUid }),
+    /symlink target is invalid/u,
+  )
+
+  await chmod(pnpmRoot, 0o755)
+  await symlink(join('tsx@4.22.4', 'node_modules', 'tsx'), join(pnpmRoot, 'current-tsx'))
+  await chmod(pnpmRoot, 0o555)
+  await replaceLink(join('.pnpm', 'current-tsx'))
+  await assert.rejects(
+    () => validateFrozenEvaluationRuntime({ root, trustedUid }),
+    /symlink target chain is invalid/u,
   )
 })

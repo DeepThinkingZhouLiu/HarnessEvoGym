@@ -6,6 +6,7 @@ import {
   lstat,
   mkdir,
   readFile,
+  readlink,
   readdir,
   rename,
   rm,
@@ -279,6 +280,14 @@ async function defaultValidateRuntime(runtimeRoot) {
       join(runtimeRoot, 'node_modules', 'tsx', 'dist', 'esm', 'index.mjs'),
       'tsx runtime entry',
     ),
+    requireRegularFile(
+      join(runtimeRoot, 'packages', 'interaction', 'commands', 'lib', 'typert.host.js'),
+      'commands host typert artifact',
+    ),
+    requireRegularFile(
+      join(runtimeRoot, 'packages', 'goal', 'goal', 'lib', 'typert.host.js'),
+      'goal host typert artifact',
+    ),
   ])
 }
 
@@ -288,12 +297,70 @@ const EVALUATION_RUNTIME_ENTRIES = Object.freeze([
   { path: join('apps', 'cli'), type: 'directory' },
   { path: join('apps', 'cli', 'src'), type: 'directory' },
   { path: join('apps', 'cli', 'src', 'bin.ts'), type: 'file' },
+  { path: 'packages', type: 'directory' },
+  { path: join('packages', 'interaction'), type: 'directory' },
+  { path: join('packages', 'interaction', 'commands'), type: 'directory' },
+  { path: join('packages', 'interaction', 'commands', 'lib'), type: 'directory' },
+  {
+    path: join('packages', 'interaction', 'commands', 'lib', 'typert.host.js'),
+    type: 'file',
+  },
+  { path: join('packages', 'goal'), type: 'directory' },
+  { path: join('packages', 'goal', 'goal'), type: 'directory' },
+  { path: join('packages', 'goal', 'goal', 'lib'), type: 'directory' },
+  { path: join('packages', 'goal', 'goal', 'lib', 'typert.host.js'), type: 'file' },
   { path: 'node_modules', type: 'directory' },
-  { path: join('node_modules', 'tsx'), type: 'directory' },
+  {
+    path: join('node_modules', 'tsx'),
+    type: 'directory',
+    allowInternalDirectorySymlink: true,
+  },
   { path: join('node_modules', 'tsx', 'dist'), type: 'directory' },
   { path: join('node_modules', 'tsx', 'dist', 'esm'), type: 'directory' },
   { path: join('node_modules', 'tsx', 'dist', 'esm', 'index.mjs'), type: 'file' },
 ])
+
+async function validateInternalDirectorySymlink({ path, runtimeRoot, trustedUid }) {
+  const target = await readlink(path)
+  if (isAbsolute(target)) {
+    throw new Error(`Evaluation runtime critical symlink must be relative: ${path}`)
+  }
+  if (target.split(sep).some((component) => (
+    component === '' || component === '.' || component === '..'
+  ))) {
+    throw new Error(`Evaluation runtime critical symlink target must be normalized: ${path}`)
+  }
+  const targetPath = resolve(dirname(path), target)
+  if (targetPath === runtimeRoot || !isWithin(runtimeRoot, targetPath)) {
+    throw new Error(`Evaluation runtime critical symlink must stay within the runtime: ${path}`)
+  }
+
+  // pnpm exposes workspace packages through relative links into node_modules/.pnpm.
+  // The link inode can remain build-owned because replacing it requires write
+  // permission on its already-attested parent. Its complete lexical target chain,
+  // however, must consist only of trusted-owned, frozen real directories. This
+  // rejects dangling links, link chains, and any writable redirection point.
+  let current = runtimeRoot
+  for (const component of relative(runtimeRoot, targetPath).split(sep)) {
+    current = join(current, component)
+    let stat
+    try {
+      stat = await lstat(current)
+    } catch (error) {
+      throw new Error(`Evaluation runtime critical symlink target is invalid: ${path}`, {
+        cause: error,
+      })
+    }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error(`Evaluation runtime critical symlink target chain is invalid: ${path}`)
+    }
+    if (stat.uid !== trustedUid || (stat.mode & 0o222) !== 0) {
+      throw new Error(
+        `Evaluation runtime critical symlink target is not trusted-owned and frozen: ${path}`,
+      )
+    }
+  }
+}
 
 /** Re-attest the immutable launch closure immediately before either partition. */
 export async function validateFrozenEvaluationRuntime({ root, trustedUid }) {
@@ -301,8 +368,15 @@ export async function validateFrozenEvaluationRuntime({ root, trustedUid }) {
   for (const entry of EVALUATION_RUNTIME_ENTRIES) {
     const path = entry.path === '' ? runtimeRoot : join(runtimeRoot, entry.path)
     const stat = await lstat(path)
+    if (stat.isSymbolicLink()) {
+      if (entry.allowInternalDirectorySymlink !== true || entry.type !== 'directory') {
+        throw new Error(`Evaluation runtime critical ${entry.type} is invalid: ${path}`)
+      }
+      await validateInternalDirectorySymlink({ path, runtimeRoot, trustedUid })
+      continue
+    }
     const correctType = entry.type === 'directory' ? stat.isDirectory() : stat.isFile()
-    if (!correctType || stat.isSymbolicLink()) {
+    if (!correctType) {
       throw new Error(`Evaluation runtime critical ${entry.type} is invalid: ${path}`)
     }
     if (stat.uid !== trustedUid || (stat.mode & 0o222) !== 0) {
@@ -859,11 +933,14 @@ export class PutnamEvolutionRuntime {
       await this.removePath(runtimeRoot)
       await this.copyRuntimeSource({ sourceRoot, destination: temporaryRoot })
       await this.grantBuildAccess({ root: temporaryRoot, uid: this.buildUid, gid: this.buildGid })
-      const pnpmArguments = [
-        this.pnpmCliPath,
+      const pnpmSafetyArguments = [
         '--config.minimum-release-age=0',
         '--config.trust-policy=off',
         '--config.update-notifier=false',
+      ]
+      const installArguments = [
+        this.pnpmCliPath,
+        ...pnpmSafetyArguments,
         'install',
         '--frozen-lockfile',
         '--offline',
@@ -875,7 +952,14 @@ export class PutnamEvolutionRuntime {
         '--package-import-method=copy',
         '--reporter=append-only',
       ]
-      let result
+      const hostBuildArguments = [
+        this.pnpmCliPath,
+        ...pnpmSafetyArguments,
+        'run',
+        'build:lib:host',
+      ]
+      let installResult
+      let hostBuildResult
       try {
         await this.removePath(buildRunRoot)
         for (const path of [
@@ -890,61 +974,82 @@ export class PutnamEvolutionRuntime {
             mode: 0o700,
           })
         }
-        const invocation = buildBubblewrapInvocation({
-          invocation: {
-            command: this.nodePath,
-            args: pnpmArguments,
-            cwd: temporaryRoot,
-            env: {
-              ...safeEnvironment(this.baseEnvironment, join(buildRunRoot, 'home')),
-              TMPDIR: join(buildRunRoot, 'tmp'),
+        const executeBuildStep = async (args) => {
+          const invocation = buildBubblewrapInvocation({
+            invocation: {
+              command: this.nodePath,
+              args,
+              cwd: temporaryRoot,
+              env: {
+                ...safeEnvironment(this.baseEnvironment, join(buildRunRoot, 'home')),
+                TMPDIR: join(buildRunRoot, 'tmp'),
+              },
             },
-          },
-          uid: this.buildUid,
-          gid: this.buildGid,
-          bwrapPath: this.bwrapPath,
-          setprivPath: this.setprivPath,
-          network: 'none',
-          hostname: 'rsi-build',
-          mounts: [
-            {
-              source: temporaryRoot,
-              destination: BUILD_SANDBOX_PATHS.runtime,
-              readOnly: false,
-            },
-            {
-              source: this.pnpmStoreRoot,
-              destination: BUILD_SANDBOX_PATHS.store,
-              readOnly: true,
-            },
-            ...buildToolchainMounts(this.nodePath, this.pnpmCliPath),
-            {
-              source: buildRunRoot,
-              destination: BUILD_SANDBOX_PATHS.workspace,
-              readOnly: false,
-            },
-          ],
-        })
-        result = await this.executeProcess({
-          ...invocation,
-          timeoutMs: this.buildTimeoutMs,
-          signal: this.signal,
-          outputLimitBytes: 16 * 1024 * 1024,
-          secretValues: this.secretValues,
-        })
+            uid: this.buildUid,
+            gid: this.buildGid,
+            bwrapPath: this.bwrapPath,
+            setprivPath: this.setprivPath,
+            network: 'none',
+            hostname: 'rsi-build',
+            mounts: [
+              {
+                source: temporaryRoot,
+                destination: BUILD_SANDBOX_PATHS.runtime,
+                readOnly: false,
+              },
+              {
+                source: this.pnpmStoreRoot,
+                destination: BUILD_SANDBOX_PATHS.store,
+                readOnly: true,
+              },
+              ...buildToolchainMounts(this.nodePath, this.pnpmCliPath),
+              {
+                source: buildRunRoot,
+                destination: BUILD_SANDBOX_PATHS.workspace,
+                readOnly: false,
+              },
+            ],
+          })
+          return this.executeProcess({
+            ...invocation,
+            timeoutMs: this.buildTimeoutMs,
+            signal: this.signal,
+            outputLimitBytes: 16 * 1024 * 1024,
+            secretValues: this.secretValues,
+          })
+        }
+        installResult = await executeBuildStep(installArguments)
+        if (processSucceeded(installResult)) {
+          // Fresh source checkouts cannot boot the normal headless profile until
+          // its generated host-side typert exports exist. Build them inside the
+          // same unprivileged, no-network sandbox before freezing the runtime.
+          hostBuildResult = await executeBuildStep(hostBuildArguments)
+        }
       } finally {
         await this.removePath(buildRunRoot).catch(() => {})
       }
-      if (processOperationalFailure(result)) {
+      if (processOperationalFailure(installResult)) {
         throw new Error('dependency installation timed out, aborted, or exceeded output limits')
       }
-      if (!processSucceeded(result)) {
+      if (!processSucceeded(installResult)) {
         await this.removePath(temporaryRoot)
         return candidateBuildFailure({
           candidateId,
           level,
           message: 'Candidate dependency installation failed',
-          exitCode: processExitCode(result),
+          exitCode: processExitCode(installResult),
+        })
+      }
+      if (processOperationalFailure(hostBuildResult)) {
+        throw new Error('host artifact build timed out, aborted, or exceeded output limits')
+      }
+      if (!processSucceeded(hostBuildResult)) {
+        await this.removePath(temporaryRoot)
+        return candidateBuildFailure({
+          candidateId,
+          level,
+          message: 'Candidate host artifact build failed',
+          exitCode: processExitCode(hostBuildResult),
         })
       }
       try {
@@ -1327,9 +1432,10 @@ export class PutnamEvolutionRuntime {
   async #baselineForSmoke(sourceRoot) {
     await this.#ensureInfrastructure()
     if (!this.baselineBuilt) {
+      let structurallyReusable = false
       try {
         await this.validateRuntime(this.baselineRuntimeRoot)
-        this.baselineBuilt = true
+        structurallyReusable = true
       } catch (error) {
         if (error instanceof ProductionRuntimeError || isInfrastructureFilesystemFailure(error)) {
           throw infrastructureError(
@@ -1338,6 +1444,21 @@ export class PutnamEvolutionRuntime {
             error,
           )
         }
+      }
+      if (structurallyReusable) {
+        try {
+          await this.validateFrozenRuntime({
+            root: this.baselineRuntimeRoot,
+            trustedUid: this.trustedUid,
+          })
+        } catch (error) {
+          throw infrastructureError(
+            'smoke-baseline',
+            'Frozen baseline runtime attestation failed',
+            error,
+          )
+        }
+        this.baselineBuilt = true
       }
     }
     if (!this.baselineBuilt) {

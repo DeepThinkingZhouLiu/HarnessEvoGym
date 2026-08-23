@@ -1,0 +1,131 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import {
+  diffModelUsage,
+  ModelGateway,
+  validateModelGatewayEnvironment,
+} from '../src/model-gateway.mjs'
+
+test('Model Gateway 只把一次性令牌和内部地址交给 Agent', async () => {
+  const originalKey = process.env.TEST_RSI_API_KEY
+  const originalUrl = process.env.TEST_RSI_BASE_URL
+  process.env.TEST_RSI_API_KEY = 'real-provider-secret'
+  process.env.TEST_RSI_BASE_URL = 'https://provider.example/v1'
+  const calls = []
+  const docker = {
+    async build(options) { calls.push(['build', options]) },
+    async createNetwork() { return { id: 'network-id', name: 'internal-net' } },
+    async runDetached(options) {
+      calls.push(['run', options])
+      return { id: 'container-id', name: 'gateway' }
+    },
+    async connectNetwork() {},
+    async containerHealth() { return 'healthy' },
+    async removeContainer() {},
+    async removeNetwork() {},
+    async containerLogs() { return { stdout: '', stderr: '' } },
+    async exec(options) {
+      calls.push(['exec', options])
+      return {
+        stdout: JSON.stringify({
+          acceptedRequests: 1,
+          activeRequests: 0,
+          usageResponses: 1,
+          unknownUsageResponses: 0,
+          inputTokens: 100,
+          outputTokens: 20,
+          cacheReadTokens: 10,
+          reasoningTokens: 5,
+        }),
+        stderr: '',
+      }
+    },
+  }
+  const gateway = new ModelGateway({
+    config: {
+      image: 'gateway:test',
+      dockerfile: 'docker/model-gateway/Dockerfile',
+      alias: 'model-gateway',
+      port: 8080,
+      egressNetwork: 'bridge',
+      upstreamApiKeyEnvironment: 'TEST_RSI_API_KEY',
+      upstreamBaseUrlEnvironment: 'TEST_RSI_BASE_URL',
+      maximumRequestsPerRun: 512,
+      maximumConcurrentRequests: 8,
+      resources: { cpus: 1, memory: '512m', pids: 128 },
+    },
+    docker,
+    repositoryRoot: '/repo',
+    scopeId: 'run-one',
+  })
+  try {
+    const access = await gateway.access()
+    assert.equal(access.network, 'internal-net')
+    assert.equal(access.environment.TEST_RSI_BASE_URL, 'http://model-gateway:8080')
+    assert.notEqual(access.secretEnvironment.TEST_RSI_API_KEY, process.env.TEST_RSI_API_KEY)
+    assert.equal(access.secretEnvironment.TEST_RSI_API_KEY.length, 64)
+    assert.equal(calls.find(([name]) => name === 'run')[1].environment.GATEWAY_TOKEN, undefined)
+    assert.equal(calls.find(([name]) => name === 'run')[1].secretEnvironment.GATEWAY_TOKEN.length, 64)
+    assert.deepEqual(calls.find(([name]) => name === 'run')[1].inheritEnvironment, [
+      'TEST_RSI_API_KEY',
+      'TEST_RSI_BASE_URL',
+    ])
+    const usage = await gateway.usage()
+    assert.equal(usage.inputTokens, 100)
+    assert.doesNotMatch(calls.find(([name]) => name === 'exec')[1].command.join(' '), /real-provider-secret/u)
+  } finally {
+    await gateway.stop()
+    if (originalKey === undefined) delete process.env.TEST_RSI_API_KEY
+    else process.env.TEST_RSI_API_KEY = originalKey
+    if (originalUrl === undefined) delete process.env.TEST_RSI_BASE_URL
+    else process.env.TEST_RSI_BASE_URL = originalUrl
+  }
+})
+
+test('Model Gateway Usage 差分会把未知响应标成不完整', () => {
+  const before = {
+    acceptedRequests: 2,
+    activeRequests: 0,
+    usageResponses: 2,
+    unknownUsageResponses: 0,
+    inputTokens: 100,
+    outputTokens: 20,
+    cacheReadTokens: 10,
+    reasoningTokens: 5,
+  }
+  const after = {
+    acceptedRequests: 4,
+    activeRequests: 0,
+    usageResponses: 3,
+    unknownUsageResponses: 1,
+    inputTokens: 180,
+    outputTokens: 35,
+    cacheReadTokens: 15,
+    reasoningTokens: 8,
+  }
+  const usage = diffModelUsage(before, after)
+  assert.equal(usage.acceptedRequests, 2)
+  assert.equal(usage.inputTokens, 80)
+  assert.equal(usage.complete, false)
+})
+
+test('Model Gateway 在启动前拒绝带凭据或 Query 的上游 URL', () => {
+  const originalKey = process.env.TEST_RSI_API_KEY
+  const originalUrl = process.env.TEST_RSI_BASE_URL
+  process.env.TEST_RSI_API_KEY = 'valid-test-key'
+  process.env.TEST_RSI_BASE_URL = 'https://user:password@provider.example/v1?unsafe=1'
+  try {
+    assert.throws(
+      () => validateModelGatewayEnvironment({
+        upstreamApiKeyEnvironment: 'TEST_RSI_API_KEY',
+        upstreamBaseUrlEnvironment: 'TEST_RSI_BASE_URL',
+      }),
+      /不能包含凭据/u,
+    )
+  } finally {
+    if (originalKey === undefined) delete process.env.TEST_RSI_API_KEY
+    else process.env.TEST_RSI_API_KEY = originalKey
+    if (originalUrl === undefined) delete process.env.TEST_RSI_BASE_URL
+    else process.env.TEST_RSI_BASE_URL = originalUrl
+  }
+})

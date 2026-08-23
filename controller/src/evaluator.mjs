@@ -43,9 +43,29 @@ function summarizeLatency(records) {
   }
 }
 
+function inverseStandardNormal(probability) {
+  if (probability <= 0 || probability >= 1) throw new ProtocolError('正态分位点概率必须位于 (0,1)')
+  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239]
+  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572]
+  const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783]
+  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416]
+  const lower = 0.02425
+  const upper = 1 - lower
+  if (probability < lower) {
+    const q = Math.sqrt(-2 * Math.log(probability))
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+      ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+  }
+  if (probability > upper) return -inverseStandardNormal(1 - probability)
+  const q = probability - 0.5
+  const r = q * q
+  return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q /
+    (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
+}
+
 function wilsonInterval(successes, total, confidence = 0.95) {
   if (total === 0) return null
-  const z = confidence === 0.95 ? 1.959963984540054 : 1.959963984540054
+  const z = inverseStandardNormal(0.5 + confidence / 2)
   const proportion = successes / total
   const denominator = 1 + (z ** 2) / total
   const center = (proportion + (z ** 2) / (2 * total)) / denominator
@@ -99,12 +119,13 @@ function materializeRecords(recordMap, instanceIds) {
     recordMap.get(instanceId) ?? {
       instanceId,
       status: 'not_attempted',
+      reward: 0,
       policyViolations: [],
     },
   )
 }
 
-function summarizeRun(recordMap, instanceIds) {
+function summarizeRun(recordMap, instanceIds, confidence) {
   const records = materializeRecords(recordMap, instanceIds)
   const counts = {
     total: records.length,
@@ -146,7 +167,9 @@ function summarizeRun(recordMap, instanceIds) {
     coverageRate: round(counts.recordsPresent / counts.total),
     completionRate: round(counts.completed / counts.total),
     resolvedRate: round(counts.resolved / counts.total),
-    resolvedRateCi95: wilsonInterval(counts.resolved, counts.total),
+    resolvedRateCi: wilsonInterval(counts.resolved, counts.total, confidence),
+    meanReward: round(records.reduce((sum, record) => sum + record.reward, 0) / counts.total),
+    reward: summarizeNumeric(records, 'reward'),
     costUsd: summarizeNumeric(records, 'costUsd'),
     tokens: summarizeNumeric(tokenRecords, 'totalTokens'),
     latencyMs: summarizeLatency(records),
@@ -159,16 +182,27 @@ function summarizeRun(recordMap, instanceIds) {
 
 function compareRuns(baselineMap, candidateMap, instanceIds, bootstrap) {
   const differences = []
+  const rewardDifferences = []
   let newlyResolved = 0
   let regressed = 0
   let bothResolved = 0
   let neitherResolved = 0
+  let rewardImproved = 0
+  let rewardRegressed = 0
+  let rewardUnchanged = 0
 
   for (const instanceId of instanceIds) {
     const baselineResolved = isResolved(baselineMap.get(instanceId))
     const candidateResolved = isResolved(candidateMap.get(instanceId))
     const difference = Number(candidateResolved) - Number(baselineResolved)
     differences.push(difference)
+    const baselineReward = baselineMap.get(instanceId)?.reward ?? 0
+    const candidateReward = candidateMap.get(instanceId)?.reward ?? 0
+    const rewardDifference = candidateReward - baselineReward
+    rewardDifferences.push(rewardDifference)
+    if (rewardDifference > 1e-9) rewardImproved += 1
+    else if (rewardDifference < -1e-9) rewardRegressed += 1
+    else rewardUnchanged += 1
 
     if (!baselineResolved && candidateResolved) newlyResolved += 1
     else if (baselineResolved && !candidateResolved) regressed += 1
@@ -184,6 +218,11 @@ function compareRuns(baselineMap, candidateMap, instanceIds, bootstrap) {
     netResolved: newlyResolved - regressed,
     deltaResolvedRate: round((newlyResolved - regressed) / instanceIds.length),
     pairedDeltaCi: bootstrapPairedDelta(differences, bootstrap),
+    rewardImproved,
+    rewardRegressed,
+    rewardUnchanged,
+    deltaMeanReward: round(rewardDifferences.reduce((sum, value) => sum + value, 0) / instanceIds.length),
+    pairedRewardDeltaCi: bootstrapPairedDelta(rewardDifferences, bootstrap),
   }
 }
 
@@ -288,6 +327,57 @@ function applyPolicy(partitionReport, policy, evolutionLedger) {
     )
   }
 
+  if (quality.minimumMeanRewardDelta !== null) {
+    gates.push(
+      gate(
+        'minimum-mean-reward-delta',
+        partitionReport.paired.deltaMeanReward >= quality.minimumMeanRewardDelta,
+        partitionReport.paired.deltaMeanReward,
+        '>=',
+        quality.minimumMeanRewardDelta,
+        '配对平均 Reward 提升必须达到阈值',
+      ),
+    )
+  }
+
+  gates.push(
+    gate(
+      'minimum-reward-improved',
+      partitionReport.paired.rewardImproved >= quality.minimumRewardImproved,
+      partitionReport.paired.rewardImproved,
+      '>=',
+      quality.minimumRewardImproved,
+      'Reward 提升的任务数必须达到阈值',
+    ),
+  )
+
+  if (quality.maximumRewardRegressions !== null) {
+    gates.push(
+      gate(
+        'maximum-reward-regressions',
+        partitionReport.paired.rewardRegressed <= quality.maximumRewardRegressions,
+        partitionReport.paired.rewardRegressed,
+        '<=',
+        quality.maximumRewardRegressions,
+        'Reward 回退的任务数不能超过阈值',
+      ),
+    )
+  }
+
+  if (quality.requirePositiveRewardCiLowerBound) {
+    const lowerBound = partitionReport.paired.pairedRewardDeltaCi?.lower ?? null
+    gates.push(
+      gate(
+        'positive-reward-ci-lower-bound',
+        lowerBound !== null && lowerBound > 0,
+        lowerBound,
+        '>',
+        0,
+        'Reward 配对 Bootstrap 区间下界必须大于零',
+      ),
+    )
+  }
+
   const maximumRelativeCost = policy.gates.cost.maximumRelativeInferenceCostIncrease
   if (maximumRelativeCost !== null) {
     const relativeCost = partitionReport.deltas.costUsd.relative
@@ -308,11 +398,43 @@ function applyPolicy(partitionReport, policy, evolutionLedger) {
     gates.push(
       gate(
         'maximum-evolution-cost',
-        evolutionLedger !== null && evolutionLedger.costUsd <= maximumEvolutionCost,
+        evolutionLedger !== null &&
+          typeof evolutionLedger.costUsd === 'number' &&
+          evolutionLedger.costUsd <= maximumEvolutionCost,
         evolutionLedger?.costUsd ?? null,
         '<=',
         maximumEvolutionCost,
         '总进化成本必须提供且不超过预算',
+      ),
+    )
+  }
+
+  const maximumRelativeLatency = policy.gates.performance.maximumRelativeLatencyIncrease
+  if (maximumRelativeLatency !== null) {
+    const relativeLatency = partitionReport.deltas.latencyMs.relative
+    gates.push(
+      gate(
+        'maximum-relative-latency-increase',
+        relativeLatency !== null && relativeLatency <= maximumRelativeLatency,
+        relativeLatency,
+        '<=',
+        maximumRelativeLatency,
+        'Candidate 端到端延迟涨幅必须可计算且不超过阈值',
+      ),
+    )
+  }
+
+  const maximumRelativeTokens = policy.gates.performance.maximumRelativeTokenIncrease
+  if (maximumRelativeTokens !== null) {
+    const relativeTokens = partitionReport.deltas.tokens.relative
+    gates.push(
+      gate(
+        'maximum-relative-token-increase',
+        relativeTokens !== null && relativeTokens <= maximumRelativeTokens,
+        relativeTokens,
+        '<=',
+        maximumRelativeTokens,
+        'Candidate Token 涨幅必须可计算且不超过阈值',
       ),
     )
   }
@@ -343,11 +465,21 @@ function buildRsiMetrics(partitions, evolutionLedger) {
   )
   const feedbackGain = gains.feedback
   const finalGain = gains.final
+  const rewardGains = Object.fromEntries(
+    Object.entries(partitions).map(([name, report]) => [name, report.paired.deltaMeanReward]),
+  )
+  const feedbackRewardGain = rewardGains.feedback
+  const finalRewardGain = rewardGains.final
   const finalNetResolved = partitions.final?.paired.netResolved
   return {
     gainByPartition: gains,
+    rewardGainByPartition: rewardGains,
     generalizationGap:
       feedbackGain !== undefined && finalGain !== undefined ? round(feedbackGain - finalGain) : null,
+    rewardGeneralizationGap:
+      feedbackRewardGain !== undefined && finalRewardGain !== undefined
+        ? round(feedbackRewardGain - finalRewardGain)
+        : null,
     evolution: evolutionLedger,
     finalNetResolvedPer100Usd:
       evolutionLedger?.costUsd > 0 && finalNetResolved !== undefined
@@ -388,8 +520,8 @@ export function evaluateBenchmark({
       throw new ProtocolError(`Partition ${partitionName} 是 sealed，必须显式允许最终评测`)
     }
     const instanceIds = benchmark.partitions[partitionName].instanceIds
-    const baseline = summarizeRun(baselineRecords, instanceIds)
-    const candidate = summarizeRun(candidateRecords, instanceIds)
+    const baseline = summarizeRun(baselineRecords, instanceIds, policy.bootstrap.confidence)
+    const candidate = summarizeRun(candidateRecords, instanceIds, policy.bootstrap.confidence)
     const paired = compareRuns(baselineRecords, candidateRecords, instanceIds, policy.bootstrap)
     partitionReports[partitionName] = {
       visibility: benchmark.partitions[partitionName].visibility,
@@ -422,6 +554,7 @@ export function evaluateBenchmark({
       policyId: policy.id,
       baselineRevision: run.baselineRevision,
       candidateRevision: run.candidateRevision,
+      primaryMetric: policy.primaryMetric,
     },
     source: benchmark.source,
     requestedPartitions: [...partitions],

@@ -23,15 +23,15 @@ The Updater does not require fixed failure-analyzer, proposal, builder, or searc
 ## One evolution round
 
 ```text
-pin Source Revision
--> materialize Baseline and Candidate instances
--> run Baseline training tasks and produce an objective Feedback Packet
--> Controller selects L1, L2, or L3
+pin Controller/Source revisions and H0 overlay
+-> run the current champion on feedback tasks
+-> Controller selects L1 or L2
 -> launch one isolated Updater session
 -> Updater analyzes a batch and edits Candidate
--> Controller rejects out-of-scope diffs and builds Candidate
--> run paired training, replay, and hidden evaluation
--> frozen gates choose Reject, Revise, or Promote
+-> Controller rescans the complete tree and rejects out-of-scope diffs
+-> run Champion/Candidate paired selection evaluation
+-> frozen gates choose Reject or Promote
+-> consume one final-evaluation attempt after locking the champion
 -> persist immutable Candidate, parent, results, and decision rationale
 ```
 
@@ -42,38 +42,47 @@ All mutable state lives under ignored `.rsi/` storage:
 ```text
 .rsi/
   runs/<run-id>/
-    input/
+    state.json
+    final-attempt.json
+    experiment.snapshot.json
+    mutation-policy.json
+    generations/<generation-id>/
       feedback-packet.json
-      mutation-policy.json
-    baseline/
-      workspace/
+      decision.json
     candidates/<candidate-id>/
       workspace/
+      manifest.json
       mutation-report.json
-      diff.patch
+      mutation-diff.json
       evaluation.json
-    decision.json
+    results/
+    trials/
+    final-evaluation.json
   registry/
     candidates.jsonl
 ```
 
-The Controller may use the submodule Git objects to create worktrees, but the Updater container sees only Candidate file mounts, not `.git` or the Controller Gitdir. Baseline is read-only, and all Candidate paths outside the active allowlist are read-only.
+L1/L2 candidates are project-owned preset overlays, not full DSH worktrees. The Updater sees only a disposable writable overlay, read-only upstream source, and read-only feedback; it never receives the repository, benchmark, verifier, or Gitdir. Docker cannot make files writable by extension, so the post-session full-tree Diff Guard enforces exact path, extension, executable-bit, and size policy. Both files and empty directories contribute to the tree digest; no-op and empty-directory-only proposals never reach selection. Trust roots are never in a writable mount, and H0/champion are never the Updater target.
 
 ## Mutation boundary
 
 Prompt text alone cannot enforce scope. The complete boundary has three parts:
 
 - Semantic guidance: the prompt explains the active level and prohibited changes.
-- Write enforcement: only active-level paths are writable in the sandbox.
+- Instance enforcement: only the disposable candidate overlay is writable; trust roots are absent.
 - Result enforcement: the Controller recomputes the diff and rejects scope violations, credentials, trust-root changes, or protocol breakage.
 
 L1, L2, and L3 are Target Adapter semantics rather than universal directories. A DeepSeek Harness preset and a pi-agent strategy may live in different paths; the Controller understands only the selected level's validated allowlist.
 
+Network access is part of the enforced boundary. Solver and Updater join a fresh Docker internal network for each run and receive only an internal URL plus ephemeral token. A minimal Model Gateway alone holds the real provider key and restricts forwarding to the fixed upstream `POST /chat/completions` endpoint plus run-level request/concurrency budgets. L2 scripts therefore have no direct external route.
+
 ## Feedback and generalization
 
-A Feedback Packet contains aggregate metrics, representative successes and failures, trajectories, verifier outputs, cost, latency, and environment facts without prescribing a fixed causal taxonomy. The Updater infers the change from evidence across cases.
+The current Feedback Packet contains feedback-task instructions, aggregate metrics, per-case rewards, Solver final answers, verifier outputs, runtime errors, bounded artifacts, token usage, and latency without prescribing a fixed causal taxonomy. The Updater infers the change from evidence across cases. The Model Gateway measures streamed token usage per session; full per-tool DSH trajectories and trusted dollar cost are not wired, and the system does not fabricate them.
 
-Promotion checks at least training improvement, held-out improvement, historical replay tolerance, cost/latency budgets, and safety against privilege changes, cross-task contamination, and irreversible effects. A Candidate may affect task-solving behavior but never tasks, final scoring, resource accounting, or promotion rules.
+A formal system should check training improvement, held-out improvement, historical replay tolerance, cost/latency budgets, and safety against privilege changes, cross-task contamination, and irreversible effects. A Candidate may affect task-solving behavior but never tasks, final scoring, resource accounting, or promotion rules.
+
+The current eight-task POC enforces paired selection gain, zero reward regressions, completion, and safety gates. Its fixed selection set is replayed every generation, but it has no separate historical task pool. A token-growth gate is available; dollar-cost gates stay disabled without a trusted rate card. Final is a one-attempt report after champion lock and never participates in promotion.
 
 ## Benchmark and two-level evaluation
 
@@ -81,20 +90,12 @@ A Task Evaluator decides whether one task is resolved; for SWE-bench, the offici
 
 The Benchmark manifest pins a dataset revision and three disjoint partitions: `feedback`, `selection`, and `final`. Feedback may expose detailed bad cases, selection is used for in-loop Candidate choice, and final remains sealed until the Final Candidate is locked. Reusing final every generation turns it into validation data.
 
-`controller/src/cli.mjs` now implements manifest validation, normalized result validation, paired metrics, bootstrap intervals, Evolution Ledger accounting, and gates. The official SWE-bench Runner/Normalizer remains an Environment Adapter integration.
+`controller/src/cli.mjs` now implements adapter/manifest validation, candidate materialization, source-built Docker DSH Solver/Updater, SkillsBench Runner/Verifier, a continuous `[0,1]` reward protocol, paired metrics, bootstrap intervals, lineage, promotion/rollback, and one-time finalization. The eight selected upstream verifiers currently return binary 0/1. SWE-bench remains a separate future Environment Adapter.
 
 ## Submodule update semantics
 
 The superproject pins a DeepSeek Harness SHA, making every experiment reproducible. `git submodule update --remote` fetches an upstream revision locally; it becomes a trusted Source Revision only after the new submodule pointer is committed. Existing Candidates retain their original SHA.
 
-## Implementation order
+## Current boundary
 
-1. Benchmark manifest, normalized Solver Result, paired metrics, and Evaluation Policy. (Initial version available.)
-2. SWE-bench Runner/Normalizer and a pinned 100-instance manifest.
-3. Adapter schemas and static validation.
-4. Source revision and Candidate materialization.
-5. L1 writable mounts and final diff validation.
-6. Feedback Packet and one Updater session.
-7. Immutable registry, L2 sandbox, and rollback.
-8. L3 full-instance isolation.
-9. A second agent Target to test adapter generalization.
+The Cowork SkillsBench L1/L2 MVP is implemented; L3 is closed. The 3/2/3 split is a pipeline POC and DSH sampling seeds are recorded but not guaranteed deterministic. The restricted gateway now measures complete streamed token usage, while provider pricing remains unconfigured. Formal experiments still need an outer DNS/IP policy, larger frozen splits, repeated trials, pinned image/verifier supply chains, and trusted price accounting. A second agent target and another environment are the next generality tests.

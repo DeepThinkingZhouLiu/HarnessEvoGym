@@ -1,28 +1,32 @@
 # Benchmark
 
-Benchmark 固定“评哪些任务”，不负责让 Solver 解题，也不负责修改 Candidate。每份配置必须记录不可变数据版本、Evaluator Adapter、精确 Instance ID，以及 `feedback/selection/final` 三个互斥 Partition。
+Benchmark 固定“评哪些任务”，不负责让 Solver 解题，也不负责修改 Candidate。Manifest 必须记录不可变数据版本、Evaluator Adapter、精确 Instance ID，以及三个互斥 Partition。
 
-## 三种 Partition
+## Partition
 
-| Partition   | Updater 可见性  | 用途                                                        |
-|-------------|-----------------|-------------------------------------------------------------|
-| `feedback`  | `detailed`      | 返回详细结果、Trajectory 与 Bad Case，驱动 Updater 修改     |
-| `selection` | `aggregate-only` | Controller 在进化过程中选择 Candidate，不泄露逐题答案      |
-| `final`     | `sealed`        | 锁定 Final Candidate 后才运行，只用于最终报告               |
+| Partition   | Updater 可见性   | 用途                                                       |
+|-------------|------------------|------------------------------------------------------------|
+| `feedback`  | `detailed`       | 生成 Bad Case、Solver Answer、Verifier 证据，驱动修改       |
+| `selection` | `aggregate-only` | 进化期晋升决策；逐题反馈不进入 Feedback Packet              |
+| `final`     | `sealed`         | Champion 锁定后一次性最终报告，不参与晋升                   |
 
-如果目标是“60 道题用于进化、40 道题用于最终评测”，推荐把前 60 道继续拆成 48 道 `feedback` 和 12 道 `selection`。这仍然属于 60 道进化池，但可以避免 Updater 直接针对 Candidate 选择集优化。
+## Cowork POC
 
-## SWE-bench 子集
+`cowork-skillsbench-poc/benchmark.json` 固定 SkillsBench `bf3793e9...`，使用 3 个 feedback、2 个 selection、3 个 final 任务。它用于验证 L1/L2 闭环，不是官方完整榜单。
 
-题目本身应来自固定版本的 SWE-bench 数据集；本仓库只提交数据来源、Revision 和 Instance ID Manifest，不复制 Gold Patch、测试答案或大体积仓库镜像。自定义 100 题子集应使用独立名称，例如 `swebench-verified-100-rsi-v1`，不能把成绩表述为完整官方榜单成绩。
-
-`examples/swebench-rsi-smoke/benchmark.json` 是一个六题协议样例，Instance ID 是测试夹具，不是真实 SWE-bench 题目。真实实验需要替换为经过审查的固定 ID，并按研究目标选择随机、跨仓库或时间切分。
-
-## 校验入口
+这八个任务在当前固定 Revision 中都通过 `/logs/verifier/reward.txt` 返回二值 0/1。Controller 的结果协议支持 `[0,1]` 连续 Reward，但不能把当前 POC 描述成已经使用细粒度 Rubric 分数。
 
 ```bash
 npm run rsi -- benchmark validate \
-  --config benchmarks/examples/swebench-rsi-smoke/benchmark.json
+  --config benchmarks/cowork-skillsbench-poc/benchmark.json
 ```
 
-校验会拒绝移动数据版本、空 Partition、重复 ID、跨 Partition 泄漏、数量不一致和错误的可见性配置。
+校验会拒绝移动 Revision、空 Partition、重复 ID、跨 Partition 泄漏、数量不一致、错误可见性和不支持的结果协议。
+
+## 扩大数据集
+
+- 只提交固定 Revision 和 Instance ID，不提交 Gold Answer、隐藏 Rubric 或大体积任务镜像。
+- feedback/selection/final 必须来自同一冻结数据版本且互斥。
+- 正式报告应说明抽样方式、领域覆盖、难度与许可证，不把自定义子集冒充完整榜单。
+- 如果计划“60 题进化、40 题测试”，建议把前 60 题再拆成 feedback 与 selection，最终 40 题始终 sealed。
+- 不要把第三方 Task 自带 Skill 复制成项目 H0 Skill；运行任务与重新分发内容是两回事。

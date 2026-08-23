@@ -2,134 +2,102 @@
 
 English | [中文](README.zh.md)
 
-**An adapter-based recursive self-improvement control plane for coding agents, with DeepSeek Harness as the first Solver and Updater runtime.**
+**A trusted control plane that makes Coding/Cowork agents evaluable, evolvable, and rollback-safe. Its first complete path uses DeepSeek Harness as both Solver and Updater and evolves Cowork presets, prompts, skills, and constrained skill scripts on SkillsBench tasks.**
 
 > [!IMPORTANT]
-> The repository now has the independent control-plane layout, upstream submodule, adapter/isolation contracts, and an initial Benchmark validator plus paired Evaluator CLI. The full Controller evolution loop is not implemented yet, so this is not a claim of unattended self-evolution today.
+> The executable Cowork L1/L2 MVP is implemented, but the eight-task POC is only a pipeline smoke test. It is not a full SkillsBench result or evidence of general self-improvement. Formal experiments need a larger split, at least three repeated trials, provider price accounting, pinned image/verifier supply chains, quota- or tmpfs-backed write-time disk limits, and an outer gateway egress policy.
 
-## Why this is no longer a DeepSeek Harness fork
-
-An RSI system must control source instances, Updaters, task environments, external evaluation, candidate lineage, and rollback. Keeping all of that inside a DeepSeek Harness fork mixes the system being optimized with the system judging it and makes other coding agents unnecessarily difficult to integrate.
-
-The relationship is now:
+## Implemented loop
 
 ```text
-DeepSeek-Harness-RSI (independent trusted control plane)
-  -> sources/deepseek-harness (pinned integration submodule; read-only to the Updater)
-  -> .rsi/instances/... (Baseline and Candidate instances materialized by Controller)
-  -> Updater edits one Candidate, never the source submodule
+pin Controller revision, DSH Source, and SkillsBench revision
+-> materialize an immutable H0 candidate overlay
+-> run the current champion on feedback tasks
+-> create a feedback-only sanitized packet
+-> launch one complete DSH Updater session
+-> enforce the L1/L2 filesystem diff policy
+-> compare champion and proposal on selection tasks
+-> promote or reject through frozen gates
+-> lock the champion and run final exactly once
 ```
 
-This preserves explicit upstream updates while allowing the same Controller to integrate other Solvers and Updaters through adapters.
+The Controller implements independently pinned Target/Updater sources, adapter validation, SHA-256 candidate manifests that cover files and empty directories, lineage, Docker Solver/Updater/Gateway/Verifier isolation, SkillsBench task execution, streamed artifact hashing, workspace/artifact budgets and unsafe-file rejection, a continuous-reward protocol, paired bootstrap metrics, promotion/rollback, and a separately sealed finalization command. No-op proposals are rejected before selection so random model variance cannot masquerade as evolution. Verifier reward artifacts must be regular files no larger than 1 MiB. Candidate-owned generic skills must use the `cowork-*` namespace so they cannot shadow task-provided `pdf`, `xlsx`, or similar skills. Later generations receive prior hypotheses and aggregate selection gates, never per-instance selection evidence.
 
-## Core loop
+## Mutation boundary
 
-```mermaid
-flowchart LR
-  ENV["Environment<br/>Tasks and feedback"] --> BASE["Baseline Solver<br/>Baseline instance"]
-  ENV --> CAND["Candidate Solver<br/>Candidate instance"]
-  BASE --> FEEDBACK["Feedback Packet<br/>Outcomes · trajectories · bad cases · cost"]
-  FEEDBACK --> UPDATER["Updater Coding Agent<br/>Analyze + hypothesize + edit"]
-  UPDATER --> CAND
-  BASE --> EVAL["Frozen Evaluator"]
-  CAND --> EVAL
-  EVAL --> DECISION{"Keep improvement?"}
-  DECISION -->|yes| PROMOTE["Promote<br/>Register new Baseline"]
-  DECISION -->|no| REJECT["Reject / Rollback"]
-  PROMOTE --> ENV
-```
+| Level | Writable surface                                      | Status             |
+|-------|-------------------------------------------------------|--------------------|
+| L1    | Cowork preset, persona, prompt, and skill documents  | Implemented        |
+| L2    | L1 plus scripts under `skills/**/scripts/**`         | Implemented        |
+| L3    | DSH agent loop, session, context, and core packages  | Deliberately closed |
+| Trust root | Controller, evaluator, tasks, rubrics, secrets | Never writable     |
 
-**The Updater is not a collection of fixed diagnosis modules.** It is one coding-agent session that reads code and a batch of failure evidence, forms a hypothesis, and edits the candidate. The Controller handles deterministic materialization, permissions, execution, collection, evaluation, and promotion; it does not replace open-ended diagnosis with a fixed taxonomy.
+The prompt is guidance, not the security boundary. Updater containers never receive benchmark or verifier mounts, and the Controller recomputes every file hash after the session. Out-of-scope edits, symlinks, executable files at L1, credential-like paths, excessive tree entries, and size-limit violations reject the candidate. Cordis composition checks sanitize only explicitly allowed `!!js` lines, parse the complete YAML tree, and recursively validate plugin names and patch directives, so flow-style YAML cannot bypass the allowlist.
 
-## Mutation levels
+## Isolation roles
 
-| Level          | Writable in this run                                      | Isolation                         |
-|----------------|-----------------------------------------------------------|-----------------------------------|
-| L1 strategy    | Presets, prompts, personas, skills, tool descriptions     | Path allowlist; fast experiments  |
-| L2 behavior    | Middleware, hooks, memory/router, workflows, tools/plugins | Isolated Candidate build and run |
-| L3 Solver core | Agent loop, session/context, registries, adapters          | Full instance and regression isolation |
-| External trust root | **Never writable at any level**                      | Separate process and storage      |
+| Role          | Reads                                                | Writes                         |
+|---------------|------------------------------------------------------|--------------------------------|
+| Solver        | One task workspace and read-only candidate/task skills | Disposable trial workspace   |
+| Updater       | Read-only DSH source and feedback-only packet        | One candidate overlay          |
+| Model Gateway | Real provider URL and key                            | No persistent data             |
+| Verifier      | Trusted scoring script and solver artifacts          | Isolated verifier logs         |
+| Controller    | Config, lineage, normalized outcomes                 | Ignored `.rsi/` state          |
 
-The Controller chooses one level per run. Prompt instructions explain the scope, while two enforcement gates provide the actual boundary: only allowed paths are writable in the Updater sandbox, and the Controller rejects any out-of-scope final diff.
+Solver and Updater containers join a fresh Docker internal network for each run. They receive only an ephemeral gateway token and internal URL, have no external route, and never receive the real provider key. The dual-homed Model Gateway is the only egress role, proxies only `POST /chat/completions` to the configured base URL, and enforces per-run total-request and concurrency limits. Agent containers also drop all capabilities, enable `no-new-privileges`, use a read-only root filesystem, and receive CPU, memory, PID, and timeout limits. Production can add DNS/IP allowlists outside the gateway.
 
-## Repository layout
+Solver workspaces and the Updater DSH home are currently host bind mounts. The Controller snapshots them after each session and rejects over-budget output, but this is not a write-time filesystem quota. Treating an Updater as adversarial in a long formal run requires quota-backed volumes or bounded tmpfs mounts.
 
-```text
-.
-├── controller/                 # Trusted orchestration contract and future implementation
-├── adapters/
-│   ├── targets/                # Solver source, launch protocol, and L1/L2/L3 paths
-│   └── updaters/               # Coding-agent runtime used for an Updater session
-├── benchmarks/                 # Pinned data revision, instance IDs, and three-way split
-├── evaluation/                 # Paired metrics, promotion policy, normalized results
-├── environments/              # Task, trajectory, and evaluation environment protocol
-├── prompts/                    # Shared high-level Updater instruction
-├── sources/
-│   └── deepseek-harness/       # Pinned Harness integration; read-only to the Updater
-├── docs/                       # Architecture and design documents
-└── .rsi/                       # Local instances, feedback, artifacts, and lineage; ignored
-```
+## Quick start
 
-## Source and instance isolation
-
-- `sources/deepseek-harness/` stores the trusted, pinned upstream-derived source revision.
-- The Controller materializes separate Baseline and Candidate worktrees from that revision.
-- The Updater may read the Candidate, but only active-level paths are writable; Controller Git metadata is not exposed.
-- Baseline and Candidate run paired tasks with the same model, budgets, and seeds.
-- Hidden tasks and final rubrics never enter the feedback packet, and self-reported candidate scores cannot promote a revision.
-- Only the Controller can register a Candidate, advance the baseline pointer, or roll back.
-
-See the [architecture document](docs/architecture.md) for the complete decision and runtime layout.
-
-## Benchmark and Evaluator entry point
-
-The CLI validates a Benchmark manifest and compares normalized Baseline/Candidate results:
+Requirements: Node.js 20+, Git, Docker, and a local SkillsBench checkout pinned to `bf3793e9ec20e9682e6f18dbf4de3c69163dc9c7`. Run the Controller as a non-root user with Docker access. Before `preflight` or `evolve run`, the Controller trust-root paths (`controller/src`, `docker`, and the package manifests) must be committed. The run records the superproject SHA and Finalization requires the same revision. DSH is built completely from the pinned source submodule with Node.js 24; the first build is heavy, while candidate-only iterations reuse image caches.
 
 ```bash
-npm run rsi -- benchmark validate \
-  --config benchmarks/examples/swebench-rsi-smoke/benchmark.json
-
-npm run rsi -- evaluate compare \
-  --benchmark benchmarks/examples/swebench-rsi-smoke/benchmark.json \
-  --policy evaluation/policies/rsi-mvp.json \
-  --baseline evaluation/examples/selection-baseline.jsonl \
-  --candidate evaluation/examples/selection-candidate.jsonl \
-  --run-id smoke-selection-001 \
-  --baseline-revision baseline-demo-v1 \
-  --candidate-revision candidate-demo-v2 \
-  --partitions feedback,selection \
-  --evolution evaluation/examples/evolution-ledger.json
-```
-
-It reports resolved rate, paired net improvement, regressions, bootstrap intervals, tokens, cost, latency, policy violations, and promotion gates. Launching the official SWE-bench Docker harness and normalizing its report is the next integration step; see [Evaluator documentation](evaluation/README.md).
-
-## Clone
-
-```bash
-git clone --recurse-submodules https://github.com/DeepThinkingZhouLiu/Deepseek-Harness-RSI.git
-cd Deepseek-Harness-RSI
+npm install
 git submodule update --init --recursive
+
+export RSI_SKILLSBENCH_ROOT=/absolute/path/to/skillsbench
+export DEEPSEEK_BASE_URL=https://your-provider.example/v1
+export DEEPSEEK_API_KEY=your-runtime-secret
+
+npm run check
+npm test
+
+npm run rsi -- experiment validate \
+  --config experiments/cowork-skillsbench-dsh-l1.json
+
+npm run rsi -- experiment preflight \
+  --config experiments/cowork-skillsbench-dsh-l1.json
+
+npm run rsi -- runtime build \
+  --experiment experiments/cowork-skillsbench-dsh-l1.json
+
+npm run rsi -- evolve run \
+  --experiment experiments/cowork-skillsbench-dsh-l1.json \
+  --run-id cowork-l1-smoke-001
+
+npm run rsi -- evolve finalize \
+  --run .rsi/runs/cowork-l1-smoke-001
 ```
 
-## Pull an upstream DeepSeek Harness update
+Use `experiments/cowork-skillsbench-dsh-l2.json` for an independent L2 run. Runtime artifacts, candidate workspaces, results, and one-time final state are stored under `.rsi/runs/<run-id>/` and are ignored by Git. The real API key is inherited only by the Model Gateway, never placed in Docker arguments or Agent containers; Solver and Updater receive a run-scoped token. Finalization claims `final-attempt.json` with an atomic create-if-absent operation, so concurrent processes cannot both unlock the sealed set. Once claimed, success, failure, or a crash does not silently make Final reusable.
 
-```bash
-git submodule update --remote sources/deepseek-harness
-git add sources/deepseek-harness
-git commit -m "chore: update DeepSeek Harness submodule"
-```
+## POC split and metrics
 
-The superproject currently pins the reviewed integration commit [`3289531e06`](https://github.com/ZhaoyangHan04/deepseek-harness/commit/3289531e06e924abb790685f44baf67311f26ec9) on top of the official history because the released headless profile does not yet compose per-session presets correctly. `.gitmodules` continues to use official `master` for normal updates. Keep this pin, or an upstream revision with an equivalent fix, when advancing the submodule.
+The pinned manifest contains three feedback tasks, two selection tasks, and three sealed final tasks. The protocol accepts continuous `[0,1]` rewards and uses `meanReward` as its primary Cowork metric, but the eight selected upstream verifiers currently emit only 0/1, so `meanReward` equals resolved rate in this POC. Paired reward improvement/regression, bootstrap intervals, latency, policy violations, and feedback-to-final generalization gap are also reported.
 
-## Next steps
+The Model Gateway now measures request and token usage per Solver/Updater session from streamed provider usage. Token fields are emitted only when every response in the session reports valid usage; otherwise they remain unknown. Dollar cost remains unknown without a trusted provider rate card, so the POC cost gates stay disabled. A token-growth gate exists but has no arbitrary POC threshold. Results explicitly record `seed_controlled=false`: seeds are paired and recorded, but the current DSH model path does not guarantee deterministic sampling, so formal runs should use repeated trials.
 
-- Add formal schema validation for Target, Updater, and Environment Adapters.
-- Implement Candidate materialization, sandbox mounts, and final diff allowlist checks.
-- Implement the SWE-bench Runner/Normalizer that produces normalized Solver Results.
-- Complete the full `task -> feedback -> Updater -> Candidate -> paired evaluation -> decision` loop.
-- Start with DeepSeek Harness L1 experiments, then L2; enable L3 only after isolation and rollback are reliable.
-- Add a pi-agent adapter to verify that the Controller is genuinely agent-agnostic.
+## Documentation
+
+- [Cowork MVP runbook](docs/cowork-mvp.md)
+- [Control-plane architecture](docs/architecture.md)
+- [Controller](controller/README.md)
+- [Adapters](adapters/README.md)
+- [Environments](environments/README.md)
+- [Benchmarks](benchmarks/README.md)
+- [Evaluation](evaluation/README.md)
 
 ## Upstream and license
 
-This is not an official DeepSeek project. `sources/deepseek-harness/` is fetched from [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) and currently pins a reviewed contributor integration commit on top of that history; the submodule retains its own history and license. Controller, adapter, and documentation work in this repository is available under the [MIT License](LICENSE).
+This is not an official DeepSeek project. `sources/deepseek-harness/` comes from [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness), retains its own history and license, and is pinned by the superproject Gitlink. Updaters never edit it directly. Controller, adapter, preset, and documentation work in this repository is available under the [MIT License](LICENSE).

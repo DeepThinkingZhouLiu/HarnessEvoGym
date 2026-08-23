@@ -1,0 +1,26 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "EvolutionExperiment",
+  "metadata": {
+    "id": "cowork-skillsbench-dsh-l1-poc"
+  },
+  "spec": {
+    "adapters": {
+      "target": "adapters/targets/deepseek-harness.yml",
+      "updater": "adapters/updaters/deepseek-harness.yml",
+      "environment": "environments/skillsbench-cowork.yml"
+    },
+    "benchmark": "benchmarks/cowork-skillsbench-poc/benchmark.json",
+    "policy": "evaluation/policies/cowork-rsi-poc.json",
+    "models": {
+      "solver": { "provider": "deepseek-official", "model": "deepseek-chat", "maxTokens": 8192 },
+      "updater": { "provider": "deepseek-official", "model": "deepseek-chat", "maxTokens": 8192 }
+    },
+    "evolution": {
+      "mutationLevel": "l1",
+      "generations": 1,
+      "trialsPerInstance": 1,
+      "seeds": [20260824]
+    }
+  }
+}

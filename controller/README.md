@@ -1,28 +1,62 @@
 # Controller
 
-Controller 是 RSI 系统的可信、确定性控制平面。这里将承载后续可执行实现，但不会把 Updater 的开放式推理拆成固定的 `failure-analyzer`、`mutation-proposer` 等规则服务。
+Controller 是 RSI 系统的可信、确定性控制平面。Updater 负责开放式分析和修改，Controller 只做可以被审计和复现的实例化、权限、运行、评测、谱系和决策。
 
-Controller 只负责以下事情：
+## 模块
 
-- 解析 Target、Updater 与 Environment Adapter。
-- 从固定 Source Revision 创建彼此隔离的 Baseline 与 Candidate。
-- 收集客观结果，生成不含隐藏答案的 Feedback Packet。
-- 选择本轮 L1、L2 或 L3，并用沙箱可写路径实施限制。
-- 启动一个 Updater Coding Agent Session，让它完成分析、假设和修改。
-- 校验最终 Diff、构建 Candidate，并执行 Baseline/Candidate 配对评测。
-- 根据冻结 Gate 登记 Candidate、晋升新 Baseline 或回滚。
+| 文件                           | 职责                                                       |
+|--------------------------------|------------------------------------------------------------|
+| `src/cli.mjs`                  | 命令解析、sealed Final 显式入口、报告输出                   |
+| `src/adapters.mjs`             | Target/Updater/Environment/Experiment 配置校验              |
+| `src/candidate.mjs`            | Tree Snapshot、Digest、Diff Guard、Manifest、Mutation Report |
+| `src/path-policy.mjs`          | 安全相对路径、Glob、只读优先级和扩展名策略                  |
+| `src/docker.mjs`               | 无 Shell 的 Docker CLI、资源与权限限制                      |
+| `src/process.mjs`              | 超时、输出上限、密钥脱敏的子进程协议                        |
+| `src/factories.mjs`            | 按 Adapter Protocol 解析 Solver/Updater/Environment Driver  |
+| `src/runtimes/dsh.mjs`         | DSH Runtime 构建、Solver 与 Updater Session                 |
+| `src/environments/skillsbench.mjs` | SkillsBench Task、Workspace、Verifier 与 Reward         |
+| `src/model-gateway.mjs`        | Run 级内部网络、一次性令牌、模型网关构建、Usage 与清理       |
+| `src/feedback.mjs`             | feedback-only 脱敏反馈包                                    |
+| `src/protocol.mjs`             | Benchmark、Policy、Solver Result 和 Ledger 协议              |
+| `src/evaluator.mjs`            | 配对指标、Bootstrap 与晋升 Gate                             |
+| `src/orchestrator.mjs`         | 端到端进化、晋升/回滚、Registry 与一次性 Final              |
 
-Controller 不相信 Candidate 自报分数，不把隐藏任务交给 Updater，也不允许 Updater 直接操作 Source Submodule 或 Git 晋升指针。
+## 粗粒度主流程
 
-第一版实现应保持粗粒度：`orchestrate -> materialize -> update -> evaluate -> decide`。只有出现明确复用边界后，再拆分内部模块。
+```text
+load/validate
+-> preflight pinned sources
+-> materialize H0
+-> run feedback
+-> build feedback packet
+-> update disposable proposal
+-> enforce full diff
+-> paired selection evaluation
+-> promote/reject
+-> persist state
+```
 
-## 当前可执行入口
+Updater 内部不拆成固定的 `failure-analyzer`、`mutation-proposer`、`candidate-builder` 或 `search-policy` 服务。它是一个完整 Coding Agent Session；Controller 只要求真实文件 Diff 和结构化 Mutation Report。
 
-`src/cli.mjs` 已实现第一段可信评测入口：
+## 命令
 
-- `benchmark validate` 校验不可变数据版本、三段 Split、可见性、数量与重复 ID。
-- `evaluate compare` 读取标准化 Baseline/Candidate JSONL，计算覆盖率、Resolved Rate、成本、Token、延迟和配对改进。
-- Evaluation Policy 负责覆盖率、净提升、回退、成本与安全 Gate。
-- sealed `final` 必须显式解锁，且单独运行时只形成最终报告，不参与 Candidate 选择。
+```bash
+npm run rsi -- adapter validate --config adapters/targets/deepseek-harness.yml
+npm run rsi -- experiment validate --config experiments/cowork-skillsbench-dsh-l1.json
+npm run rsi -- experiment preflight --config experiments/cowork-skillsbench-dsh-l1.json
+npm run rsi -- runtime build --experiment experiments/cowork-skillsbench-dsh-l1.json
+npm run rsi -- evolve run --experiment experiments/cowork-skillsbench-dsh-l1.json --run-id <id>
+npm run rsi -- evolve finalize --run .rsi/runs/<id>
+```
 
-它目前不负责启动 Solver、SWE-bench Docker Harness 或 Updater；这些仍属于后续的 `materialize/run/normalize` 闭环。
+`experiment validate` 不访问 Docker 或外部 Task Checkout；`preflight` 会分别检查已提交的 Controller 信任根、Target/Updater Gitlink 与干净 Revision、SkillsBench SHA、任务文件、Docker 和网关所需环境变量。DSH/SkillsBench 的干净性检查也包含 Git 已忽略文件，避免它们悄悄进入镜像或 Verifier。`evolve run` 永远不运行 final；`evolve finalize` 在配置、主仓/Source Revision 和 Candidate 完整性重验后，会原子创建 `final-attempt.json` 再解封，并发进程也只有一个能消耗唯一 Attempt。领取后无论成功、失败还是崩溃都不会默认重试。
+
+## 失败语义
+
+- 配置、Revision、密钥或 Docker 缺失：Run 启动前失败。
+- Updater 或 Diff 失败：当前 Proposal 记录为 rejected，Champion 不变。
+- Solver/Verifier 单题失败：标准结果为 `error`，完成率 Gate 决定不能静默晋升。
+- Selection Gate 失败：保留父 Champion，不覆盖任何 Candidate。
+- Final 实际回放成功或失败后重复调用：直接拒绝，避免把测试集变成选择集。
+
+运行状态只写 `.rsi/`。Source Submodule、Benchmark、Evaluation Policy、Verifier、凭据和主仓 Git 元数据不会挂入 Updater 的可写面。Solver/Updater 只接入 Run 级 internal network；真实 Provider Key 仅由 Model Gateway 环境继承，Agent 收到的是一次性令牌。

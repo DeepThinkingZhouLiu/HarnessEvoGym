@@ -1,0 +1,12 @@
+.git
+**/.git
+.rsi
+.WorkTrees
+node_modules
+**/node_modules
+.pnpm-store
+docs/repo-report
+sources/deepseek-harness/.cache
+sources/deepseek-harness/**/lib
+sources/deepseek-harness/**/dist
+sources/deepseek-harness/**/coverage

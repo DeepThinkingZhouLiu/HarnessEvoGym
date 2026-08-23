@@ -1,5 +1,7 @@
 # Benchmark
 
+当前生产 Campaign 是 `putnambench-lean/`：它固定 672 道 Lean 题，并按完整比赛年份切成 500 道可反馈验证集与 172 道 sealed test。主循环只用验证集决策；test 每个 Candidate 都运行，但关闭前不向 Controller/Updater 暴露题目、过程或分数。精确协议与哈希见 `docs/putnambench-evolution.zh.md`。
+
 Benchmark 固定“评哪些任务”，不负责让 Solver 解题，也不负责修改 Candidate。每份配置必须记录不可变数据版本、Evaluator Adapter、精确 Instance ID，以及 `feedback/selection/final` 三个互斥 Partition。
 
 ## 三种 Partition
@@ -26,3 +28,9 @@ npm run rsi -- benchmark validate \
 ```
 
 校验会拒绝移动数据版本、空 Partition、重复 ID、跨 Partition 泄漏、数量不一致和错误的可见性配置。
+
+生产 PutnamBench 配置使用专用入口：
+
+```bash
+npm run rsi -- campaign validate
+```

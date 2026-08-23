@@ -5,7 +5,7 @@ English | [中文](README.zh.md)
 **An adapter-based recursive self-improvement control plane for coding agents, with DeepSeek Harness as the first Solver and Updater runtime.**
 
 > [!IMPORTANT]
-> The repository now has the independent control-plane layout, upstream submodule, adapter/isolation contracts, and an initial Benchmark validator plus paired Evaluator CLI. The full Controller evolution loop is not implemented yet, so this is not a claim of unattended self-evolution today.
+> The repository now includes the resumable PutnamBench-Lean Controller loop, L1→L2→L3 mutation gates, model gateway, Lean-kernel evaluation, sealed test broker, sandboxed runtimes, and raw-curve reporting. A successful `campaign smoke` is still required before a production campaign; implementation readiness is not an experimental result.
 
 ## Why this is no longer a DeepSeek Harness fork
 
@@ -16,7 +16,7 @@ The relationship is now:
 ```text
 DeepSeek-Harness-RSI (independent trusted control plane)
   -> sources/deepseek-harness (pinned integration submodule; read-only to the Updater)
-  -> .rsi/instances/... (Baseline and Candidate instances materialized by Controller)
+  -> /mnt/data/hzy/dsh-rsi-runtime/... (isolated campaign/runtime storage)
   -> Updater edits one Candidate, never the source submodule
 ```
 
@@ -56,32 +56,48 @@ The Controller chooses one level per run. Prompt instructions explain the scope,
 
 ```text
 .
-├── controller/                 # Trusted orchestration contract and future implementation
+├── controller/                 # Trusted orchestration, stores, runners, broker, reports
 ├── adapters/
 │   ├── targets/                # Solver source, launch protocol, and L1/L2/L3 paths
 │   └── updaters/               # Coding-agent runtime used for an Updater session
-├── benchmarks/                 # Pinned data revision, instance IDs, and three-way split
+├── benchmarks/                 # Pinned data revision and validation/sealed-test manifests
 ├── evaluation/                 # Paired metrics, promotion policy, normalized results
 ├── environments/              # Task, trajectory, and evaluation environment protocol
 ├── prompts/                    # Shared high-level Updater instruction
 ├── sources/
 │   └── deepseek-harness/       # Pinned Harness integration; read-only to the Updater
 ├── docs/                       # Architecture and design documents
-└── .rsi/                       # Local instances, feedback, artifacts, and lineage; ignored
+└── scripts/                    # Reproducible production-host bootstrap and isolation setup
 ```
 
 ## Source and instance isolation
 
 - `sources/deepseek-harness/` stores the trusted, pinned upstream-derived source revision.
-- The Controller materializes separate Baseline and Candidate worktrees from that revision.
+- The Controller archives separate Baseline/Candidate content copies without `.git`, then builds read-only runtime instances.
 - The Updater may read the Candidate, but only active-level paths are writable; Controller Git metadata is not exposed.
-- Baseline and Candidate run paired tasks with the same model, budgets, and seeds.
+- Baseline and Candidate run the same tasks under the frozen model contract and request budgets.
 - Hidden tasks and final rubrics never enter the feedback packet, and self-reported candidate scores cannot promote a revision.
 - Only the Controller can register a Candidate, advance the baseline pointer, or roll back.
 
 See the [architecture document](docs/architecture.md) for the complete decision and runtime layout.
 
 ## Benchmark and Evaluator entry point
+
+The production PutnamBench campaign is validated and preflighted with:
+
+```bash
+scripts/setup-putnambench-runtime.sh --repository-root "$PWD"
+node controller/src/cli.mjs campaign validate
+
+read -rsp 'ZCloud API key: ' RSI_API_KEY; printf '\n'
+node controller/src/cli.mjs campaign smoke \
+  --tasks 1 --zcloud-key-fd 3 3< <(printf '%s' "$RSI_API_KEY")
+unset RSI_API_KEY
+```
+
+After the smoke passes, use `evolve start` for a new campaign, `evolve resume` only after an infrastructure pause, `evolve status` for a credential-free public status, and `evolve report` after closure. The main campaign is pinned to `gpt-5.6-sol`, Responses API, reasoning effort `max`. A backup provider always starts a separately fingerprinted campaign and never contributes points to the primary curve. See the [experiment protocol](docs/putnambench-evolution.md).
+
+The generic paired Evaluator CLI remains available:
 
 The CLI validates a Benchmark manifest and compares normalized Baseline/Candidate results:
 
@@ -101,7 +117,7 @@ npm run rsi -- evaluate compare \
   --evolution evaluation/examples/evolution-ledger.json
 ```
 
-It reports resolved rate, paired net improvement, regressions, bootstrap intervals, tokens, cost, latency, policy violations, and promotion gates. Launching the official SWE-bench Docker harness and normalizing its report is the next integration step; see [Evaluator documentation](evaluation/README.md).
+It reports resolved rate, paired net improvement, regressions, bootstrap intervals, tokens, cost, latency, policy violations, and promotion gates. See [Evaluator documentation](evaluation/README.md).
 
 ## Clone
 
@@ -121,14 +137,12 @@ git commit -m "chore: update DeepSeek Harness submodule"
 
 The `hzy_dev` branch follows the matching integration branch in [`ZhaoyangHan04/deepseek-harness`](https://github.com/ZhaoyangHan04/deepseek-harness/tree/hzy_dev), which carries the headless preset fix on top of the official history. The superproject still records a concrete SHA for reproducible experiments; upstream updates should first be integrated and verified on that submodule branch.
 
-## Next steps
+## Current experiment scope
 
-- Add formal schema validation for Target, Updater, and Environment Adapters.
-- Implement Candidate materialization, sandbox mounts, and final diff allowlist checks.
-- Implement the SWE-bench Runner/Normalizer that produces normalized Solver Results.
-- Complete the full `task -> feedback -> Updater -> Candidate -> paired evaluation -> decision` loop.
-- Start with DeepSeek Harness L1 experiments, then L2; enable L3 only after isolation and rollback are reliable.
-- Add a pi-agent adapter to verify that the Controller is genuinely agent-agnostic.
+- PutnamBench-Lean is the implemented production campaign; the generic SWE-bench adapter remains separate work.
+- Mutations proceed outside-in: L1 declarative strategy, L2 extensions/tools, then L3 Solver core.
+- Promotion uses only a strict increase on 500 validation proofs. The 172-test partition stays sealed until closure and is never used for selection.
+- Provider credentials enter through inherited file descriptors. Solver, Updater, Build, and Verifier use separate identities and fail-closed sandboxes.
 
 ## Upstream and license
 

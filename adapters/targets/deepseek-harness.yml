@@ -13,8 +13,8 @@ spec:
     updateBranch: hzy_dev
 
   materialization:
-    strategy: controller-owned-git-worktree
-    runtimeRoot: .rsi/instances
+    strategy: controller-owned-git-archive
+    runtimeRoot: /mnt/data/hzy/dsh-rsi-runtime/campaigns
     hideGitMetadataFromUpdater: true
 
   solver:
@@ -34,6 +34,9 @@ spec:
       - packages/interaction/permission-presets/**
       - packages/interaction/user-approval/**
       - packages/llm/token-meter/**
+      # 模型、协议与 effort 由 Controller gateway 冻结，不属于可进化 Harness 行为。
+      - packages/llm/llm-pi-ai/**
+      - packages/core/agent-default-model/**
       - packages/sandbox/**
       - '**/.env'
       - '**/.env.*'
@@ -68,7 +71,7 @@ spec:
           - packages/shell/tool-*/**
 
       l3:
-        description: 允许修改 Solver Core；外部 Controller、Evaluator、安全根和上游 Source 仍冻结。
+        description: 允许修改 Solver Core；模型路由、外部 Controller、Evaluator、安全根和上游 Source 仍冻结。
         writable:
           - apps/**
           - examples/**

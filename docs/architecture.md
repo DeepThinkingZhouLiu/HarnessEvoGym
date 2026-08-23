@@ -37,27 +37,27 @@ pin Source Revision
 
 ## Runtime layout
 
-All mutable state lives under ignored `.rsi/` storage:
+The production PutnamBench campaign keeps mutable state outside the Git checkout. Repository, persistent root, and scratch root must be pairwise disjoint; the sealed-test subtree is never mounted into an untrusted phase. The default deployment uses:
 
 ```text
-.rsi/
-  runs/<run-id>/
-    input/
-      feedback-packet.json
-      mutation-policy.json
-    baseline/
-      workspace/
-    candidates/<candidate-id>/
-      workspace/
-      mutation-report.json
-      diff.patch
-      evaluation.json
-    decision.json
-  registry/
-    candidates.jsonl
+/mnt/data/hzy/dsh-rsi-runtime/
+  campaigns/<campaign-id>/
+    public/                 # resumable state, summaries, proposals, opaque receipts
+    private/                # validation records, traces, and per-task checkpoints
+    candidates/             # immutable baseline/candidate lineage
+    sealed/test/            # test records; unreadable by Solver and Updater
+    report/                 # emitted only after campaign closure
+  runtimes/<campaign-id>/   # offline-built, frozen evaluation instances
+  datasets/PutnamBench/     # pinned source and mathlib project
+  trusted-baseline/         # prebuilt pinned Harness source
+  pnpm-store/               # root-owned offline build inputs
+  control/                  # attested runtime patch
+
+/dev/shm/dsh-rsi/
+  <campaign-id>/            # disposable Updater/evaluation workspaces
 ```
 
-The Controller may use the submodule Git objects to create worktrees, but the Updater container sees only Candidate file mounts, not `.git` or the Controller Gitdir. Baseline is read-only, and all Candidate paths outside the active allowlist are read-only.
+Candidate materialization uses a content copy of the pinned submodule rather than exposing its Git objects. The Updater sees only the active Candidate, validation feedback, proposal, and its phase-specific writable paths—not `.git`, the Controller repository, dataset, test manifest, sealed vault, credentials, or another Candidate. Evaluation mounts Candidate source read-only. Build, Solver, Updater, and verifier run under distinct host identities and bubblewrap mount namespaces; only the active gateway endpoint is admitted through a temporary UID/port firewall lease. The verifier has no network namespace.
 
 ## Mutation boundary
 
@@ -73,28 +73,20 @@ L1, L2, and L3 are Target Adapter semantics rather than universal directories. A
 
 A Feedback Packet contains aggregate metrics, representative successes and failures, trajectories, verifier outputs, cost, latency, and environment facts without prescribing a fixed causal taxonomy. The Updater infers the change from evidence across cases.
 
-Promotion checks at least training improvement, held-out improvement, historical replay tolerance, cost/latency budgets, and safety against privilege changes, cross-task contamination, and irreversible effects. A Candidate may affect task-solving behavior but never tasks, final scoring, resource accounting, or promotion rules.
+The implemented PutnamBench policy uses one adaptive validation partition and one operationally hidden test partition. Promotion is based exclusively on a strict increase in validation Lean-kernel verified count. Test is measured for every point but cannot affect promotion, rollback, retries, level changes, or stopping. A Candidate may affect task-solving behavior but never tasks, final scoring, resource accounting, or promotion rules.
 
 ## Benchmark and two-level evaluation
 
-A Task Evaluator decides whether one task is resolved; for SWE-bench, the official harness applies a Solver patch and runs tests. The RSI Evaluator consumes normalized per-instance results, compares Baseline and Candidate on the same instances and budgets, and applies quality, regression, cost, and safety gates.
+The production adapter targets PutnamBench-Lean. Its manifest pins the dataset, Lean, mathlib, Harness revision, model contract, and two whole-year partitions: 500 validation problems and 172 test problems. Validation score and traces are available to the next Updater session. The main Controller loads validation IDs only; a dedicated broker child alone opens and validates the test manifest and writes per-task results to the sealed vault. Before closure the parent receives only an opaque completion receipt.
 
-The Benchmark manifest pins a dataset revision and three disjoint partitions: `feedback`, `selection`, and `final`. Feedback may expose detailed bad cases, selection is used for in-loop Candidate choice, and final remains sealed until the Final Candidate is locked. Reusing final every generation turns it into validation data.
+The Solver proposes a replacement for the theorem proof. A separate trusted replay reconstructs that proof in the frozen source template and asks the pinned Lean kernel to compile it. It rejects placeholders, new axioms, changed statements, unsafe file types, and out-of-bound writes. Thus the model chooses mutations without a human-authored failure classifier while correctness remains objective.
 
-`controller/src/cli.mjs` now implements manifest validation, normalized result validation, paired metrics, bootstrap intervals, Evolution Ledger accounting, and gates. The official SWE-bench Runner/Normalizer remains an Environment Adapter integration.
+The generic normalized-result and three-partition APIs remain available for adapter experiments, and the SWE-bench YAML is still a contract stub; it is not part of the implemented PutnamBench production path.
 
 ## Submodule update semantics
 
 The superproject pins a DeepSeek Harness SHA, making every experiment reproducible. `git submodule update --remote` fetches an upstream revision locally; it becomes a trusted Source Revision only after the new submodule pointer is committed. Existing Candidates retain their original SHA.
 
-## Implementation order
+## Implemented production path
 
-1. Benchmark manifest, normalized Solver Result, paired metrics, and Evaluation Policy. (Initial version available.)
-2. SWE-bench Runner/Normalizer and a pinned 100-instance manifest.
-3. Adapter schemas and static validation.
-4. Source revision and Candidate materialization.
-5. L1 writable mounts and final diff validation.
-6. Feedback Packet and one Updater session.
-7. Immutable registry, L2 sandbox, and rollback.
-8. L3 full-instance isolation.
-9. A second agent Target to test adapter generalization.
+The PutnamBench path now includes frozen manifests, exact source materialization, L1/L2/L3 diff enforcement, two-phase proposal/apply Updater sessions, offline Candidate builds, per-task checkpoints, validation feedback, child-only sealed-test execution, strict promotion and rollback, crash-safe campaign state, single-writer locking, implementation/runtime attestation, FD-only credentials, and post-closure JSON/CSV/Markdown/SVG reports. The next generalization milestone is a second fully implemented Environment Adapter; the existing SWE-bench files alone do not claim that milestone.

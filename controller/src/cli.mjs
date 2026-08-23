@@ -13,6 +13,7 @@ import {
   writeJsonFile,
 } from './protocol.mjs'
 import { evaluateBenchmark } from './evaluator.mjs'
+import { isCampaignCliCommand, runCampaignCliCommand } from './campaign-cli.mjs'
 
 const HELP = `DeepSeek Harness RSI Controller
 
@@ -30,6 +31,14 @@ const HELP = `DeepSeek Harness RSI Controller
     [--evolution <ledger.json>] \\
     [--allow-sealed] \\
     [--output <report.json>]
+  harness-rsi campaign validate [--config <campaign.json>] [--runtime <runtime.json>]
+  harness-rsi campaign smoke [共同参数] --zcloud-key-fd <fd> [--tasks 1..8]
+  harness-rsi evolve start|run|resume [共同参数] --zcloud-key-fd <fd>
+  harness-rsi evolve status|report [共同参数]
+
+共同参数：
+  [--config <campaign.json>] [--runtime <runtime.json>]
+  [--campaign-id <id>] [--campaigns-root <path>] [--source-root <path>]
 
 说明：
   - 默认只评测 Policy 的 decisionPartition。
@@ -179,6 +188,10 @@ async function main() {
   }
   if (group === 'evaluate' && action === 'compare') {
     await compareCommand(args)
+    return
+  }
+  if (isCampaignCliCommand(group, action)) {
+    await runCampaignCliCommand(group, action, args)
     return
   }
   throw new ProtocolError(`未知命令：${[group, action].filter(Boolean).join(' ')}`, ['使用 --help 查看入口'])

@@ -1,0 +1,44 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "EvolutionCampaign",
+  "metadata": {
+    "id": "putnambench-lean-l1-l3",
+    "name": "PutnamBench Lean Harness RSI L1-L3"
+  },
+  "spec": {
+    "source": {
+      "dataset": "trishullab/PutnamBench",
+      "revision": "dfb0a47a1c1ec3a10f2a9acfdf41a2043920f33c",
+      "leanVersion": "v4.27.0",
+      "mathlibRevision": "a3a10db0e9d66acbebf76c5e6a135066525ac900"
+    },
+    "partitions": {
+      "validation": {
+        "manifest": "validation.ids",
+        "expectedCount": 500,
+        "sha256": "0a9c8fb73194e023da449a7bc41755d07c7aaf3d7ec461c47c765541571f2760",
+        "visibility": "feedback"
+      },
+      "test": {
+        "manifest": "test.ids",
+        "expectedCount": 172,
+        "sha256": "2204168d092c0c322d1eedf952bd6e57def58985f35fc24564458aec74e78236",
+        "visibility": "sealed-until-closed"
+      }
+    },
+    "evolution": {
+      "levels": ["l1", "l2", "l3"],
+      "consecutiveMissesBeforeAdvance": 3,
+      "promotion": "strict-validation-verified-count",
+      "evaluateTestForEveryCandidate": true
+    },
+    "solver": {
+      "targetRevision": "3289531e06e924abb790685f44baf67311f26ec9",
+      "profile": "headless",
+      "preset": "standard",
+      "api": "openai-responses",
+      "model": "gpt-5.6-sol",
+      "reasoningEffort": "max"
+    }
+  }
+}

@@ -65,14 +65,14 @@ Controller 每轮只选择一个层级。Prompt 会告诉 Updater 能改什么�
 ├── environments/              # 任务、Trajectory 与评测环境协议
 ├── prompts/                    # Updater 的共享高层指令
 ├── sources/
-│   └── deepseek-harness/       # 官方只读 Git Submodule
+│   └── deepseek-harness/       # 固定的 Harness 集成版本；对 Updater 只读
 ├── docs/                       # 架构与设计文档
 └── .rsi/                       # 本地实例、反馈、产物与谱系；不进 Git
 ```
 
 ## 源码与实例如何隔离
 
-- `sources/deepseek-harness/` 只保存 Controller 信任的上游基准版本。
+- `sources/deepseek-harness/` 只保存 Controller 信任、由上游派生的固定源码版本。
 - Controller 从这个固定提交创建独立 Baseline 和 Candidate Worktree。
 - Updater 能读取完整 Candidate，但只有当前层级路径可写；其视野中不暴露 Controller 的 Git 元数据。
 - Baseline 和 Candidate 在相同任务、模型、预算和随机种子下配对运行。
@@ -106,7 +106,7 @@ npm run rsi -- evaluate compare \
 ## 获取仓库
 
 ```bash
-git clone --recurse-submodules https://github.com/DeepThinkingZhouLiu/Deepseek-Harness-RSI.git
+git clone --branch hzy_dev --recurse-submodules https://github.com/ZhaoyangHan04/Deepseek-Harness-RSI.git
 cd Deepseek-Harness-RSI
 git submodule update --init --recursive
 ```
@@ -119,7 +119,7 @@ git add sources/deepseek-harness
 git commit -m "chore: update DeepSeek Harness submodule"
 ```
 
-子模块配置跟踪上游 `master`，但主仓始终提交一个确定 SHA，因此实验可以复现，也不会因为上游更新自动改变历史结果。
+`hzy_dev` 分支跟踪 [`ZhaoyangHan04/deepseek-harness`](https://github.com/ZhaoyangHan04/deepseek-harness/tree/hzy_dev) 中同名的集成分支；该分支在官方历史之上携带 headless preset 修复。主仓仍始终提交一个确定 SHA，保证实验可复现；新的官方上游提交应先集成到这个子模块分支并完成验证。
 
 ## 下一步
 
@@ -132,4 +132,4 @@ git commit -m "chore: update DeepSeek Harness submodule"
 
 ## 上游与许可
 
-本项目不是 DeepSeek 官方项目。`sources/deepseek-harness/` 来自 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)，保留其独立历史与许可证；本仓库自己的 Controller、Adapter 和文档使用 [MIT License](LICENSE)。
+本项目不是 DeepSeek 官方项目。`sources/deepseek-harness/` 派生自 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)，开发集成提交托管在 [ZhaoyangHan04 fork](https://github.com/ZhaoyangHan04/deepseek-harness/tree/hzy_dev)，并保留其独立历史与许可证；本仓库自己的 Controller、Adapter 和文档使用 [MIT License](LICENSE)。

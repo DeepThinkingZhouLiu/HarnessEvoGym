@@ -65,14 +65,14 @@ The Controller chooses one level per run. Prompt instructions explain the scope,
 ├── environments/              # Task, trajectory, and evaluation environment protocol
 ├── prompts/                    # Shared high-level Updater instruction
 ├── sources/
-│   └── deepseek-harness/       # Official read-only Git submodule
+│   └── deepseek-harness/       # Pinned Harness integration; read-only to the Updater
 ├── docs/                       # Architecture and design documents
 └── .rsi/                       # Local instances, feedback, artifacts, and lineage; ignored
 ```
 
 ## Source and instance isolation
 
-- `sources/deepseek-harness/` stores the trusted, pinned upstream source revision.
+- `sources/deepseek-harness/` stores the trusted, pinned upstream-derived source revision.
 - The Controller materializes separate Baseline and Candidate worktrees from that revision.
 - The Updater may read the Candidate, but only active-level paths are writable; Controller Git metadata is not exposed.
 - Baseline and Candidate run paired tasks with the same model, budgets, and seeds.
@@ -106,7 +106,7 @@ It reports resolved rate, paired net improvement, regressions, bootstrap interva
 ## Clone
 
 ```bash
-git clone --recurse-submodules https://github.com/DeepThinkingZhouLiu/Deepseek-Harness-RSI.git
+git clone --branch hzy_dev --recurse-submodules https://github.com/ZhaoyangHan04/Deepseek-Harness-RSI.git
 cd Deepseek-Harness-RSI
 git submodule update --init --recursive
 ```
@@ -119,7 +119,7 @@ git add sources/deepseek-harness
 git commit -m "chore: update DeepSeek Harness submodule"
 ```
 
-The submodule is configured to follow upstream `master`, while the superproject always records a concrete SHA for reproducible experiments.
+The `hzy_dev` branch follows the matching integration branch in [`ZhaoyangHan04/deepseek-harness`](https://github.com/ZhaoyangHan04/deepseek-harness/tree/hzy_dev), which carries the headless preset fix on top of the official history. The superproject still records a concrete SHA for reproducible experiments; upstream updates should first be integrated and verified on that submodule branch.
 
 ## Next steps
 
@@ -132,4 +132,4 @@ The submodule is configured to follow upstream `master`, while the superproject 
 
 ## Upstream and license
 
-This is not an official DeepSeek project. `sources/deepseek-harness/` comes from [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) and retains its own history and license. Controller, adapter, and documentation work in this repository is available under the [MIT License](LICENSE).
+This is not an official DeepSeek project. `sources/deepseek-harness/` derives from [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness), with the development integration commit hosted in the [ZhaoyangHan04 fork](https://github.com/ZhaoyangHan04/deepseek-harness/tree/hzy_dev), and retains its own history and license. Controller, adapter, and documentation work in this repository is available under the [MIT License](LICENSE).

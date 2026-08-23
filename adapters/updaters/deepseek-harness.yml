@@ -11,6 +11,7 @@ spec:
     isolation: dedicated-read-only-instance
     protocol: dsh-headless
     profile: headless
+    preset: standard
 
   prompt:
     path: prompts/updater.md

@@ -10,7 +10,7 @@ spec:
     kind: git-submodule
     path: sources/deepseek-harness
     revision: pinned
-    updateBranch: master
+    updateBranch: hzy_dev
 
   materialization:
     strategy: controller-owned-git-worktree
@@ -20,6 +20,7 @@ spec:
   solver:
     protocol: dsh-headless
     profile: headless
+    preset: standard
     trajectory: dsh-session-log
 
   mutation:

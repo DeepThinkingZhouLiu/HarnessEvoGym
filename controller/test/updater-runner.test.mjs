@@ -146,6 +146,10 @@ test('sandboxed updater rewrites host paths and exposes only phase-scoped mounts
     assert.equal(invocation.env.TMPDIR, '/work/tmp')
     assert.equal(invocation.env.TASK_CWD, UPDATER_SANDBOX_PATHS.candidate)
     assert.match(invocation.env.DSH_SOURCE_BIN, /\/opt\/harness-rsi\/updater-runtime/u)
+    assert.equal(
+      invocation.env.TSX_TSCONFIG_PATH,
+      `${UPDATER_SANDBOX_PATHS.runtime}/tsconfig.json`,
+    )
     assert.equal(invocation.env.NODE_OPTIONS, undefined)
     assert.equal(invocation.env.ZCLOUD_API_KEY, undefined)
   }

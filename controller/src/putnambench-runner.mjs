@@ -967,6 +967,7 @@ export function buildHarnessInvocation({
     DSH_TELEMETRY_DISABLED: '1',
     TASK_CWD: cwd,
     DSH_SOURCE_BIN: pathToFileURL(entryPath).href,
+    TSX_TSCONFIG_PATH: join(candidate, 'tsconfig.json'),
     RSI_LEAN_PROJECT_ROOT: project,
     RSI_TASK_FILE: join(cwd, 'Main.lean'),
     RSI_MODEL_GATEWAY_URL: gateway.toString(),

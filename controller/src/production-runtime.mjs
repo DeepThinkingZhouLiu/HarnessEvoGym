@@ -342,6 +342,7 @@ async function defaultSmokeRuntime({
         ...environment,
         HOME: home,
         TMPDIR: temporary,
+        TSX_TSCONFIG_PATH: join(SOURCE_SMOKE_SANDBOX_PATHS.runtime, 'tsconfig.json'),
       },
     },
     uid: solverUid,

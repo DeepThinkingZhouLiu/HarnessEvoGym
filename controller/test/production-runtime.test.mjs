@@ -486,6 +486,10 @@ test('builds baseline and candidates offline inside the no-network build sandbox
     assert.equal('shell' in smoke, false)
     assert.equal(smoke.env.HOME, `${SOURCE_SMOKE_SANDBOX_PATHS.workspace}/home`)
     assert.equal(smoke.env.TMPDIR, `${SOURCE_SMOKE_SANDBOX_PATHS.workspace}/tmp`)
+    assert.equal(
+      smoke.env.TSX_TSCONFIG_PATH,
+      `${SOURCE_SMOKE_SANDBOX_PATHS.runtime}/tsconfig.json`,
+    )
     assert.equal(smoke.env.ZCLOUD_API_KEY, undefined)
     assert.equal(smoke.env.DASHSCOPE_API_KEY, undefined)
     assert.equal(smoke.env.NODE_OPTIONS, undefined)

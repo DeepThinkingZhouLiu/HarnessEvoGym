@@ -419,6 +419,7 @@ test('Harness invocation carries only a dummy Controller-gateway key', () => {
   assert.equal(invocation.env.RSI_TASK_FILE, '/tasks/task-opaque/Main.lean')
   assert.equal(invocation.env.TASK_CWD, '/tasks/task-opaque')
   assert.match(invocation.env.DSH_SOURCE_BIN, /^file:\/\/\/candidate\/apps\/cli\/src\/bin\.ts$/u)
+  assert.equal(invocation.env.TSX_TSCONFIG_PATH, '/candidate/tsconfig.json')
   assert.equal(Object.hasOwn(invocation.env, 'ZCLOUD_API_KEY'), false)
   assert.equal(Object.hasOwn(invocation.env, 'DASHSCOPE_API_KEY'), false)
   assert.deepEqual(invocation.args.slice(6, 12), [

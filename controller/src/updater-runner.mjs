@@ -115,6 +115,7 @@ export function buildUpdaterInvocation({
       TMPDIR: join(run, 'tmp'),
       TASK_CWD: workspace,
       DSH_SOURCE_BIN: pathToFileURL(join(runtime, 'apps', 'cli', 'src', 'bin.ts')).href,
+      TSX_TSCONFIG_PATH: join(runtime, 'tsconfig.json'),
       DSH_HOME: join(run, 'dsh-home'),
       DSH_SESSION_ROOT: join(run, 'session-trace'),
       DSH_TELEMETRY_DISABLED: '1',

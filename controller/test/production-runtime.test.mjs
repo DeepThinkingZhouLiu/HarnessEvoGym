@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -1154,13 +1154,17 @@ test('pinned dependency store must be nonempty, trusted-owned, and immutable', a
   const filesRoot = join(root, 'v11', 'files')
   const file = join(filesRoot, 'content-addressed-entry')
   const index = join(root, 'v11', 'index.db')
+  const projectLink = join(root, 'v11', 'projects', 'trusted-project')
   await mkdir(filesRoot, { recursive: true })
+  await mkdir(join(root, 'v11', 'projects'), { recursive: true })
   await Promise.all([
     writeFile(file, 'pinned dependency\n'),
     writeFile(index, 'pinned sqlite index\n'),
+    symlink('../files', projectLink),
   ])
   await Promise.all([chmod(file, 0o444), chmod(index, 0o444)])
   await chmod(filesRoot, 0o555)
+  await chmod(join(root, 'v11', 'projects'), 0o555)
   await chmod(join(root, 'v11'), 0o555)
   await chmod(root, 0o555)
   await validateImmutableDependencyStore({

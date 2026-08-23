@@ -306,7 +306,11 @@ if [[ $installed_fingerprint != "$dependency_fingerprint" \
   install -o root -g root -m 0444 "$marker_stage" "$dependency_marker"
   rm -rf -- "$dependency_stage"
 fi
-if find "$pnpm_store_root" -xdev \( -not -user root -o -perm /022 \) -print -quit \
+# Linux symlink mode is always reported as 0777 and cannot be changed with
+# chmod. Match the Controller's runtime attestation: every entry must be
+# root-owned, while write-bit checks apply to real files/directories only.
+if find "$pnpm_store_root" -xdev \
+    \( -not -user root -o \( ! -type l -perm /022 \) \) -print -quit \
     | grep -q .; then
   printf 'Pinned pnpm store is not root-owned and immutable: %s\n' "$pnpm_store_root" >&2
   exit 1

@@ -10,7 +10,7 @@ spec:
     kind: git-submodule
     path: sources/deepseek-harness
     revision: pinned
-    updateBranch: hzy_dev
+    updateBranch: master
 
   materialization:
     strategy: controller-owned-git-worktree

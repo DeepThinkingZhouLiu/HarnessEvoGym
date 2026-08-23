@@ -4,7 +4,7 @@ English | [中文](architecture.zh.md)
 
 ## Decision
 
-DeepSeek Harness RSI uses an independent GitHub repository as its trusted control plane. It is no longer a DeepSeek Harness fork. The official project history enters only through the pinned `sources/deepseek-harness/` integration submodule, and an Updater never edits that directory directly. On `hzy_dev`, the submodule points to a development fork so the headless preset integration commit remains fetchable while retaining the official history.
+DeepSeek Harness RSI uses an independent GitHub repository as its trusted control plane. It is no longer a DeepSeek Harness fork. The official project history enters only through the pinned `sources/deepseek-harness/` integration submodule, and an Updater never edits that directory directly. The current development revision carries a reviewed headless preset integration commit on top of official history; `.gitmodules` still uses the official upstream, and any later update must preserve or replace that fix.
 
 This separates the mutable Solver from the immutable evaluation root and allows projects such as DeepSeek Harness and pi-agent to become Targets or Updaters through adapters without changing the Controller loop.
 

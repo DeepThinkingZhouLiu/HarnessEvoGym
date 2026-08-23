@@ -106,7 +106,7 @@ It reports resolved rate, paired net improvement, regressions, bootstrap interva
 ## Clone
 
 ```bash
-git clone --branch hzy_dev --recurse-submodules https://github.com/DeepThinkingZhouLiu/Deepseek-Harness-RSI.git
+git clone --recurse-submodules https://github.com/DeepThinkingZhouLiu/Deepseek-Harness-RSI.git
 cd Deepseek-Harness-RSI
 git submodule update --init --recursive
 ```
@@ -119,7 +119,7 @@ git add sources/deepseek-harness
 git commit -m "chore: update DeepSeek Harness submodule"
 ```
 
-The `hzy_dev` branch follows the matching integration branch in [`ZhaoyangHan04/deepseek-harness`](https://github.com/ZhaoyangHan04/deepseek-harness/tree/hzy_dev), which carries the headless preset fix on top of the official history. The superproject still records a concrete SHA for reproducible experiments; upstream updates should first be integrated and verified on that submodule branch.
+The superproject currently pins the reviewed integration commit [`3289531e06`](https://github.com/ZhaoyangHan04/deepseek-harness/commit/3289531e06e924abb790685f44baf67311f26ec9) on top of the official history because the released headless profile does not yet compose per-session presets correctly. `.gitmodules` continues to use official `master` for normal updates. Keep this pin, or an upstream revision with an equivalent fix, when advancing the submodule.
 
 ## Next steps
 
@@ -132,4 +132,4 @@ The `hzy_dev` branch follows the matching integration branch in [`ZhaoyangHan04/
 
 ## Upstream and license
 
-This is not an official DeepSeek project. `sources/deepseek-harness/` derives from [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness), with the development integration commit hosted in the [ZhaoyangHan04 fork](https://github.com/ZhaoyangHan04/deepseek-harness/tree/hzy_dev), and retains its own history and license. Controller, adapter, and documentation work in this repository is available under the [MIT License](LICENSE).
+This is not an official DeepSeek project. `sources/deepseek-harness/` is fetched from [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) and currently pins a reviewed contributor integration commit on top of that history; the submodule retains its own history and license. Controller, adapter, and documentation work in this repository is available under the [MIT License](LICENSE).

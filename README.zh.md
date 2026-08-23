@@ -106,7 +106,7 @@ npm run rsi -- evaluate compare \
 ## 获取仓库
 
 ```bash
-git clone --branch hzy_dev --recurse-submodules https://github.com/DeepThinkingZhouLiu/Deepseek-Harness-RSI.git
+git clone --recurse-submodules https://github.com/DeepThinkingZhouLiu/Deepseek-Harness-RSI.git
 cd Deepseek-Harness-RSI
 git submodule update --init --recursive
 ```
@@ -119,7 +119,7 @@ git add sources/deepseek-harness
 git commit -m "chore: update DeepSeek Harness submodule"
 ```
 
-`hzy_dev` 分支跟踪 [`ZhaoyangHan04/deepseek-harness`](https://github.com/ZhaoyangHan04/deepseek-harness/tree/hzy_dev) 中同名的集成分支；该分支在官方历史之上携带 headless preset 修复。主仓仍始终提交一个确定 SHA，保证实验可复现；新的官方上游提交应先集成到这个子模块分支并完成验证。
+当前主仓在官方历史之上固定了已审查的集成提交 [`3289531e06`](https://github.com/ZhaoyangHan04/deepseek-harness/commit/3289531e06e924abb790685f44baf67311f26ec9)，因为已发布的 headless profile 还不能正确组装逐会话 preset。`.gitmodules` 的正常更新通道仍是官方 `master`；推进子模块时必须保留这笔修复，或者换成包含等价修复的官方版本。
 
 ## 下一步
 
@@ -132,4 +132,4 @@ git commit -m "chore: update DeepSeek Harness submodule"
 
 ## 上游与许可
 
-本项目不是 DeepSeek 官方项目。`sources/deepseek-harness/` 派生自 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)，开发集成提交托管在 [ZhaoyangHan04 fork](https://github.com/ZhaoyangHan04/deepseek-harness/tree/hzy_dev)，并保留其独立历史与许可证；本仓库自己的 Controller、Adapter 和文档使用 [MIT License](LICENSE)。
+本项目不是 DeepSeek 官方项目。`sources/deepseek-harness/` 从 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 拉取，目前在官方历史之上固定了一笔经过审查的贡献者集成提交；该子模块保留独立历史与许可证，本仓库自己的 Controller、Adapter 和文档使用 [MIT License](LICENSE)。

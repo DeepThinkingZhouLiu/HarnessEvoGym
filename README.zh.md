@@ -15,7 +15,7 @@ RSI 系统需要同时管理源码实例、Updater、任务环境、外部评测
 
 ```text
 DeepSeek-Harness-RSI（独立仓库，可信控制平面）
-  -> sources/deepseek-harness（官方仓库的只读 Git Submodule）
+  -> sources/deepseek-harness（固定的集成子模块；对 Updater 只读）
   -> .rsi/instances/...（Controller 生成的 Baseline/Candidate 实例）
   -> Updater 只修改某个 Candidate，不直接修改 Submodule
 ```

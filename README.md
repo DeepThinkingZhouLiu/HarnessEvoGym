@@ -15,7 +15,7 @@ The relationship is now:
 
 ```text
 DeepSeek-Harness-RSI (independent trusted control plane)
-  -> sources/deepseek-harness (read-only Git submodule of the official repo)
+  -> sources/deepseek-harness (pinned integration submodule; read-only to the Updater)
   -> .rsi/instances/... (Baseline and Candidate instances materialized by Controller)
   -> Updater edits one Candidate, never the source submodule
 ```

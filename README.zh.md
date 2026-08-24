@@ -97,6 +97,8 @@ unset RSI_API_KEY
 
 Smoke 通过后，`evolve start` 启动新实验；只有基础设施暂停后才使用 `evolve resume`；`evolve status` 无需凭据且只显示公开状态；关闭后用 `evolve report`。主实验固定为 `gpt-5.6-sol`、Responses API、reasoning effort `max`。备用 Provider 必须启动 fingerprint 独立的新 Campaign，不能把点混入主曲线。完整约束见[实验协议](docs/putnambench-evolution.zh.md)。
 
+冻结网关在每个逻辑请求预算之外最多允许 2 次瞬态重试，且只有在完整收到 HTTP 502/503 响应、尚未向下游转发任何内容时才可重试。因此每道 Solver 题仍最多使用 16 个逻辑模型请求，真实上游调用最多 18 次。推理重试不保证幂等，可能重复计费。
+
 通用配对 Evaluator CLI 仍然保留：
 
 当前 CLI 可以校验 Benchmark Manifest，并对标准化 Baseline/Candidate 结果做配对比较：

@@ -18,7 +18,8 @@
   },
   "gateway": {
     "upstreamBaseUrl": "https://api.zcloudapi.com/v1",
-    "requestTimeoutSeconds": 600
+    "requestTimeoutSeconds": 600,
+    "maximumTransientRetries": 2
   },
   "verifier": {
     "concurrency": 24,

@@ -26,7 +26,11 @@ function fixture() {
       infrastructureRetries: 2,
     },
     updater: { timeoutSeconds: 1800, maximumModelRequestsPerPhase: 32, gatewayConcurrency: 4 },
-    gateway: { upstreamBaseUrl: 'https://api.zcloudapi.com/v1', requestTimeoutSeconds: 600 },
+    gateway: {
+      upstreamBaseUrl: 'https://api.zcloudapi.com/v1',
+      requestTimeoutSeconds: 600,
+      maximumTransientRetries: 2,
+    },
     verifier: { concurrency: 24, threadsPerProcess: 2, timeoutSeconds: 300 },
     testBroker: { timeoutSeconds: 604800 },
     paths: {
@@ -84,6 +88,23 @@ test('rejects unknown fields, mutable secrets, unsafe endpoints, and incompatibl
     assert.match(error.details.join('\n'), /不同系统身份/u)
     return true
   })
+})
+
+test('requires a frozen gateway transient retry limit in the range 0..8', () => {
+  for (const maximumTransientRetries of [0, 8]) {
+    const value = fixture()
+    value.gateway.maximumTransientRetries = maximumTransientRetries
+    assert.doesNotThrow(() => validatePutnamRuntime(value))
+  }
+  for (const maximumTransientRetries of [undefined, -1, 9, 1.5]) {
+    const value = fixture()
+    value.gateway.maximumTransientRetries = maximumTransientRetries
+    assert.throws(() => validatePutnamRuntime(value), (error) => {
+      assert.ok(error instanceof ProtocolError)
+      assert.match(error.details.join('\n'), /gateway\.maximumTransientRetries.*0\.\.8/u)
+      return true
+    })
+  }
 })
 
 test('rejects overlapping or escaped managed roots and mutable sandbox executables', () => {

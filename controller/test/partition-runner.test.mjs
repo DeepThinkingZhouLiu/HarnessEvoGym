@@ -63,19 +63,29 @@ async function fixture(instanceIds = [IDS[0]]) {
   }
 }
 
-function scriptedRuntime({ solvers, verifiers = [], auditUsage = true, auditRecords = [] }) {
+function scriptedRuntime({
+  solvers,
+  verifiers = [],
+  auditUsage = true,
+  auditRecords = [],
+  requestsPerSolver = 1,
+  gatewayStats = () => ({}),
+}) {
   let gateway
+  let receivedGatewayOptions
   let solverCalls = 0
   let verifierCalls = 0
   let closed = 0
   const runtime = {
     async startModelGateway(options) {
+      receivedGatewayOptions = options
       const state = { total: 0, maximum: options.maxRequests, audit: options.audit }
       gateway = {
         url: 'http://127.0.0.1:54321/v1',
         stats: () => ({
           totalRequests: state.total,
           remainingRequests: Math.max(0, state.maximum - state.total),
+          ...gatewayStats(state),
         }),
         close: async () => { closed += 1 },
         state,
@@ -91,7 +101,7 @@ function scriptedRuntime({ solvers, verifiers = [], auditUsage = true, auditReco
     async runHarnessSolver({ invocation }) {
       const result = solvers[Math.min(solverCalls, solvers.length - 1)]
       solverCalls += 1
-      gateway.state.total += 1
+      gateway.state.total += requestsPerSolver
       if (auditUsage) {
         gateway.state.audit(auditRecords[solverCalls - 1] ?? {
           status: 200,
@@ -112,6 +122,7 @@ function scriptedRuntime({ solvers, verifiers = [], auditUsage = true, auditReco
   return {
     runtime,
     counts: () => ({ solverCalls, verifierCalls, closed, requests: gateway?.state.total ?? 0 }),
+    gatewayOptions: () => receivedGatewayOptions,
   }
 }
 
@@ -154,15 +165,91 @@ test('solver infrastructure retry shares one total model-request budget', async 
     onTrace: async (payload) => { trace = payload.text; return 'trace://one' },
   })
   assert.equal(result.summary.verified, 1)
-  assert.equal(result.summary.usage.requests, 2)
-  assert.equal(result.summary.usage.totalTokens, 30)
+  assert.deepEqual(result.summary.usage, {
+    requests: 2,
+    upstreamAttempts: 2,
+    transientRetries: 0,
+    inputTokens: 20,
+    outputTokens: 10,
+    totalTokens: 30,
+  })
   assert.equal(result.records[0].attempts, 2)
   assert.equal(result.records[0].verifierAttempts, 1)
   assert.equal(result.records[0].latencyMs, 31)
   assert.deepEqual(scripted.counts(), { solverCalls: 2, verifierCalls: 1, closed: 1, requests: 2 })
+  assert.equal(scripted.gatewayOptions().maxTransientRetries, 2)
   assert.match(trace, /"solverAttempt":2/u)
   assert.deepEqual(await readdir(options.scratchRoot), [])
   assert.ok(root)
+})
+
+test('partition usage preserves logical requests and exact physical retry accounting', async () => {
+  const { options } = await fixture()
+  const scripted = scriptedRuntime({
+    solvers: [solverResult('completed', null)],
+    requestsPerSolver: 16,
+    gatewayStats: () => ({ upstreamAttempts: 18, transientRetries: 2 }),
+    auditRecords: [{
+      status: 200,
+      origin: 'upstream',
+      upstreamAttempts: 3,
+      transientRetries: 2,
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    }],
+  })
+  const result = await runPartition({
+    ...options,
+    maximumModelRequestsPerTask: 16,
+    maxTransientRetries: 2,
+    runtime: scripted.runtime,
+  })
+  assert.deepEqual(result.records[0].usage, {
+    requests: 16,
+    upstreamAttempts: 18,
+    transientRetries: 2,
+    inputTokens: 10,
+    outputTokens: 5,
+    totalTokens: 15,
+  })
+  assert.deepEqual(result.summary.usage, result.records[0].usage)
+  assert.equal(scripted.gatewayOptions().maxTransientRetries, 2)
+})
+
+test('legacy gateways derive physical attempts from terminal audits without NaN', async () => {
+  const { options } = await fixture()
+  const scripted = scriptedRuntime({
+    solvers: [solverResult('completed', null)],
+    auditRecords: [{
+      status: 200,
+      origin: 'upstream',
+      upstreamAttempts: 3,
+      transientRetries: 2,
+      usage: { inputTokens: Number.NaN, outputTokens: 5, totalTokens: 5 },
+    }],
+  })
+  const result = await runPartition({ ...options, runtime: scripted.runtime })
+  assert.deepEqual(result.summary.usage, {
+    requests: 1,
+    upstreamAttempts: 3,
+    transientRetries: 2,
+    inputTokens: 0,
+    outputTokens: 5,
+    totalTokens: 5,
+  })
+  assert.equal(Object.values(result.summary.usage).every(Number.isSafeInteger), true)
+
+  const localFixture = await fixture()
+  const localOnly = scriptedRuntime({
+    solvers: [solverResult('completed', null)],
+    auditRecords: [{ status: 502, origin: 'credential' }],
+  })
+  const localResult = await runPartition({
+    ...localFixture.options,
+    runtime: localOnly.runtime,
+  })
+  assert.equal(localResult.summary.usage.requests, 1)
+  assert.equal(localResult.summary.usage.upstreamAttempts, 0)
+  assert.equal(localResult.summary.usage.transientRetries, 0)
 })
 
 test('exhausted model-request budget suppresses a pointless solver retry', async () => {
@@ -702,6 +789,12 @@ test('invalid budgets are rejected before any task starts', async () => {
     () => runPartition({ ...options, maximumModelRequestsPerTask: 0 }),
     ProtocolError,
   )
+  for (const maxTransientRetries of [-1, 9]) {
+    await assert.rejects(
+      () => runPartition({ ...options, maxTransientRetries }),
+      ProtocolError,
+    )
+  }
   await assert.rejects(
     () => runPartition({ ...options, solverUid: 1103, solverGid: 2103 }),
     (error) => error instanceof ProtocolError && /Verifier uid\/gid/u.test(error.message),

@@ -22,6 +22,8 @@ PutnamBench is public. “Hidden” therefore means operationally hidden from th
 
 The primary curve never falls back per request, task, partition, or candidate. A persistent ZCloud failure pauses that campaign. DashScope (`qwen3.8-max` or `deepseek-v4-pro`) may be used only by starting a separately fingerprinted campaign and therefore produces a separate curve. Provider, model, effort, or budget changes never continue the primary curve. Credentials are consumed once from inherited file descriptors, kept out of argv/environment/files, and are never artifacts.
 
+Each gateway has a frozen pool of at most two transient retries outside its logical request budget. A retry is allowed only after a complete HTTP 502/503 response has arrived and before any part of that response is sent downstream; transport errors, timeouts, incomplete responses, and streams that have started are not retried. The per-problem Solver budget is therefore 16 logical requests and at most 18 physical upstream calls. Retried POST inference has no assumed idempotency guarantee, may execute or be billed more than once, and can make recorded usage lower than the provider invoice.
+
 ## Split
 
 The split groups complete contest years so one Putnam source year cannot cross partitions. Test years are:

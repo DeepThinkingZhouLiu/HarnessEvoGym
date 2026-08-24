@@ -220,18 +220,48 @@ export async function collectJsonl(root, maximumBytes = DEFAULT_TRACE_MAXIMUM_BY
 }
 
 function usageFromAudits(audits, gateway) {
-  const totalRequests = gateway.stats?.().totalRequests
+  const stats = typeof gateway.stats === 'function' ? gateway.stats() : {}
+  const safeCounter = (value) => (
+    Number.isSafeInteger(value) && value >= 0 ? value : null
+  )
+  const logicalRequests = safeCounter(stats?.totalRequests) ?? audits.length
+  let auditedUpstreamAttempts = 0
+  let auditedTransientRetries = 0
+  let hasUpstreamAttemptEvidence = false
   const usage = {
-    requests: Number.isSafeInteger(totalRequests) ? totalRequests : audits.length,
+    requests: logicalRequests,
+    upstreamAttempts: 0,
+    transientRetries: 0,
     inputTokens: 0,
     outputTokens: 0,
     totalTokens: 0,
   }
   for (const audit of audits) {
-    usage.inputTokens += audit.usage?.inputTokens ?? 0
-    usage.outputTokens += audit.usage?.outputTokens ?? 0
-    usage.totalTokens += audit.usage?.totalTokens ?? 0
+    const explicitAttempts = safeCounter(audit?.upstreamAttempts)
+    if (explicitAttempts !== null) {
+      auditedUpstreamAttempts += explicitAttempts
+      hasUpstreamAttemptEvidence = true
+    } else if (audit?.origin === 'upstream') {
+      // Legacy gateways emitted one terminal audit per logical request but did
+      // not expose their physical-attempt count. Such an upstream audit proves
+      // at least its initial provider call; gateway/credential audits prove no
+      // provider call and therefore contribute zero.
+      auditedUpstreamAttempts += 1
+      hasUpstreamAttemptEvidence = true
+    } else if (audit?.origin === 'gateway' || audit?.origin === 'credential') {
+      // These terminal origins are also positive evidence: the request ended
+      // before a provider call, so its exact physical-attempt contribution is
+      // zero rather than the logical-request compatibility estimate below.
+      hasUpstreamAttemptEvidence = true
+    }
+    auditedTransientRetries += safeCounter(audit?.transientRetries) ?? 0
+    usage.inputTokens += safeCounter(audit?.usage?.inputTokens) ?? 0
+    usage.outputTokens += safeCounter(audit?.usage?.outputTokens) ?? 0
+    usage.totalTokens += safeCounter(audit?.usage?.totalTokens) ?? 0
   }
+  usage.upstreamAttempts = safeCounter(stats?.upstreamAttempts)
+    ?? (hasUpstreamAttemptEvidence ? auditedUpstreamAttempts : logicalRequests)
+  usage.transientRetries = safeCounter(stats?.transientRetries) ?? auditedTransientRetries
   return usage
 }
 
@@ -336,6 +366,7 @@ async function runOneTask(options, problemId, opaqueRunRoot) {
       candidateApiKey: dummyKey,
       maxRequests: options.maximumModelRequestsPerTask,
       maxConcurrency: options.maximumGatewayConcurrencyPerTask,
+      maxTransientRetries: options.maxTransientRetries,
       requestTimeoutMs: options.gatewayRequestTimeoutMs,
       audit: (record) => { audits.push(record) },
     })
@@ -505,10 +536,19 @@ async function runOneTask(options, problemId, opaqueRunRoot) {
 function partitionUsage(records) {
   return records.reduce((total, record) => ({
     requests: total.requests + record.usage.requests,
+    upstreamAttempts: total.upstreamAttempts + record.usage.upstreamAttempts,
+    transientRetries: total.transientRetries + record.usage.transientRetries,
     inputTokens: total.inputTokens + record.usage.inputTokens,
     outputTokens: total.outputTokens + record.usage.outputTokens,
     totalTokens: total.totalTokens + record.usage.totalTokens,
-  }), { requests: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 })
+  }), {
+    requests: 0,
+    upstreamAttempts: 0,
+    transientRetries: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  })
 }
 
 export async function runPartition({
@@ -531,6 +571,7 @@ export async function runPartition({
   taskTimeoutMs = 30 * 60 * 1000,
   verifierTimeoutMs = 5 * 60 * 1000,
   gatewayRequestTimeoutMs = 10 * 60 * 1000,
+  maxTransientRetries = 2,
   infrastructureRetries = 2,
   traceMaximumBytes = DEFAULT_TRACE_MAXIMUM_BYTES,
   solverUid,
@@ -556,6 +597,7 @@ export async function runPartition({
   assertInteger(concurrency, 'Partition concurrency', 1, 64)
   assertInteger(maximumModelRequestsPerTask, 'maximumModelRequestsPerTask', 1, 64)
   assertInteger(maximumGatewayConcurrencyPerTask, 'maximumGatewayConcurrencyPerTask', 1, 16)
+  assertInteger(maxTransientRetries, 'maxTransientRetries', 0, 8)
   assertInteger(infrastructureRetries, 'infrastructureRetries', 0, 5)
   assertInteger(traceMaximumBytes, 'traceMaximumBytes', MINIMUM_TRACE_MAXIMUM_BYTES, MAXIMUM_TRACE_BYTES)
   assertInteger(taskTimeoutMs, 'taskTimeoutMs', 60_000, 7_200_000)
@@ -599,6 +641,7 @@ export async function runPartition({
     taskTimeoutMs,
     verifierTimeoutMs,
     gatewayRequestTimeoutMs,
+    maxTransientRetries,
     infrastructureRetries,
     traceMaximumBytes,
     solverUid,

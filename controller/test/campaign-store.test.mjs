@@ -15,6 +15,17 @@ import { ProtocolError } from '../src/protocol.mjs'
 
 const DIGEST = 'a'.repeat(64)
 
+function usage(requests, inputTokens, outputTokens, totalTokens, transientRetries = 0) {
+  return {
+    requests,
+    upstreamAttempts: requests + transientRetries,
+    transientRetries,
+    inputTokens,
+    outputTokens,
+    totalTokens,
+  }
+}
+
 function makeSealedRecords() {
   return Array.from({ length: 172 }, (_, index) => ({
     instanceId: `putnam_${String(3000 + index)}_a1`,
@@ -43,7 +54,7 @@ test('store keeps test aggregate sealed until CLOSED and returns opaque receipt'
     summary: {
       candidateId: 'baseline', verified: 400, total: 500,
       completedAt: '2026-01-01T00:00:59Z',
-      usage: { requests: 2, inputTokens: 20, outputTokens: 10, totalTokens: 30 },
+      usage: usage(2, 20, 10, 30, 1),
     },
     records: [{ latencyMs: 11 }, { latencyMs: 19 }],
   })
@@ -51,7 +62,7 @@ test('store keeps test aggregate sealed until CLOSED and returns opaque receipt'
     summary: {
       candidateId: 'baseline', verified: 170, total: 172,
       completedAt: '2026-01-01T00:01:00Z',
-      usage: { requests: 3, inputTokens: 30, outputTokens: 15, totalTokens: 45 },
+      usage: usage(3, 30, 15, 45, 2),
     },
     records: makeSealedRecords(),
     testManifestSha256: DIGEST,
@@ -76,14 +87,15 @@ test('store keeps test aggregate sealed until CLOSED and returns opaque receipt'
   const validationAggregates = await store.readValidationAggregates(state)
   assert.deepEqual(validationAggregates[0], {
     candidateId: 'baseline', verified: 400, total: 500,
-    usage: { requests: 2, inputTokens: 20, outputTokens: 10, totalTokens: 30 },
+    usage: usage(2, 20, 10, 30, 1),
     latencyMs: 30,
     completedAt: '2026-01-01T00:00:59Z',
   })
   const aggregates = await store.readSealedAggregates(state)
   assert.equal(aggregates[0].verified, 170)
   assert.deepEqual(aggregates[0].usage, {
-    requests: 3, inputTokens: 30, outputTokens: 15, totalTokens: 45,
+    requests: 3, upstreamAttempts: 5, transientRetries: 2,
+    inputTokens: 30, outputTokens: 15, totalTokens: 45,
   })
   assert.equal(aggregates[0].latencyMs, 25)
 
@@ -198,7 +210,7 @@ test('validation traces are persisted incrementally under the trusted validation
     instanceId: 'putnam_2000_a1',
     status: 'resolved',
     traceRef,
-    usage: { totalTokens: 123 },
+    usage: usage(1, 50, 72, 123, 1),
   }
   await store.writeValidationCheckpoint('baseline', checkpoint)
   assert.deepEqual(await store.readValidationCheckpoints('baseline'), [checkpoint])
@@ -208,6 +220,16 @@ test('validation traces are persisted incrementally under the trusted validation
     }),
     /checkpoint record/u,
   )
+  for (const missing of ['upstreamAttempts', 'transientRetries']) {
+    const invalidUsage = usage(1, 1, 1, 2)
+    delete invalidUsage[missing]
+    await assert.rejects(
+      () => store.writeValidationCheckpoint('baseline', {
+        instanceId: 'putnam_2000_a2', status: 'resolved', usage: invalidUsage,
+      }),
+      new RegExp(`usage\\.${missing}`, 'u'),
+    )
+  }
 })
 
 test('Updater feedback is absolute-time-free while relative validation timing remains available', async () => {
@@ -227,7 +249,7 @@ test('Updater feedback is absolute-time-free while relative validation timing re
     summary: {
       candidateId: 'baseline', verified: 321, total: 500,
       completedAt: '2026-03-01T01:02:03Z',
-      usage: { requests: 500, inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+      usage: usage(500, 1, 2, 3, 2),
     },
     records: [{
       instanceId: 'putnam_2000_a1',
@@ -240,7 +262,7 @@ test('Updater feedback is absolute-time-free while relative validation timing re
       traceRef: 'traces/opaque-task.jsonl',
       startedAt: '2026-03-01T01:00:00Z',
       latencyMs: 123_456,
-      usage: { totalTokens: 999 },
+      usage: usage(16, 600, 399, 999, 2),
     }],
     traces: {
       'opaque-task': [
@@ -293,7 +315,7 @@ test('Updater feedback is absolute-time-free while relative validation timing re
   const projectedSummaryPath = join(store.feedbackRoot, 'baseline', 'summary.json')
   assert.deepEqual(JSON.parse(await readFile(projectedSummaryPath, 'utf8')), {
     candidateId: 'baseline', verified: 321, total: 500,
-    usage: { requests: 500, inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+    usage: usage(500, 1, 2, 3, 2),
   })
   const projectedRecord = JSON.parse((await readFile(
     join(store.feedbackRoot, 'baseline', 'records.jsonl'),
@@ -304,7 +326,7 @@ test('Updater feedback is absolute-time-free while relative validation timing re
     'status', 'traceRef', 'usage', 'verifierAttempts', 'verifierStatus',
   ])
   assert.equal(projectedRecord.latencyMs, 123_456)
-  assert.deepEqual(projectedRecord.usage, { totalTokens: 999 })
+  assert.deepEqual(projectedRecord.usage, usage(16, 600, 399, 999, 2))
   const projectedTrace = await readFile(
     join(store.feedbackRoot, 'baseline', 'traces', 'opaque-task.jsonl'),
     'utf8',

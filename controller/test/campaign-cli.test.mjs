@@ -69,6 +69,7 @@ function runtimeFixture() {
       gateway: {
         upstreamBaseUrl: 'https://provider.invalid/v1',
         requestTimeoutSeconds: 78,
+        maximumTransientRetries: 6,
       },
       verifier: { concurrency: 9, threadsPerProcess: 2, timeoutSeconds: 67 },
       testBroker: { timeoutSeconds: 3_600 },
@@ -197,6 +198,7 @@ test('partition and environment options come from the frozen runtime', () => {
     taskTimeoutMs: 123_000,
     verifierTimeoutMs: 67_000,
     gatewayRequestTimeoutMs: 78_000,
+    maxTransientRetries: 6,
     infrastructureRetries: 2,
     bwrapPath: '/usr/bin/bwrap',
     setprivPath: '/usr/bin/setpriv',
@@ -307,7 +309,14 @@ test('campaign smoke uses only the first requested validation tasks and maps pro
               candidateId: 'baseline-smoke',
               verified: 2,
               total: input.instanceIds.length,
-              usage: { requests: 3, inputTokens: 4, outputTokens: 5, totalTokens: 9 },
+              usage: {
+                requests: 3,
+                upstreamAttempts: 5,
+                transientRetries: 2,
+                inputTokens: 4,
+                outputTokens: 5,
+                totalTokens: 9,
+              },
             },
           }
         },
@@ -324,8 +333,10 @@ test('campaign smoke uses only the first requested validation tasks and maps pro
   assert.equal(smokeInput.candidateRoot.endsWith('/sources/deepseek-harness'), true)
   assert.equal(runtimeOptions.partitionOptions.concurrency, 3)
   assert.equal(runtimeOptions.partitionOptions.verifierUid, 1103)
+  assert.equal(runtimeOptions.partitionOptions.maxTransientRetries, 6)
   assert.equal(runtimeOptions.gatewayOptions.maxRequests, 17)
   assert.equal(runtimeOptions.gatewayOptions.maxConcurrency, 3)
+  assert.equal(runtimeOptions.gatewayOptions.maxTransientRetries, 6)
   assert.equal(runtimeOptions.scratchRoot, '/runtime/scratch')
   assert.equal(runtimeOptions.campaignScratchRoot, '/runtime/scratch/fixture-campaign')
   assert.equal(runtimeOptions.updaterRunRoot, '/runtime/scratch/fixture-campaign/updater-runs')

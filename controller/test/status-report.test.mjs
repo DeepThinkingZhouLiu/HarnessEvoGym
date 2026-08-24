@@ -41,6 +41,17 @@ function openState(status = 'EVOLVING_L1') {
   }
 }
 
+function usage(requests, inputTokens, outputTokens, totalTokens, transientRetries) {
+  return {
+    requests,
+    upstreamAttempts: requests + transientRetries,
+    transientRetries,
+    inputTokens,
+    outputTokens,
+    totalTokens,
+  }
+}
+
 function closedFixture(root, status = 'CLOSED') {
   const state = {
     kind: 'CampaignState', campaignId: 'closed-campaign', status,
@@ -78,12 +89,12 @@ function closedFixture(root, status = 'CLOSED') {
       return [
         {
           candidateId: 'baseline', verified: 100, total: 500,
-          usage: { requests: 1, inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+          usage: usage(1, 10, 5, 15, 2),
           latencyMs: 100,
         },
         {
           candidateId: 'candidate-l1', verified: 110, total: 500,
-          usage: { requests: 2, inputTokens: 20, outputTokens: 10, totalTokens: 30 },
+          usage: usage(2, 20, 10, 30, 0),
           latencyMs: 200,
         },
       ]
@@ -94,12 +105,12 @@ function closedFixture(root, status = 'CLOSED') {
       return [
         {
           candidateId: 'baseline', verified: 40, total: 172,
-          usage: { requests: 3, inputTokens: 30, outputTokens: 15, totalTokens: 45 },
+          usage: usage(3, 30, 15, 45, 1),
           latencyMs: 300,
         },
         {
           candidateId: 'candidate-l1', verified: 44, total: 172,
-          usage: { requests: 4, inputTokens: 40, outputTokens: 20, totalTokens: 60 },
+          usage: usage(4, 40, 20, 60, 1),
           latencyMs: 400,
         },
       ]
@@ -208,6 +219,8 @@ test('CLOSED and REPORTED campaigns may generate the four final artifacts', asyn
       assert.equal(curve.points[1].test.verified, 44)
       assert.equal(curve.points[1].validation.usage.totalTokens, 30)
       assert.equal(curve.campaignTotals.combined.usage.requests, 10)
+      assert.equal(curve.campaignTotals.combined.usage.upstreamAttempts, 14)
+      assert.equal(curve.campaignTotals.combined.usage.transientRetries, 4)
       assert.equal(curve.campaignTotals.combined.latencyMs, 1000)
       assert.equal(curve.campaignStatus, status)
     })

@@ -279,6 +279,7 @@ export function buildPartitionOptions(runtimeConfig, requestedConcurrency, ident
     taskTimeoutMs: seconds(runtimeConfig.solver.taskTimeoutSeconds),
     verifierTimeoutMs: seconds(runtimeConfig.verifier.timeoutSeconds),
     gatewayRequestTimeoutMs: seconds(runtimeConfig.gateway.requestTimeoutSeconds),
+    maxTransientRetries: runtimeConfig.gateway.maximumTransientRetries,
     infrastructureRetries: runtimeConfig.solver.infrastructureRetries,
     ...(runtimeConfig.toolchain.bwrapPath
       ? { bwrapPath: runtimeConfig.toolchain.bwrapPath }
@@ -472,6 +473,7 @@ async function createRuntimeStack({ context, mode, getApiKey, signal, dependenci
       maxConcurrency: runtimeConfig.updater.gatewayConcurrency,
       requestTimeoutMs: seconds(runtimeConfig.gateway.requestTimeoutSeconds),
       maxOutputTokens: runtimeConfig.solver.maximumResponseTokens,
+      maxTransientRetries: runtimeConfig.gateway.maximumTransientRetries,
     },
     updaterUid: identities.updater.uid,
     updaterGid: identities.updater.gid,

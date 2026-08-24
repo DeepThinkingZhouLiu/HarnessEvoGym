@@ -164,7 +164,12 @@ export function validatePutnamRuntime(input) {
   integer(updater.gatewayConcurrency, 'updater.gatewayConcurrency', errors, { minimum: 1, maximum: 16 })
 
   const gateway = object(root.gateway, 'gateway', errors)
-  exactKeys(gateway, new Set(['upstreamBaseUrl', 'requestTimeoutSeconds']), 'gateway', errors)
+  exactKeys(
+    gateway,
+    new Set(['upstreamBaseUrl', 'requestTimeoutSeconds', 'maximumTransientRetries']),
+    'gateway',
+    errors,
+  )
   text(gateway.upstreamBaseUrl, 'gateway.upstreamBaseUrl', errors)
   if (typeof gateway.upstreamBaseUrl === 'string') {
     try {
@@ -177,6 +182,10 @@ export function validatePutnamRuntime(input) {
     }
   }
   integer(gateway.requestTimeoutSeconds, 'gateway.requestTimeoutSeconds', errors, { minimum: 30, maximum: 1800 })
+  integer(gateway.maximumTransientRetries, 'gateway.maximumTransientRetries', errors, {
+    minimum: 0,
+    maximum: 8,
+  })
 
   const verifier = object(root.verifier, 'verifier', errors)
   exactKeys(verifier, new Set(['concurrency', 'threadsPerProcess', 'timeoutSeconds']), 'verifier', errors)

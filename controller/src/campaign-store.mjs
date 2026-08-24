@@ -28,7 +28,14 @@ import {
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const INSTANCE_PATTERN = /^putnam_\d{4}_[ab][1-6]$/u
 const REPORTABLE_STATES = new Set(['CLOSED', 'REPORTED'])
-const USAGE_FIELDS = ['requests', 'inputTokens', 'outputTokens', 'totalTokens']
+const USAGE_FIELDS = [
+  'requests',
+  'upstreamAttempts',
+  'transientRetries',
+  'inputTokens',
+  'outputTokens',
+  'totalTokens',
+]
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u
 const VALIDATION_TRACE_REF_PATTERN = /^traces\/([A-Za-z0-9][A-Za-z0-9._-]*)\.jsonl$/u
 const UPDATER_FEEDBACK_MTIME = new Date('2000-01-01T00:00:00.000Z')
@@ -170,13 +177,18 @@ function projectTraceText(text) {
   }).join('')
 }
 
-function projectValidationRecord(record) {
+function projectValidationRecord(record, label = 'Validation feedback record') {
   if (!record || typeof record !== 'object' || Array.isArray(record)) {
     throw new ProtocolError('Validation feedback record 格式错误')
   }
   return Object.fromEntries(UPDATER_RECORD_FIELDS
     .filter((field) => record[field] !== undefined)
-    .map((field) => [field, projectTraceValue(record[field])]))
+    .map((field) => [
+      field,
+      field === 'usage'
+        ? normalizeStoredUsage(record[field], label)
+        : projectTraceValue(record[field]),
+    ]))
 }
 
 async function readJsonl(path, label) {
@@ -407,12 +419,16 @@ export class CampaignStore {
             || !Number.isInteger(summary?.verified) || summary.verified < 0 || summary.verified > 500) {
           throw new ProtocolError(`Validation feedback summary 损坏：${candidateId}`)
         }
+        const summaryUsage = normalizeStoredUsage(
+          summary.usage,
+          `Validation feedback summary ${candidateId}`,
+        )
         await makePrivateDirectory(destination)
         await atomicJson(join(destination, 'summary.json'), {
           candidateId,
           verified: summary.verified,
           total: summary.total,
-          ...(summary.usage === undefined ? {} : { usage: projectTraceValue(summary.usage) }),
+          ...(summary.usage === undefined ? {} : { usage: summaryUsage }),
         })
         const records = await readJsonl(
           join(source, 'records.jsonl'),
@@ -420,7 +436,10 @@ export class CampaignStore {
         )
         await atomicWrite(
           join(destination, 'records.jsonl'),
-          records.map((record) => JSON.stringify(projectValidationRecord(record))).join('\n')
+          records.map((record, index) => JSON.stringify(projectValidationRecord(
+            record,
+            `Validation feedback ${candidateId} record ${index + 1}`,
+          ))).join('\n')
             + (records.length > 0 ? '\n' : ''),
         )
 
@@ -620,7 +639,32 @@ export class CampaignStore {
         || !Number.isInteger(summary?.verified) || summary.verified < 0 || summary.verified > 500) {
       throw new ProtocolError('Validation summary 格式错误')
     }
-    const redacted = redactSecrets({ summary, records, traces }, secretValues)
+    if (!Array.isArray(records)) throw new ProtocolError('Validation records 格式错误')
+    const normalizedSummary = summary.usage === undefined
+      ? summary
+      : {
+          ...summary,
+          usage: normalizeStoredUsage(summary.usage, `Validation ${candidateId}`),
+        }
+    const normalizedRecords = records.map((record, index) => {
+      if (!record || typeof record !== 'object' || Array.isArray(record)) {
+        throw new ProtocolError(`Validation ${candidateId} record ${index + 1} 格式错误`)
+      }
+      return record.usage === undefined
+        ? record
+        : {
+            ...record,
+            usage: normalizeStoredUsage(
+              record.usage,
+              `Validation ${candidateId} record ${index + 1}`,
+            ),
+          }
+    })
+    const redacted = redactSecrets({
+      summary: normalizedSummary,
+      records: normalizedRecords,
+      traces,
+    }, secretValues)
     const publicDirectory = join(this.publicRoot, 'candidates', candidateId)
     const privateDirectory = join(this.validationRoot, candidateId)
     await Promise.all([makePrivateDirectory(publicDirectory), makePrivateDirectory(privateDirectory)])
@@ -657,7 +701,13 @@ export class CampaignStore {
         || !['resolved', 'unresolved', 'timeout'].includes(record.status)) {
       throw new ProtocolError('Validation checkpoint record 格式错误')
     }
-    const safeRecord = redactSecrets(record, secretValues)
+    const normalizedRecord = record.usage === undefined
+      ? record
+      : {
+          ...record,
+          usage: normalizeStoredUsage(record.usage, `Validation checkpoint ${record.instanceId}`),
+        }
+    const safeRecord = redactSecrets(normalizedRecord, secretValues)
     await atomicJson(
       join(this.validationCheckpointRoot, candidateId, `${record.instanceId}.json`),
       safeRecord,
@@ -691,7 +741,12 @@ export class CampaignStore {
           || !['resolved', 'unresolved', 'timeout'].includes(record.status)) {
         throw new ProtocolError(`Validation checkpoint 格式错误：${entry.name}`)
       }
-      records.push(record)
+      records.push(record.usage === undefined
+        ? record
+        : {
+            ...record,
+            usage: normalizeStoredUsage(record.usage, `Validation checkpoint ${entry.name}`),
+          })
     }
     return records
   }
@@ -707,7 +762,12 @@ export class CampaignStore {
           || !Number.isInteger(summary.verified) || summary.verified < 0 || summary.verified > 500) {
         throw new Error('invalid validation summary')
       }
-      return summary
+      return summary.usage === undefined
+        ? summary
+        : {
+            ...summary,
+            usage: normalizeStoredUsage(summary.usage, `Validation summary ${candidateId}`),
+          }
     } catch (error) {
       throw new ProtocolError(`无法读取 Validation summary：${candidateId}`, [error.message])
     }
@@ -724,7 +784,12 @@ export class CampaignStore {
         || !Number.isInteger(summary.verified) || summary.verified < 0 || summary.verified > 500) {
       throw new ProtocolError(`Validation summary 损坏：${candidateId}`)
     }
-    return summary
+    return summary.usage === undefined
+      ? summary
+      : {
+          ...summary,
+          usage: normalizeStoredUsage(summary.usage, `Validation summary ${candidateId}`),
+        }
   }
 
   async sealTest(candidateId, {
@@ -739,6 +804,12 @@ export class CampaignStore {
         || !Array.isArray(records) || records.length !== 172
         || !SHA256_PATTERN.test(testManifestSha256 ?? '')) {
       throw new ProtocolError('Test summary 格式错误')
+    }
+    if (summary.usage !== undefined) normalizeStoredUsage(summary.usage, `Test ${candidateId}`)
+    for (const [index, record] of records.entries()) {
+      if (record?.usage !== undefined) {
+        normalizeStoredUsage(record.usage, `Test ${candidateId} record ${index + 1}`)
+      }
     }
     const directory = join(this.sealedRoot, candidateId)
     try {

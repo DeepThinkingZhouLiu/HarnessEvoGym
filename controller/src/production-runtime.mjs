@@ -583,13 +583,28 @@ function validateSmokeIds(instanceIds) {
 function summarizeValidation(candidateId, instanceIds, records, completedAt) {
   const usage = records.reduce((total, record) => ({
     requests: total.requests + (Number.isSafeInteger(record.usage?.requests) ? record.usage.requests : 0),
+    upstreamAttempts: total.upstreamAttempts
+      + (Number.isSafeInteger(record.usage?.upstreamAttempts)
+        ? record.usage.upstreamAttempts
+        : Number.isSafeInteger(record.usage?.requests)
+          ? record.usage.requests
+          : 0),
+    transientRetries: total.transientRetries
+      + (Number.isSafeInteger(record.usage?.transientRetries) ? record.usage.transientRetries : 0),
     inputTokens: total.inputTokens
       + (Number.isSafeInteger(record.usage?.inputTokens) ? record.usage.inputTokens : 0),
     outputTokens: total.outputTokens
       + (Number.isSafeInteger(record.usage?.outputTokens) ? record.usage.outputTokens : 0),
     totalTokens: total.totalTokens
       + (Number.isSafeInteger(record.usage?.totalTokens) ? record.usage.totalTokens : 0),
-  }), { requests: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 })
+  }), {
+    requests: 0,
+    upstreamAttempts: 0,
+    transientRetries: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  })
   return {
     summary: {
       candidateId,

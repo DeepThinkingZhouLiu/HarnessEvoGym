@@ -31,7 +31,14 @@ function record(instanceId, status = 'resolved', ordinal = 1) {
     verifierStatus: status === 'resolved' ? 'verified' : 'rejected',
     attempts: 1,
     verifierAttempts: 1,
-    usage: { requests: 1, inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+    usage: {
+      requests: 1,
+      upstreamAttempts: 2,
+      transientRetries: 1,
+      inputTokens: 2,
+      outputTokens: 3,
+      totalTokens: 5,
+    },
     latencyMs: ordinal,
     traceRef: `traces/task-${ordinal}.jsonl`,
   }
@@ -1249,7 +1256,8 @@ test('validation resumes non-error checkpoints, persists each new record, and re
   assert.equal(result.summary.total, 500)
   assert.equal(result.summary.verified, result.records.filter((entry) => entry.status === 'resolved').length)
   assert.deepEqual(result.summary.usage, {
-    requests: 500, inputTokens: 1000, outputTokens: 1500, totalTokens: 2500,
+    requests: 500, upstreamAttempts: 1000, transientRetries: 500,
+    inputTokens: 1000, outputTokens: 1500, totalTokens: 2500,
   })
   assert.equal(result.summary.completedAt, '2026-01-02T03:04:05.000Z')
   assert.equal(context.calls.partitions[0].solverUid, 1103)

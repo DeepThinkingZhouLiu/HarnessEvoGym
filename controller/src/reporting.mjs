@@ -8,7 +8,14 @@ const DECISIONS = new Set(['baseline', 'promoted', 'rejected'])
 const HOUR_MS = 60 * 60 * 1000
 const VALIDATION_TOTAL = 500
 const TEST_TOTAL = 172
-const USAGE_FIELDS = ['requests', 'inputTokens', 'outputTokens', 'totalTokens']
+const USAGE_FIELDS = [
+  'requests',
+  'upstreamAttempts',
+  'transientRetries',
+  'inputTokens',
+  'outputTokens',
+  'totalTokens',
+]
 const CAMPAIGN_LEVELS = ['l1', 'l2', 'l3']
 const CSV_FORMULA_PREFIX = /^[\s\u0000-\u001f\u007f-\u009f\ufeff]*[=+\-@]/u
 
@@ -262,7 +269,14 @@ function addSafeInteger(left, right, path, errors) {
 
 function totalResource(points, name, errors) {
   const total = {
-    usage: { requests: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    usage: {
+      requests: 0,
+      upstreamAttempts: 0,
+      transientRetries: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+    },
     latencyMs: 0,
     candidates: points.length,
     candidatesWithUsage: 0,
@@ -640,6 +654,8 @@ export function renderCurveCsv(report) {
     'validation_total',
     'validation_rate',
     'validation_requests',
+    'validation_upstream_attempts',
+    'validation_transient_retries',
     'validation_input_tokens',
     'validation_output_tokens',
     'validation_total_tokens',
@@ -648,6 +664,8 @@ export function renderCurveCsv(report) {
     'test_total',
     'test_rate',
     'test_requests',
+    'test_upstream_attempts',
+    'test_transient_retries',
     'test_input_tokens',
     'test_output_tokens',
     'test_total_tokens',
@@ -671,6 +689,8 @@ export function renderCurveCsv(report) {
     point.validation.total,
     round(point.validation.rate),
     point.validation.usage?.requests,
+    point.validation.usage?.upstreamAttempts,
+    point.validation.usage?.transientRetries,
     point.validation.usage?.inputTokens,
     point.validation.usage?.outputTokens,
     point.validation.usage?.totalTokens,
@@ -679,6 +699,8 @@ export function renderCurveCsv(report) {
     point.test.total,
     round(point.test.rate),
     point.test.usage?.requests,
+    point.test.usage?.upstreamAttempts,
+    point.test.usage?.transientRetries,
     point.test.usage?.inputTokens,
     point.test.usage?.outputTokens,
     point.test.usage?.totalTokens,
@@ -692,12 +714,16 @@ export function renderCurveCsv(report) {
     'campaign_total', '', '', '', '', '', '', '', '', '', '', '',
     '', '', '',
     validationTotal.usage.requests,
+    validationTotal.usage.upstreamAttempts,
+    validationTotal.usage.transientRetries,
     validationTotal.usage.inputTokens,
     validationTotal.usage.outputTokens,
     validationTotal.usage.totalTokens,
     validationTotal.latencyMs,
     '', '', '',
     testTotal.usage.requests,
+    testTotal.usage.upstreamAttempts,
+    testTotal.usage.transientRetries,
     testTotal.usage.inputTokens,
     testTotal.usage.outputTokens,
     testTotal.usage.totalTokens,
@@ -880,24 +906,24 @@ export function renderImprovementsMarkdown(report) {
     '',
     'Missing metrics in historical campaign artifacts are shown as `n/a`; campaign totals count them as zero and include coverage counts.',
     '',
-    '| candidate | val req | val input | val output | val total | val latency ms | test req | test input | test output | test total | test latency ms |',
-    '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|',
+    '| candidate | val logical req | val upstream attempts | val transient retries | val input | val output | val total | val latency ms | test logical req | test upstream attempts | test transient retries | test input | test output | test total | test latency ms |',
+    '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|',
   )
   const metric = (value) => value ?? 'n/a'
   for (const point of report.points) {
     lines.push(
-      `| \`${escapeMarkdownCell(point.candidateId)}\` | ${metric(point.validation.usage?.requests)} | ${metric(point.validation.usage?.inputTokens)} | ${metric(point.validation.usage?.outputTokens)} | ${metric(point.validation.usage?.totalTokens)} | ${metric(point.validation.latencyMs)} | ${metric(point.test.usage?.requests)} | ${metric(point.test.usage?.inputTokens)} | ${metric(point.test.usage?.outputTokens)} | ${metric(point.test.usage?.totalTokens)} | ${metric(point.test.latencyMs)} |`,
+      `| \`${escapeMarkdownCell(point.candidateId)}\` | ${metric(point.validation.usage?.requests)} | ${metric(point.validation.usage?.upstreamAttempts)} | ${metric(point.validation.usage?.transientRetries)} | ${metric(point.validation.usage?.inputTokens)} | ${metric(point.validation.usage?.outputTokens)} | ${metric(point.validation.usage?.totalTokens)} | ${metric(point.validation.latencyMs)} | ${metric(point.test.usage?.requests)} | ${metric(point.test.usage?.upstreamAttempts)} | ${metric(point.test.usage?.transientRetries)} | ${metric(point.test.usage?.inputTokens)} | ${metric(point.test.usage?.outputTokens)} | ${metric(point.test.usage?.totalTokens)} | ${metric(point.test.latencyMs)} |`,
     )
   }
   const totals = reportResourceTotals(report)
   const validationTotal = totals.validation
   const testTotal = totals.test
   lines.push(
-    `| **Campaign total** | **${validationTotal.usage.requests}** | **${validationTotal.usage.inputTokens}** | **${validationTotal.usage.outputTokens}** | **${validationTotal.usage.totalTokens}** | **${validationTotal.latencyMs}** | **${testTotal.usage.requests}** | **${testTotal.usage.inputTokens}** | **${testTotal.usage.outputTokens}** | **${testTotal.usage.totalTokens}** | **${testTotal.latencyMs}** |`,
+    `| **Campaign total** | **${validationTotal.usage.requests}** | **${validationTotal.usage.upstreamAttempts}** | **${validationTotal.usage.transientRetries}** | **${validationTotal.usage.inputTokens}** | **${validationTotal.usage.outputTokens}** | **${validationTotal.usage.totalTokens}** | **${validationTotal.latencyMs}** | **${testTotal.usage.requests}** | **${testTotal.usage.upstreamAttempts}** | **${testTotal.usage.transientRetries}** | **${testTotal.usage.inputTokens}** | **${testTotal.usage.outputTokens}** | **${testTotal.usage.totalTokens}** | **${testTotal.latencyMs}** |`,
     '',
     `Coverage: validation usage ${validationTotal.candidatesWithUsage}/${validationTotal.candidates}, validation latency ${validationTotal.candidatesWithLatency}/${validationTotal.candidates}; hidden-test usage ${testTotal.candidatesWithUsage}/${testTotal.candidates}, hidden-test latency ${testTotal.candidatesWithLatency}/${testTotal.candidates}.`,
     '',
-    `Combined campaign total: ${totals.combined.usage.requests} requests, ${totals.combined.usage.inputTokens} input tokens, ${totals.combined.usage.outputTokens} output tokens, ${totals.combined.usage.totalTokens} total tokens, ${totals.combined.latencyMs} ms aggregate task latency.`,
+    `Combined campaign total: ${totals.combined.usage.requests} requests, ${totals.combined.usage.upstreamAttempts} upstream attempts, ${totals.combined.usage.transientRetries} transient retries, ${totals.combined.usage.inputTokens} input tokens, ${totals.combined.usage.outputTokens} output tokens, ${totals.combined.usage.totalTokens} total tokens, ${totals.combined.latencyMs} ms aggregate task latency.`,
     '',
     'No smoothing, test-based sorting, or post-hoc candidate selection was applied.',
     '',

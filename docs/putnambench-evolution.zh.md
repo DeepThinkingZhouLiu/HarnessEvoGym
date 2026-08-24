@@ -25,6 +25,8 @@
 
 主曲线在 request、题目、分区或 Candidate 任一粒度都不自动切换 Provider。ZCloud 持续发生基础设施故障时只暂停该 campaign；DashScope 的 `qwen3.8-max` 或 `deepseek-v4-pro` 只能用新的 provider/model fingerprint 启动独立 campaign，并单独画曲线。Provider、模型、effort 或预算变化均不能续接主曲线。凭据只从继承的匿名文件描述符读取一次，不进入 argv、环境变量、文件或实验产物。
 
+每个网关都有一个冻结的瞬态重试池，在逻辑请求预算之外最多提供 2 次重试。只有完整收到 HTTP 502/503 响应且尚未向下游转发其任何内容时才可重试；transport error、timeout、不完整响应或已开始的 stream 均不重试。因此每题 Solver 预算为 16 个逻辑请求，真实上游调用最多 18 次。重试 POST 推理不假定幂等，可能重复执行或重复计费，也可能使记录用量低于 Provider 账单。
+
 ## 按来源和类别拆分
 
 拆分的基本分组是竞赛年份，同一年的 A/B 题不会跨验证集和测试集。测试年份为：

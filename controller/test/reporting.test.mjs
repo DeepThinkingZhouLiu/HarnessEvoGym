@@ -51,6 +51,17 @@ function parseCsv(contents) {
   return rows
 }
 
+function usage(requests, inputTokens, outputTokens, totalTokens, transientRetries = 1) {
+  return {
+    requests,
+    upstreamAttempts: requests + transientRetries,
+    transientRetries,
+    inputTokens,
+    outputTokens,
+    totalTokens,
+  }
+}
+
 function fixture() {
   const candidates = [
     {
@@ -86,22 +97,22 @@ function fixture() {
     validationAggregates: [
       {
         candidateId: 'baseline', verified: 100, total: 500,
-        usage: { requests: 1, inputTokens: 100, outputTokens: 10, totalTokens: 110 },
+        usage: usage(1, 100, 10, 110),
         latencyMs: 1000,
       },
       {
         candidateId: 'candidate-l1', verified: 110, total: 500,
-        usage: { requests: 2, inputTokens: 200, outputTokens: 20, totalTokens: 220 },
+        usage: usage(2, 200, 20, 220),
         latencyMs: 2000,
       },
       {
         candidateId: 'candidate-l2', verified: 108, total: 500,
-        usage: { requests: 3, inputTokens: 300, outputTokens: 30, totalTokens: 330 },
+        usage: usage(3, 300, 30, 330),
         latencyMs: 3000,
       },
       {
         candidateId: 'candidate-l3', verified: 105, total: 500,
-        usage: { requests: 4, inputTokens: 400, outputTokens: 40, totalTokens: 440 },
+        usage: usage(4, 400, 40, 440),
         latencyMs: 4000,
       },
     ],
@@ -109,22 +120,22 @@ function fixture() {
     testAggregates: [
       {
         candidateId: 'candidate-l3', verified: 44, total: 172,
-        usage: { requests: 8, inputTokens: 800, outputTokens: 80, totalTokens: 880 },
+        usage: usage(8, 800, 80, 880),
         latencyMs: 8000,
       },
       {
         candidateId: 'baseline', verified: 40, total: 172,
-        usage: { requests: 5, inputTokens: 500, outputTokens: 50, totalTokens: 550 },
+        usage: usage(5, 500, 50, 550),
         latencyMs: 5000,
       },
       {
         candidateId: 'candidate-l2', verified: 70, total: 172,
-        usage: { requests: 7, inputTokens: 700, outputTokens: 70, totalTokens: 770 },
+        usage: usage(7, 700, 70, 770),
         latencyMs: 7000,
       },
       {
         candidateId: 'candidate-l1', verified: 42, total: 172,
-        usage: { requests: 6, inputTokens: 600, outputTokens: 60, totalTokens: 660 },
+        usage: usage(6, 600, 60, 660),
         latencyMs: 6000,
       },
     ],
@@ -159,11 +170,19 @@ test('report joins vault aggregates in ledger order without smoothing or test so
   assert.equal(report.ordering, 'campaign-candidate-sequence')
   assert.equal(report.durationHours, 9)
   assert.deepEqual(report.points[1].validation.usage, {
-    requests: 2, inputTokens: 200, outputTokens: 20, totalTokens: 220,
+    requests: 2, upstreamAttempts: 3, transientRetries: 1,
+    inputTokens: 200, outputTokens: 20, totalTokens: 220,
   })
   assert.equal(report.points[1].test.latencyMs, 6000)
   assert.deepEqual(report.campaignTotals.combined, {
-    usage: { requests: 36, inputTokens: 3600, outputTokens: 360, totalTokens: 3960 },
+    usage: {
+      requests: 36,
+      upstreamAttempts: 44,
+      transientRetries: 8,
+      inputTokens: 3600,
+      outputTokens: 360,
+      totalTokens: 3960,
+    },
     latencyMs: 36000,
   })
   assert.deepEqual(report.levelSummaries, [
@@ -196,10 +215,12 @@ test('report joins vault aggregates in ledger order without smoothing or test so
 test('artifacts contain raw scores, all levels, decisions, and frozen directions', () => {
   const { files } = buildReportArtifacts(fixture())
   const json = JSON.parse(files['curve.json'])
+  const csvRows = parseCsv(files['curve.csv'])
+  assert.equal(csvRows.every((row) => row.length === csvRows[0].length), true)
   assert.equal(json.points[2].validation.verified, 108)
   assert.equal(json.points[2].test.verified, 70)
 
-  assert.match(files['curve.csv'], /validation_verified,validation_total,validation_rate,validation_requests/u)
+  assert.match(files['curve.csv'], /validation_rate,validation_requests,validation_upstream_attempts,validation_transient_retries/u)
   assert.match(files['curve.csv'], /test_total_tokens,test_latency_ms,test_receipt_id/u)
   assert.match(files['curve.csv'], /^campaign_total,/mu)
   assert.match(files['curve.csv'], /"Preserve context, retry tool errors"/u)
@@ -213,6 +234,7 @@ test('artifacts contain raw scores, all levels, decisions, and frozen directions
   assert.match(files['improvements.md'], /Preserve context, retry tool errors/u)
   assert.match(files['improvements.md'], /Evaluation usage and latency/u)
   assert.match(files['improvements.md'], /Combined campaign total: 36 requests/u)
+  assert.match(files['improvements.md'], /44 upstream attempts, 8 transient retries/u)
   assert.match(files['improvements.md'], /never used for acceptance, ordering, or stopping/u)
   assert.match(files['improvements.md'], /Attempts by mutation level/u)
   assert.match(files['improvements.md'], /Infrastructure events/u)
@@ -306,6 +328,8 @@ test('historical reports without resource metrics remain compatible and total mi
   assert.equal(report.points[0].test.usage, null)
   assert.equal(report.points[0].test.latencyMs, null)
   assert.equal(report.campaignTotals.combined.usage.totalTokens, 0)
+  assert.equal(report.campaignTotals.combined.usage.upstreamAttempts, 0)
+  assert.equal(report.campaignTotals.combined.usage.transientRetries, 0)
   assert.equal(report.campaignTotals.combined.latencyMs, 0)
   assert.equal(report.campaignTotals.validation.candidatesWithUsage, 0)
 
@@ -356,6 +380,13 @@ test('reporting rejects missing, duplicate, unknown, mismatched, and out-of-rang
     const input = fixture()
     input.testAggregates[0].usage.totalTokens = Number.MAX_SAFE_INTEGER + 1
     assert.throws(() => buildCampaignReport(input), /validation failed/u)
+  })
+  await context.test('missing physical attempt fields', () => {
+    for (const field of ['upstreamAttempts', 'transientRetries']) {
+      const input = fixture()
+      delete input.testAggregates[0].usage[field]
+      assert.throws(() => buildCampaignReport(input), /validation failed/u)
+    }
   })
   await context.test('overflowing campaign total', () => {
     const input = fixture()

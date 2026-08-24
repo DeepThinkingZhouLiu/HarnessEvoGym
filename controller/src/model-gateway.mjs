@@ -12,6 +12,10 @@ const DEFAULT_MAX_REQUESTS = 10_000
 const DEFAULT_MAX_OUTPUT_TOKENS = 32_768
 const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000
 const DEFAULT_MAX_ERROR_BYTES = 1024 * 1024
+const DEFAULT_TRANSIENT_RETRY_DELAYS_MS = Object.freeze([500, 1_500])
+const DEFAULT_MAX_TRANSIENT_RETRIES = 2
+const MAX_CONFIGURED_TRANSIENT_RETRIES = 8
+const MAX_TRANSIENT_RETRY_ATTEMPTS = 2
 const MAX_SECRET_BYTES = 64 * 1024
 const MAX_SSE_LINE_BYTES = 256 * 1024
 
@@ -49,6 +53,26 @@ function requirePositiveInteger(value, name) {
     throw new TypeError(`${name} must be a positive safe integer`)
   }
   return value
+}
+
+function requireBoundedNonNegativeInteger(value, maximum, name) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
+    throw new TypeError(`${name} must be a safe integer from 0 to ${maximum}`)
+  }
+  return value
+}
+
+function normalizeTransientRetryDelays(value) {
+  if (!Array.isArray(value) || value.length !== MAX_TRANSIENT_RETRY_ATTEMPTS) {
+    throw new TypeError('transientRetryDelaysMs must contain exactly two delays')
+  }
+  const delays = value.map((delay) => {
+    if (!Number.isSafeInteger(delay) || delay < 0 || delay > 60_000) {
+      throw new TypeError('transientRetryDelaysMs delays must be safe integers from 0 to 60000')
+    }
+    return delay
+  })
+  return Object.freeze(delays)
 }
 
 function normalizeCandidateApiKey(value) {
@@ -393,15 +417,30 @@ function proxyToUpstream({
   downstreamResponse,
   requestTimeoutMs,
   maxErrorBytes,
+  transientRetryDelaysMs,
+  hasTransientRetryCapacity,
+  beginUpstreamAttempt,
 }) {
   return new Promise((resolve) => {
     const transport = endpoint.protocol === 'https:' ? https : http
-    let upstreamRequest
-    let upstreamResponse
+    const deadlineAt = Date.now() + requestTimeoutMs
+    let currentAttempt
+    let deadlineTimer
+    let retryTimer
     let finished = false
-    let timedOut = false
+    let upstreamAttempts = 0
+    let transientRetries = 0
+    const retryStatuses = []
+
+    const downstreamIsDead = () => downstreamRequest.aborted
+      || downstreamResponse.destroyed
+      || downstreamResponse.writableEnded
 
     const cleanup = () => {
+      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer)
+      if (retryTimer !== undefined) clearTimeout(retryTimer)
+      deadlineTimer = undefined
+      retryTimer = undefined
       downstreamRequest.off('aborted', onClientGone)
       downstreamResponse.off('close', onClientGone)
       downstreamResponse.off('drain', onDrain)
@@ -410,99 +449,187 @@ function proxyToUpstream({
       if (finished) return
       finished = true
       cleanup()
-      resolve({ status, usage })
+      resolve({
+        status,
+        usage,
+        upstreamAttempts,
+        transientRetries,
+        retryStatuses: Object.freeze([...retryStatuses]),
+      })
+    }
+    const cancelDeadDownstream = () => {
+      const attempt = currentAttempt
+      if (attempt) attempt.settled = true
+      finish(499)
+      attempt?.request.destroy()
+      attempt?.response?.destroy()
     }
     const onClientGone = () => {
       if (downstreamResponse.writableFinished) return
-      upstreamRequest?.destroy()
-      upstreamResponse?.destroy()
-      finish(499)
+      cancelDeadDownstream()
     }
-    const onDrain = () => upstreamResponse?.resume()
+    const onDrain = () => currentAttempt?.response?.resume()
     const failBeforeHeaders = (status) => {
       if (!downstreamResponse.headersSent) {
         sendJson(downstreamResponse, status, {
           error: { message: publicError(status), type: 'gateway_error' },
         })
       } else if (!downstreamResponse.destroyed) {
+        finish(status)
         downstreamResponse.destroy()
+        return
       }
       finish(status)
+    }
+
+    const forwardUpstreamFailure = ({ status, response, collected }) => {
+      if (finished) return
+      const textual = isTextualResponse(response.headers)
+      let body
+      let headers
+      if (!collected.overflow && textual) {
+        body = Buffer.from(redactText(collected.body.toString('utf8'), [apiKey]))
+        headers = safeResponseHeaders(response.headers, [apiKey], { changedBody: true })
+      } else {
+        body = Buffer.from(`${JSON.stringify({
+          error: { message: 'Upstream request failed', type: 'upstream_error' },
+        })}\n`)
+        headers = safeResponseHeaders(response.headers, [apiKey], { changedBody: true })
+        headers['content-type'] = 'application/json; charset=utf-8'
+      }
+      headers['content-length'] = body.length
+      if (!downstreamResponse.destroyed) {
+        downstreamResponse.writeHead(status, headers)
+        downstreamResponse.end(body)
+      }
+      finish(status)
+    }
+
+    const startAttempt = (isTransientRetry, previousFailure) => {
+      if (finished) return
+      if (downstreamIsDead()) {
+        cancelDeadDownstream()
+        return
+      }
+      if (Date.now() >= deadlineAt) {
+        failBeforeHeaders(504)
+        return
+      }
+      if (!beginUpstreamAttempt(isTransientRetry)) {
+        forwardUpstreamFailure(previousFailure)
+        return
+      }
+
+      upstreamAttempts += 1
+      if (isTransientRetry) {
+        transientRetries += 1
+        retryStatuses.push(previousFailure.status)
+      }
+      const attempt = {
+        request: undefined,
+        response: undefined,
+        responseStarted: false,
+        settled: false,
+      }
+      currentAttempt = attempt
+
+      const failAttemptBeforeHeaders = (status) => {
+        if (finished || attempt.settled) return
+        attempt.settled = true
+        failBeforeHeaders(status)
+      }
+
+      attempt.request = transport.request(endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          accept: 'text/event-stream',
+          'accept-encoding': 'identity',
+          'content-type': 'application/json',
+          'content-length': payload.length,
+          'user-agent': 'harness-rsi-model-gateway/1',
+          'x-gateway-request-id': requestId,
+        },
+      }, async (response) => {
+        if (finished || attempt.settled) {
+          response.destroy()
+          return
+        }
+        attempt.responseStarted = true
+        attempt.response = response
+        const status = response.statusCode ?? 502
+        if (status < 200 || status >= 300) {
+          const collected = await collectLimitedBody(response, maxErrorBytes)
+          if (finished || attempt.settled) return
+          attempt.settled = true
+          const failure = { status, response, collected }
+          const canRetry = !collected.overflow
+            && response.complete
+            && !downstreamResponse.headersSent
+            && !downstreamIsDead()
+            && (status === 502 || status === 503)
+            && transientRetries < MAX_TRANSIENT_RETRY_ATTEMPTS
+            && hasTransientRetryCapacity()
+          if (!canRetry) {
+            forwardUpstreamFailure(failure)
+            return
+          }
+
+          const retryDelayMs = transientRetryDelaysMs[transientRetries]
+          retryTimer = setTimeout(() => {
+            retryTimer = undefined
+            if (downstreamIsDead()) {
+              cancelDeadDownstream()
+              return
+            }
+            startAttempt(true, failure)
+          }, retryDelayMs)
+          return
+        }
+
+        const headers = safeResponseHeaders(response.headers, [apiKey])
+        if (!downstreamResponse.destroyed) {
+          downstreamResponse.writeHead(status, headers)
+          downstreamResponse.flushHeaders()
+        }
+        const collector = new SseUsageCollector()
+        response.on('data', (chunk) => {
+          if (finished) return
+          collector.push(chunk)
+          if (!downstreamResponse.destroyed && !downstreamResponse.write(chunk)) response.pause()
+        })
+        response.once('end', () => {
+          if (finished || attempt.settled) return
+          attempt.settled = true
+          const usage = collector.finish()
+          if (!downstreamResponse.destroyed) downstreamResponse.end()
+          finish(status, usage)
+        })
+        response.once('aborted', () => failAttemptBeforeHeaders(502))
+        response.once('error', () => failAttemptBeforeHeaders(502))
+      })
+
+      attempt.request.once('error', () => {
+        if (finished || attempt.settled || attempt.responseStarted) return
+        failAttemptBeforeHeaders(502)
+      })
+      attempt.request.end(payload)
     }
 
     downstreamRequest.once('aborted', onClientGone)
     downstreamResponse.once('close', onClientGone)
     downstreamResponse.on('drain', onDrain)
-
-    upstreamRequest = transport.request(endpoint, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        accept: 'text/event-stream',
-        'accept-encoding': 'identity',
-        'content-type': 'application/json',
-        'content-length': payload.length,
-        'user-agent': 'harness-rsi-model-gateway/1',
-        'x-gateway-request-id': requestId,
-      },
-    }, async (response) => {
-      upstreamResponse = response
-      const status = response.statusCode ?? 502
-      if (status < 200 || status >= 300) {
-        const collected = await collectLimitedBody(response, maxErrorBytes)
-        if (finished) return
-        const textual = isTextualResponse(response.headers)
-        let body
-        let headers
-        if (!collected.overflow && textual) {
-          body = Buffer.from(redactText(collected.body.toString('utf8'), [apiKey]))
-          headers = safeResponseHeaders(response.headers, [apiKey], { changedBody: true })
-        } else {
-          body = Buffer.from(`${JSON.stringify({
-            error: { message: 'Upstream request failed', type: 'upstream_error' },
-          })}\n`)
-          headers = safeResponseHeaders(response.headers, [apiKey], { changedBody: true })
-          headers['content-type'] = 'application/json; charset=utf-8'
-        }
-        headers['content-length'] = body.length
-        if (!downstreamResponse.destroyed) {
-          downstreamResponse.writeHead(status, headers)
-          downstreamResponse.end(body)
-        }
-        finish(status)
-        return
-      }
-
-      const headers = safeResponseHeaders(response.headers, [apiKey])
-      if (!downstreamResponse.destroyed) {
-        downstreamResponse.writeHead(status, headers)
-        downstreamResponse.flushHeaders()
-      }
-      const collector = new SseUsageCollector()
-      response.on('data', (chunk) => {
-        if (finished) return
-        collector.push(chunk)
-        if (!downstreamResponse.destroyed && !downstreamResponse.write(chunk)) response.pause()
-      })
-      response.once('end', () => {
-        if (finished) return
-        const usage = collector.finish()
-        if (!downstreamResponse.destroyed) downstreamResponse.end()
-        finish(status, usage)
-      })
-      response.once('aborted', () => failBeforeHeaders(502))
-      response.once('error', () => failBeforeHeaders(502))
-    })
-
-    upstreamRequest.setTimeout(requestTimeoutMs, () => {
-      timedOut = true
-      upstreamRequest.destroy()
-    })
-    upstreamRequest.once('error', () => {
+    deadlineTimer = setTimeout(() => {
       if (finished) return
-      failBeforeHeaders(timedOut ? 504 : 502)
-    })
-    upstreamRequest.end(payload)
+      if (retryTimer !== undefined) clearTimeout(retryTimer)
+      retryTimer = undefined
+      const attempt = currentAttempt
+      if (attempt) attempt.settled = true
+      failBeforeHeaders(504)
+      attempt?.request.destroy()
+      attempt?.response?.destroy()
+    }, Math.max(1, deadlineAt - Date.now()))
+    startAttempt(false)
   })
 }
 
@@ -527,6 +654,14 @@ function normalizeOptions(options) {
     options.maxErrorBytes ?? DEFAULT_MAX_ERROR_BYTES,
     'maxErrorBytes',
   )
+  const transientRetryDelaysMs = normalizeTransientRetryDelays(
+    options.transientRetryDelaysMs ?? DEFAULT_TRANSIENT_RETRY_DELAYS_MS,
+  )
+  const maxTransientRetries = requireBoundedNonNegativeInteger(
+    options.maxTransientRetries ?? DEFAULT_MAX_TRANSIENT_RETRIES,
+    MAX_CONFIGURED_TRANSIENT_RETRIES,
+    'maxTransientRetries',
+  )
   const candidateApiKey = normalizeCandidateApiKey(
     options.candidateApiKey ?? DEFAULT_CANDIDATE_API_KEY,
   )
@@ -541,6 +676,8 @@ function normalizeOptions(options) {
     maxOutputTokens,
     requestTimeoutMs,
     maxErrorBytes,
+    transientRetryDelaysMs,
+    maxTransientRetries,
     candidateApiKey,
     audit: options.audit ?? (() => {}),
     apiKeyLoader: makeApiKeyLoader(options),
@@ -563,6 +700,8 @@ export function createModelGateway(options) {
     localConcurrencyRejected: 0,
     localBudgetRejected: 0,
     requestSequence: 0,
+    upstreamAttempts: 0,
+    transientRetries: 0,
   }
   let boundUrl
   let candidateApiKey = config.candidateApiKey
@@ -576,6 +715,17 @@ export function createModelGateway(options) {
   }
 
   const safeAudit = (record) => {
+    const safeRetryMetadata = record.origin === 'upstream'
+      && Number.isSafeInteger(record.upstreamAttempts)
+      && Number.isSafeInteger(record.transientRetries)
+      && record.upstreamAttempts >= 1
+      && record.upstreamAttempts <= MAX_TRANSIENT_RETRY_ATTEMPTS + 1
+      && record.transientRetries >= 0
+      && record.transientRetries <= MAX_TRANSIENT_RETRY_ATTEMPTS
+      && record.upstreamAttempts === record.transientRetries + 1
+      && Array.isArray(record.retryStatuses)
+      && record.retryStatuses.length === record.transientRetries
+      && record.retryStatuses.every((status) => status === 502 || status === 503)
     const safeRecord = Object.freeze({
       timestamp: record.timestamp,
       requestId: record.requestId,
@@ -583,6 +733,13 @@ export function createModelGateway(options) {
       status: record.status,
       origin: record.origin,
       ...(record.localReason ? { localReason: record.localReason } : {}),
+      ...(safeRetryMetadata
+        ? {
+            upstreamAttempts: record.upstreamAttempts,
+            transientRetries: record.transientRetries,
+            retryStatuses: Object.freeze([...record.retryStatuses]),
+          }
+        : {}),
       ...(record.usage ? { usage: Object.freeze({ ...record.usage }) } : {}),
     })
     let sinkResult
@@ -607,7 +764,15 @@ export function createModelGateway(options) {
     const requestId = randomUUID()
     const requestSequence = ++counters.requestSequence
     let audited = false
-    const audit = async (status, usage, origin = 'gateway', localReason) => {
+    const audit = async (
+      status,
+      usage,
+      origin = 'gateway',
+      localReason,
+      upstreamAttempts,
+      transientRetries,
+      retryStatuses,
+    ) => {
       if (audited) return
       audited = true
       await safeAudit({
@@ -617,6 +782,9 @@ export function createModelGateway(options) {
         status,
         origin,
         localReason,
+        upstreamAttempts,
+        transientRetries,
+        retryStatuses,
         usage,
       })
     }
@@ -710,8 +878,29 @@ export function createModelGateway(options) {
           downstreamResponse: response,
           requestTimeoutMs: config.requestTimeoutMs,
           maxErrorBytes: config.maxErrorBytes,
+          transientRetryDelaysMs: config.transientRetryDelaysMs,
+          hasTransientRetryCapacity: () => (
+            counters.transientRetries < config.maxTransientRetries
+          ),
+          beginUpstreamAttempt: (isTransientRetry) => {
+            if (
+              isTransientRetry
+              && counters.transientRetries >= config.maxTransientRetries
+            ) return false
+            counters.upstreamAttempts += 1
+            if (isTransientRetry) counters.transientRetries += 1
+            return true
+          },
         })
-        await audit(outcome.status, outcome.usage, 'upstream')
+        await audit(
+          outcome.status,
+          outcome.usage,
+          'upstream',
+          undefined,
+          outcome.upstreamAttempts,
+          outcome.transientRetries,
+          outcome.retryStatuses,
+        )
       } finally {
         counters.active -= 1
         notifyIdle()
@@ -740,6 +929,12 @@ export function createModelGateway(options) {
         localConcurrencyRejectedRequests: counters.localConcurrencyRejected,
         localBudgetRejectedRequests: counters.localBudgetRejected,
         requestSequence: counters.requestSequence,
+        upstreamAttempts: counters.upstreamAttempts,
+        transientRetries: counters.transientRetries,
+        remainingTransientRetries: Math.max(
+          0,
+          config.maxTransientRetries - counters.transientRetries,
+        ),
       })
     },
     async waitForIdle() {

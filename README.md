@@ -97,6 +97,8 @@ unset RSI_API_KEY
 
 After the smoke passes, use `evolve start` for a new campaign, `evolve resume` only after an infrastructure pause, `evolve status` for a credential-free public status, and `evolve report` after closure. The main campaign is pinned to `gpt-5.6-sol`, Responses API, reasoning effort `max`. A backup provider always starts a separately fingerprinted campaign and never contributes points to the primary curve. See the [experiment protocol](docs/putnambench-evolution.md).
 
+The frozen gateway permits at most two transient retries beyond each logical request budget, and only after receiving a complete HTTP 502/503 response before forwarding anything downstream. A Solver problem therefore remains limited to 16 logical model requests and at most 18 physical upstream calls. Retried inference is not guaranteed to be idempotent and may be billed more than once.
+
 The generic paired Evaluator CLI remains available:
 
 The CLI validates a Benchmark manifest and compares normalized Baseline/Candidate results:

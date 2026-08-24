@@ -247,6 +247,32 @@ async function loadVerifierReward(logDirectory, candidates, stdout) {
   return reward === null ? null : { reward, evidence: stdout }
 }
 
+async function missingVerifierEvidence(logDirectory, candidates) {
+  for (const candidate of candidates) {
+    const relativeCandidate = candidate.startsWith('/logs/') ? candidate.slice('/logs/'.length) : candidate
+    const pathValue = resolve(logDirectory, relativeCandidate)
+    assertContained(logDirectory, pathValue, 'Verifier 评分证据')
+    try {
+      const info = await lstat(pathValue)
+      if (info.isSymbolicLink() || !info.isFile()) {
+        throw new ProtocolError(`Verifier 评分证据必须是普通文件：${relativeCandidate}`)
+      }
+      if (info.size === 0) return `Verifier 评分证据为空：${relativeCandidate}`
+    } catch (error) {
+      if (error.code === 'ENOENT') return `Verifier 缺少评分证据：${relativeCandidate}`
+      throw error
+    }
+  }
+  return null
+}
+
+function verifierEvidence(result, parsed) {
+  return [result.stdout?.trim(), result.stderr?.trim(), parsed?.evidence?.trim()]
+    .filter(Boolean)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .join('\n\n[verifier output]\n')
+}
+
 function verifierCommand(layout, environment) {
   const extension = extname(layout.verifierPath).toLowerCase()
   const script = `/verifier/${basename(layout.verifierPath)}`
@@ -408,8 +434,11 @@ export class SkillsBenchEnvironment {
       mkdir(join(logs, 'agent'), { recursive: true }),
       mkdir(join(logs, 'verifier'), { recursive: true }),
     ])
-    let result
-    try {
+    const maximumAttempts = this.environment.verifier.maximumAttempts ?? 1
+    const attemptFailures = []
+    let totalDurationMs = 0
+    for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+      let result
       const command = verifierCommand(layout, this.environment)
       const dependencyEnvironment = Object.fromEntries(
         Object.entries(this.environment.verifier.dependencyEnvironment ?? {})
@@ -417,76 +446,103 @@ export class SkillsBenchEnvironment {
             ? [[containerName, process.env[hostName]]]
             : []),
       )
-      result = await this.docker.run({
-        image,
-        name,
-        command: isolatedVerifierCommand(command, this.environment),
-        // 不信任 Task Image 自带的 ENTRYPOINT；评分只能从受控 Shell Wrapper 进入。
-        entrypoint: this.environment.verifier.shellCommand,
-        workdir: this.environment.task.workspacePath,
-        mounts: [
-          // 宿主提交物永久只读；Verifier 在容器私有 tmpfs 副本上运行。
-          { source: workspace, target: '/rsi-submission', readOnly: true },
-          { source: dirname(layout.verifierPath), target: '/verifier', readOnly: true },
-          { source: logs, target: '/logs', readOnly: false },
-        ],
-        environment: {
-          WORKSPACE: this.environment.task.workspacePath,
-          OUTPUT_DIR: '/logs',
-          LOG_DIR: '/logs',
-          HOME: '/tmp/home',
-          XDG_CONFIG_HOME: '/tmp/verifier-config',
-          XDG_CACHE_HOME: '/tmp/verifier-cache',
-          PYTHONSAFEPATH: '1',
-          PYTHONNOUSERSITE: '1',
-          PYTHONDONTWRITEBYTECODE: '1',
-          PYTHONPATH: '',
-          PYTEST_ADDOPTS: '',
-          PIP_CONFIG_FILE: '/dev/null',
-          UV_NO_CONFIG: '1',
-          BASH_ENV: '/dev/null',
-          ENV: '/dev/null',
-          PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-          RSI_HOST_UID: String(typeof process.getuid === 'function' ? process.getuid() : ''),
-          RSI_HOST_GID: String(typeof process.getgid === 'function' ? process.getgid() : ''),
-          RSI_VERIFIER_WORKSPACE: this.environment.task.workspacePath,
-          ...dependencyEnvironment,
-        },
-        // 只有可信 Verifier 可以按 Adapter 白名单继承代理；Solver/Updater 仍在 internal network。
-        inheritEnvironment: (this.environment.verifier.proxyEnvironment ?? [])
-          .filter((nameValue) => Boolean(process.env[nameValue])),
-        network: this.environment.verifier.network,
-        // 仅可信 Verifier 可解析宿主工具缓存；Agent 容器从不启用此入口。
-        hostGateway: true,
-        runAsCurrentUser: this.environment.verifier.runAsCurrentUser,
-        readOnlyRoot: false,
-        tmpfs: [
-          '/tmp:rw,nosuid,nodev,size=1g',
-          '/run:rw,nosuid,nodev,size=64m',
-          verifierWorkspaceTmpfs(this.environment),
-        ],
-        capabilities: this.environment.verifier.runAsCurrentUser ? [] : TRUSTED_VERIFIER_CAPABILITIES,
-      })
-    } catch (error) {
-      const evidence = [error.message, ...(error.details ?? [])].filter(Boolean).join('\n')
-      return { reward: null, evidence, error: error.message }
-    }
-    let parsed
-    try {
-      parsed = await loadVerifierReward(logs, this.environment.verifier.outputCandidates, result.stdout)
-    } catch (error) {
+      try {
+        result = await this.docker.run({
+          image,
+          name: attempt === 1 ? name : `${name}-attempt-${attempt}`,
+          command: isolatedVerifierCommand(command, this.environment),
+          // 不信任 Task Image 自带的 ENTRYPOINT；评分只能从受控 Shell Wrapper 进入。
+          entrypoint: this.environment.verifier.shellCommand,
+          workdir: this.environment.task.workspacePath,
+          mounts: [
+            // 宿主提交物永久只读；Verifier 在容器私有 tmpfs 副本上运行。
+            { source: workspace, target: '/rsi-submission', readOnly: true },
+            { source: dirname(layout.verifierPath), target: '/verifier', readOnly: true },
+            { source: logs, target: '/logs', readOnly: false },
+          ],
+          environment: {
+            WORKSPACE: this.environment.task.workspacePath,
+            OUTPUT_DIR: '/logs',
+            LOG_DIR: '/logs',
+            HOME: '/tmp/home',
+            XDG_CONFIG_HOME: '/tmp/verifier-config',
+            XDG_CACHE_HOME: '/tmp/verifier-cache',
+            PYTHONSAFEPATH: '1',
+            PYTHONNOUSERSITE: '1',
+            PYTHONDONTWRITEBYTECODE: '1',
+            PYTHONPATH: '',
+            PYTEST_ADDOPTS: '',
+            PIP_CONFIG_FILE: '/dev/null',
+            UV_NO_CONFIG: '1',
+            BASH_ENV: '/dev/null',
+            ENV: '/dev/null',
+            PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+            RSI_HOST_UID: String(typeof process.getuid === 'function' ? process.getuid() : ''),
+            RSI_HOST_GID: String(typeof process.getgid === 'function' ? process.getgid() : ''),
+            RSI_VERIFIER_WORKSPACE: this.environment.task.workspacePath,
+            ...dependencyEnvironment,
+          },
+          // 只有可信 Verifier 可以按 Adapter 白名单继承代理；Solver/Updater 仍在 internal network。
+          inheritEnvironment: (this.environment.verifier.proxyEnvironment ?? [])
+            .filter((nameValue) => Boolean(process.env[nameValue])),
+          network: this.environment.verifier.network,
+          // 仅可信 Verifier 可解析宿主工具缓存；Agent 容器从不启用此入口。
+          hostGateway: true,
+          runAsCurrentUser: this.environment.verifier.runAsCurrentUser,
+          readOnlyRoot: false,
+          tmpfs: [
+            // 上游 Verifier 会把固定版本的 uv/uvx 安装到 $HOME=/tmp/home 后执行。
+            // Docker 的 tmpfs 默认带 noexec，因此仅对可信 Verifier 显式开启 exec。
+            '/tmp:rw,exec,nosuid,nodev,size=1g',
+            '/run:rw,nosuid,nodev,size=64m',
+            verifierWorkspaceTmpfs(this.environment),
+          ],
+          capabilities: this.environment.verifier.runAsCurrentUser ? [] : TRUSTED_VERIFIER_CAPABILITIES,
+        })
+        totalDurationMs += result.durationMs
+      } catch (error) {
+        const evidence = [error.message, ...(error.details ?? [])].filter(Boolean).join('\n')
+        return { reward: null, evidence, error: error.message }
+      }
+
+      let parsed
+      try {
+        parsed = await loadVerifierReward(logs, this.environment.verifier.outputCandidates, result.stdout)
+        const missingEvidence = await missingVerifierEvidence(
+          logs,
+          this.environment.verifier.requiredEvidenceCandidates ?? [],
+        )
+        if (missingEvidence) {
+          attemptFailures.push(`attempt ${attempt}/${maximumAttempts}: ${missingEvidence}`)
+          if (attempt < maximumAttempts) continue
+          return {
+            reward: null,
+            evidence: [...attemptFailures, verifierEvidence(result, parsed)].filter(Boolean).join('\n'),
+            error: 'Verifier 缺少必需评分证据',
+          }
+        }
+      } catch (error) {
+        return {
+          reward: null,
+          evidence: [error.message, ...(error.details ?? [])].filter(Boolean).join('\n'),
+          error: 'Verifier Reward 或评分证据不安全或不可读',
+        }
+      }
+      if (!parsed) {
+        return {
+          reward: null,
+          evidence: verifierEvidence(result, null),
+          error: 'Verifier 未产出可解析的 reward',
+        }
+      }
       return {
-        reward: null,
-        evidence: [error.message, ...(error.details ?? [])].filter(Boolean).join('\n'),
-        error: 'Verifier Reward 输出不安全或不可读',
+        ...parsed,
+        evidence: [...attemptFailures, verifierEvidence(result, parsed)].filter(Boolean).join('\n'),
+        error: null,
+        durationMs: totalDurationMs,
       }
     }
-    if (!parsed) return { reward: null, evidence: result.stdout, error: 'Verifier 未产出可解析的 reward' }
-    const evidence = [result.stdout.trim(), parsed.evidence.trim()]
-      .filter(Boolean)
-      .filter((value, index, values) => values.indexOf(value) === index)
-      .join('\n\n[reward artifact]\n')
-    return { ...parsed, evidence, error: null, durationMs: result.durationMs }
+    throw new ProtocolError('Verifier 重试循环异常结束')
   }
 
   async runTrial({ candidateId, candidatePreset, instanceId, seed, model, partition, trialIndex, executionId }) {

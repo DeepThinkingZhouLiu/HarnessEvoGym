@@ -60,14 +60,11 @@ spec:
     shellCommand: bash
     arguments: []
     # 上游脚本会安装固定版本的评分依赖；仅可信 Verifier 可选择性继承宿主代理。
+    # Ubuntu APT 源使用 HTTP，当前本机代理会显著拖慢 apt-get；保留 HTTPS 代理给 astral.sh，APT 直接出网。
     proxyEnvironment:
-      - HTTP_PROXY
       - HTTPS_PROXY
-      - ALL_PROXY
       - NO_PROXY
-      - http_proxy
       - https_proxy
-      - all_proxy
       - no_proxy
     # 可选本机工具缓存；未设置宿主变量时仍按上游脚本直连下载。
     dependencyEnvironment:
@@ -80,6 +77,10 @@ spec:
     runAsCurrentUser: false
     outputCandidates:
       - /logs/verifier/reward.txt
+    # pytest 启动成功后必然生成 CTRF；缺失说明依赖安装等评分基础设施失败，不能算作答题 0 分。
+    requiredEvidenceCandidates:
+      - /logs/verifier/ctrf.json
+    maximumAttempts: 2
 
   reward:
     minimum: 0

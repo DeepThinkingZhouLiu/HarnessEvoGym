@@ -31,6 +31,8 @@ test('Cowork Experiment 分别固定 Target/Updater Source 和模型上限', asy
     bundle.environment.verifier.dependencyEnvironment.UV_DOWNLOAD_URL,
     'RSI_VERIFIER_UV_DOWNLOAD_URL',
   )
+  assert.deepEqual(bundle.environment.verifier.requiredEvidenceCandidates, ['/logs/verifier/ctrf.json'])
+  assert.equal(bundle.environment.verifier.maximumAttempts, 2)
   assert.equal(bundle.environment.feedback.maximumHistoryEntries, 10)
   assert.equal(bundle.environment.feedback.maximumArtifactEntriesPerCase, 100)
   assert.equal(bundle.environment.task.workspaceLimits.maximumChangedBytes, 536870912)
@@ -48,6 +50,16 @@ test('Environment Adapter 拒绝向 Verifier 注入任意依赖变量', async ()
   const config = await readConfigFile(resolve(repositoryRoot, 'environments/skillsbench-cowork.yml'))
   config.spec.verifier.dependencyEnvironment.LD_PRELOAD = 'RSI_VERIFIER_LD_PRELOAD'
   assert.throws(() => validateEnvironmentAdapter(config), /不允许注入依赖环境变量/u)
+})
+
+test('Environment Adapter 拒绝宿主路径中的评分证据与过量重试', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'environments/skillsbench-cowork.yml'))
+  config.spec.verifier.requiredEvidenceCandidates = ['/tmp/ctrf.json']
+  assert.throws(() => validateEnvironmentAdapter(config), /必须位于 \/logs\//u)
+
+  config.spec.verifier.requiredEvidenceCandidates = ['/logs/verifier/ctrf.json']
+  config.spec.verifier.maximumAttempts = 4
+  assert.throws(() => validateEnvironmentAdapter(config), /maximumAttempts/u)
 })
 
 test('Model Provider Adapter 拒绝重复模型目录', async () => {

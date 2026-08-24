@@ -57,6 +57,7 @@ test('root Verifier 只读挂载 Solver 工作区并在退出时修复日志归�
   assert.equal(runOptions.mounts.find((mount) => mount.source === workspace).readOnly, true)
   assert.equal(runOptions.mounts.find((mount) => mount.source === workspace).target, '/rsi-submission')
   assert.ok(runOptions.tmpfs.some((value) => value.startsWith('/root:') && value.includes('size=1048576')))
+  assert.ok(runOptions.tmpfs.includes('/tmp:rw,exec,nosuid,nodev,size=1g'))
   assert.equal(runOptions.entrypoint, 'bash')
   assert.equal(runOptions.command[0], '-c')
   assert.match(runOptions.command[1], /chown -hR/u)
@@ -70,6 +71,109 @@ test('root Verifier 只读挂载 Solver 工作区并在退出时修复日志归�
     runOptions.inheritEnvironment,
     ['HTTP_PROXY', 'HTTPS_PROXY'].filter((nameValue) => Boolean(process.env[nameValue])),
   )
+})
+
+test('Verifier 缺少结构化评分证据时自动重试，不能把基础设施故障记成 0 分', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rsi-skillsbench-verifier-retry-'))
+  const workspace = join(root, 'workspace')
+  const logs = join(root, 'logs')
+  await mkdir(workspace)
+  const names = []
+  let attempts = 0
+  const docker = {
+    async run(options) {
+      attempts += 1
+      names.push(options.name)
+      await mkdir(join(logs, 'verifier'), { recursive: true })
+      await writeFile(join(logs, 'verifier', 'reward.txt'), attempts === 1 ? '0\n' : '1\n')
+      if (attempts === 2) await writeFile(join(logs, 'verifier', 'ctrf.json'), '{"tests":[]}\n')
+      return { stdout: '', stderr: attempts === 1 ? 'dependency download failed' : '', durationMs: 1 }
+    },
+  }
+  const runner = new SkillsBenchEnvironment({
+    environment: {
+      task: { workspacePath: '/root', workspaceLimits: { maximumBytes: 1024 * 1024 } },
+      verifier: {
+        pythonCommand: 'python',
+        shellCommand: 'bash',
+        arguments: [],
+        outputCandidates: ['/logs/verifier/reward.txt'],
+        requiredEvidenceCandidates: ['/logs/verifier/ctrf.json'],
+        maximumAttempts: 2,
+        network: 'bridge',
+        runAsCurrentUser: false,
+      },
+    },
+    benchmark: {},
+    target: {},
+    solverDriver: {},
+    docker,
+    runRoot: root,
+  })
+
+  const result = await runner.runVerifier({
+    layout: { verifierPath: '/trusted/verifier/test.sh' },
+    image: 'task:test',
+    workspace,
+    logs,
+    name: 'verifier-retry-test',
+  })
+
+  assert.equal(attempts, 2)
+  assert.deepEqual(names, ['verifier-retry-test', 'verifier-retry-test-attempt-2'])
+  assert.equal(result.reward, 1)
+  assert.equal(result.error, null)
+  assert.equal(result.durationMs, 2)
+  assert.match(result.evidence, /attempt 1\/2/u)
+})
+
+test('Verifier 多次缺少结构化评分证据时返回基础设施错误而不是 0 分', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rsi-skillsbench-verifier-evidence-'))
+  const workspace = join(root, 'workspace')
+  const logs = join(root, 'logs')
+  await mkdir(workspace)
+  let attempts = 0
+  const docker = {
+    async run() {
+      attempts += 1
+      await mkdir(join(logs, 'verifier'), { recursive: true })
+      await writeFile(join(logs, 'verifier', 'reward.txt'), '0\n')
+      return { stdout: '', stderr: 'dependency download failed', durationMs: 1 }
+    },
+  }
+  const runner = new SkillsBenchEnvironment({
+    environment: {
+      task: { workspacePath: '/root', workspaceLimits: { maximumBytes: 1024 * 1024 } },
+      verifier: {
+        pythonCommand: 'python',
+        shellCommand: 'bash',
+        arguments: [],
+        outputCandidates: ['/logs/verifier/reward.txt'],
+        requiredEvidenceCandidates: ['/logs/verifier/ctrf.json'],
+        maximumAttempts: 2,
+        network: 'bridge',
+        runAsCurrentUser: false,
+      },
+    },
+    benchmark: {},
+    target: {},
+    solverDriver: {},
+    docker,
+    runRoot: root,
+  })
+
+  const result = await runner.runVerifier({
+    layout: { verifierPath: '/trusted/verifier/test.sh' },
+    image: 'task:test',
+    workspace,
+    logs,
+    name: 'verifier-evidence-test',
+  })
+
+  assert.equal(attempts, 2)
+  assert.equal(result.reward, null)
+  assert.equal(result.error, 'Verifier 缺少必需评分证据')
+  assert.match(result.evidence, /attempt 2\/2/u)
 })
 
 test('Verifier Reward 符号链接不会被 Controller 跟随', async () => {

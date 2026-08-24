@@ -392,6 +392,21 @@ export function validateEnvironmentAdapter(input) {
     }
     return `/logs/${relativePath(value.slice('/logs/'.length), `verifier.outputCandidates[${index}]`)}`
   })
+  const requiredEvidenceCandidates = expectStringArray(
+    verifier.requiredEvidenceCandidates ?? [],
+    'EnvironmentAdapter.spec.verifier.requiredEvidenceCandidates',
+    { nonEmpty: false },
+  ).map((value, index) => {
+    if (!value.startsWith('/logs/')) {
+      throw new ProtocolError(
+        `EnvironmentAdapter.spec.verifier.requiredEvidenceCandidates[${index}] 必须位于 /logs/`,
+      )
+    }
+    return `/logs/${relativePath(
+      value.slice('/logs/'.length),
+      `verifier.requiredEvidenceCandidates[${index}]`,
+    )}`
+  })
   const proxyEnvironment = expectStringArray(
     verifier.proxyEnvironment ?? [],
     'EnvironmentAdapter.spec.verifier.proxyEnvironment',
@@ -528,6 +543,12 @@ export function validateEnvironmentAdapter(input) {
       proxyEnvironment,
       dependencyEnvironment,
       outputCandidates,
+      requiredEvidenceCandidates,
+      maximumAttempts: expectNumber(
+        verifier.maximumAttempts ?? 1,
+        'EnvironmentAdapter.spec.verifier.maximumAttempts',
+        { integer: true, min: 1, max: 3 },
+      ),
       network: verifierNetwork,
       runAsCurrentUser: expectBoolean(
         verifier.runAsCurrentUser,

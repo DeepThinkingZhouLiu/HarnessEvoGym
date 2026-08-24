@@ -1,3 +1,4 @@
 #!/bin/sh
 set -eu
-exec node /opt/dsh/apps/cli/lib/bin.js "$@"
+# Cordis HMR 会校验该 Node 标志；DSH 的 profile boot 会在 Headless 模式下挂载 HMR。
+exec node --expose-internals /opt/dsh/apps/cli/lib/bin.js "$@"

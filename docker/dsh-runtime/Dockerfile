@@ -20,7 +20,18 @@ COPY ${DSH_SOURCE_PATH}/ ./
 RUN --mount=type=cache,id=harness-rsi-pnpm-store,target=/pnpm/store \
     pnpm config set store-dir /pnpm/store \
     && pnpm install --frozen-lockfile --config.node-linker=hoisted \
-    && pnpm run build
+    && pnpm run build \
+    # pnpm 只把工作区包链接到各消费包和 .pnpm/node_modules。Cordis Loader 从
+    # /opt/dsh/vendor/loader 动态 import，因此还需要根 node_modules 下的可见链接。
+    && for package in node_modules/.pnpm/node_modules/@deepseek-ai/*; do \
+         name="${package##*/}"; \
+         target="node_modules/@deepseek-ai/${name}"; \
+         if [ ! -e "${target}" ]; then \
+           ln -s "../.pnpm/node_modules/@deepseek-ai/${name}" "${target}"; \
+         fi; \
+       done \
+    && node --input-type=module -e \
+       'await Promise.all([import("@deepseek-ai/dsh-goal"), import("@deepseek-ai/dsh-goal-round-driver"), import("@deepseek-ai/dsh-command-goal")])'
 
 FROM ${BASE_IMAGE}
 ARG DSH_PACKAGE

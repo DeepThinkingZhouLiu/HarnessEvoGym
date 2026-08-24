@@ -68,7 +68,7 @@ test('DSH Solver 写入显式模型上限，并把一次性令牌作为秘密环
       environment: { RSI_PROVIDER_BASE_URL: 'http://model-gateway:8080' },
       secretEnvironment: { RSI_PROVIDER_API_KEY: 'ephemeral-token' },
     },
-    task: '完成任务',
+    task: '---\n完成任务',
     name: 'solver-test',
     timeoutMs: 1000,
   })
@@ -82,6 +82,9 @@ test('DSH Solver 写入显式模型上限，并把一次性令牌作为秘密环
   assert.equal(runOptions.secretEnvironment.RSI_PROVIDER_API_KEY, 'ephemeral-token')
   assert.equal(runOptions.network, 'internal-net')
   assert.equal(runOptions.environment.HTTP_PROXY, '')
+  assert.deepEqual(runOptions.command, [
+    'dsh', '--profile', 'headless', '--preset', 'cowork-rsi', '--', '---\n完成任务',
+  ])
 })
 
 test('DSH Updater 只挂载单个可写 Mutation Report，不暴露隐藏输出目录', async () => {
@@ -145,6 +148,7 @@ test('DSH Updater 只挂载单个可写 Mutation Report，不暴露隐藏输出�
   assert.equal(outputMounts.length, 1)
   assert.equal(outputMounts[0].target, '/candidate/.rsi-output/mutation-report.json')
   assert.equal(outputMounts[0].readOnly, false)
+  assert.equal(runOptions.command.at(-2), '--')
 })
 
 test('DSH Runtime 构建显式绑定 Adapter 的 Source Path 与 Revision', async () => {

@@ -219,7 +219,9 @@ export async function runDshSolver({
   const result = await docker.run({
     image,
     name,
-    command: ['dsh', '--profile', runtime.profile, '--preset', runtime.preset, task],
+    // SkillsBench 指令会以 YAML front matter 的 `---` 开头；用 `--` 明确结束
+    // Headless 选项解析，避免 Commander 把任务正文当成未知选项。
+    command: ['dsh', '--profile', runtime.profile, '--preset', runtime.preset, '--', task],
     workdir: containerWorkspace,
     mounts,
     environment,
@@ -301,6 +303,7 @@ export async function runDshUpdater({
       runtime.profile,
       '--preset',
       runtime.preset,
+      '--',
       updaterTask({ level: mutationLevel, targetId, reportName: basename(reportName) }),
     ],
     workdir: '/candidate',

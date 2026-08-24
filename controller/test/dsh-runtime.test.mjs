@@ -100,7 +100,7 @@ test('DSH Solver 写入显式模型上限，并把一次性令牌作为秘密环
   ])
 })
 
-test('DSH Updater 只挂载单个可写 Mutation Report，不暴露隐藏输出目录', async () => {
+test('DSH Updater 挂载独立输出目录，兼容 Mutation Report 原子写入', async () => {
   const root = await mkdtemp(join(tmpdir(), 'rsi-dsh-updater-'))
   const candidateWorkspace = join(root, 'candidate')
   const upstreamSource = join(root, 'source')
@@ -117,8 +117,8 @@ test('DSH Updater 只挂载单个可写 Mutation Report，不暴露隐藏输出�
   const docker = {
     async run(options) {
       runOptions = options
-      const reportMount = options.mounts.find((mount) => mount.target.endsWith('/mutation-report.json'))
-      await writeFile(reportMount.source, JSON.stringify({
+      const outputMount = options.mounts.find((mount) => mount.target === '/candidate/.rsi-output')
+      await writeFile(join(outputMount.source, 'mutation-report.json'), JSON.stringify({
         diagnosis: '诊断',
         hypothesis: '假设',
         changedFiles: [],
@@ -159,9 +159,66 @@ test('DSH Updater 只挂载单个可写 Mutation Report，不暴露隐藏输出�
 
   const outputMounts = runOptions.mounts.filter((mount) => mount.target.startsWith('/candidate/.rsi-output'))
   assert.equal(outputMounts.length, 1)
-  assert.equal(outputMounts[0].target, '/candidate/.rsi-output/mutation-report.json')
+  assert.equal(outputMounts[0].target, '/candidate/.rsi-output')
   assert.equal(outputMounts[0].readOnly, false)
   assert.equal(runOptions.command.at(-2), '--')
+})
+
+test('DSH Updater 输出目录出现额外文件时拒绝 Candidate', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rsi-dsh-updater-extra-output-'))
+  const candidateWorkspace = join(root, 'candidate')
+  const upstreamSource = join(root, 'source')
+  const contextDirectory = join(root, 'context')
+  const outputDirectory = join(root, 'output')
+  const dshHome = join(root, 'dsh-home')
+  await Promise.all([
+    mkdir(candidateWorkspace),
+    mkdir(upstreamSource),
+    mkdir(contextDirectory),
+    mkdir(dshHome),
+  ])
+  const docker = {
+    async run(options) {
+      const outputMount = options.mounts.find((mount) => mount.target === '/candidate/.rsi-output')
+      await writeFile(join(outputMount.source, 'mutation-report.json'), '{}')
+      await writeFile(join(outputMount.source, 'unexpected.txt'), 'not allowed')
+      return { stdout: '', stderr: '', durationMs: 1, outputTruncated: false }
+    },
+  }
+
+  await assert.rejects(
+    runDshUpdater({
+      docker,
+      runtime: {
+        profile: 'headless',
+        preset: 'standard',
+        secretEnvironment: ['RSI_PROVIDER_API_KEY', 'RSI_PROVIDER_BASE_URL'],
+      },
+      image: 'updater:test',
+      model: { provider: 'zcloud-openai', model: 'gpt-5.6-terra', maxTokens: 8192 },
+      provider,
+      candidateWorkspace,
+      upstreamSource,
+      contextDirectory,
+      outputDirectory,
+      dshHome,
+      modelAccess: {
+        network: 'internal-net',
+        environment: { RSI_PROVIDER_BASE_URL: 'http://model-gateway:8080' },
+        secretEnvironment: { RSI_PROVIDER_API_KEY: 'ephemeral-token' },
+      },
+      mutationLevel: 'l1',
+      targetId: 'deepseek-harness',
+      reportName: 'mutation-report.json',
+      name: 'updater-extra-output-test',
+      timeoutMs: 1000,
+    }),
+    (error) => {
+      assert.equal(error.message, 'Updater 未生成合法 Mutation Report')
+      assert.match(error.details.join('\n'), /输出目录只允许/u)
+      return true
+    },
+  )
 })
 
 test('DSH Runtime 构建显式绑定 Adapter 的 Source Path 与 Revision', async () => {

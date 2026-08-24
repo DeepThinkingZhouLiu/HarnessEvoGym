@@ -315,7 +315,10 @@ export async function runDshUpdater({
   await mkdir(join(contextDirectory, 'upstream'), { recursive: true })
   await mkdir(outputDirectory, { recursive: true })
   const reportPath = join(outputDirectory, basename(reportName))
-  await writeFile(reportPath, '', { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+  const existingOutputs = await readdir(outputDirectory)
+  if (existingOutputs.length > 0) {
+    throw new ProtocolError('Updater 输出目录在 Session 前必须为空', existingOutputs)
+  }
 
   const result = await docker.run({
     image,
@@ -334,11 +337,9 @@ export async function runDshUpdater({
       { source: candidateWorkspace, target: '/candidate', readOnly: false },
       { source: contextDirectory, target: '/candidate/.rsi-context', readOnly: true },
       { source: upstreamSource, target: '/candidate/.rsi-context/upstream', readOnly: true },
-      {
-        source: reportPath,
-        target: `/candidate/.rsi-output/${basename(reportName)}`,
-        readOnly: false,
-      },
+      // DSH write 会通过同目录临时文件 + rename 原子写入；单文件 bind mount 会返回 EBUSY。
+      // 因此挂载独立输出目录，并在 Session 后强制目录里只能存在约定的普通 JSON 文件。
+      { source: outputDirectory, target: '/candidate/.rsi-output', readOnly: false },
       { source: dshHome, target: '/dsh-home', readOnly: false },
     ],
     environment: {
@@ -353,6 +354,14 @@ export async function runDshUpdater({
 
   let report
   try {
+    const outputEntries = await readdir(outputDirectory, { withFileTypes: true })
+    if (
+      outputEntries.length !== 1 ||
+      outputEntries[0].name !== basename(reportName) ||
+      !outputEntries[0].isFile()
+    ) {
+      throw new Error(`Updater 输出目录只允许 ${basename(reportName)} 一个普通文件`)
+    }
     const reportInfo = await lstat(reportPath)
     if (!reportInfo.isFile() || reportInfo.size > 256 * 1024) {
       throw new Error('Mutation Report 必须是小于等于 256 KiB 的普通文件')

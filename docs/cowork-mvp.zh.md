@@ -85,7 +85,7 @@ Updater 使用统一 DSH Runtime，挂载关系如下：
 /candidate                         Candidate，可写
 /candidate/.rsi-context/upstream   DSH Source，只读
 /candidate/.rsi-context/*.json     feedback 与 policy，只读
-/candidate/.rsi-output/<report>    仅 Mutation Report 单文件可写
+/candidate/.rsi-output/            独立可写目录；Session 后只接受约定的 Mutation Report 普通文件
 /dsh-home                          本 Session 临时状态，可写
 ```
 

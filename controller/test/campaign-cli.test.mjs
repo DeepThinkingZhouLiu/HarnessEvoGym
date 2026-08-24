@@ -277,6 +277,7 @@ test('sealed runner ignores caller injection and sends manifest/key only to chil
   assert.equal(calls[0].partitionOptions.getApiKey, undefined)
   assert.equal(calls[0].partitionOptions.testManifestPath, undefined)
   assert.equal(calls[0].partitionOptions.verifierUid, 1103)
+  assert.equal(calls[0].partitionOptions.scratchRoot, '/runtime/scratch/fixture-campaign/sealed-test')
 })
 
 test('campaign smoke uses only the first requested validation tasks and maps production options', async () => {
@@ -325,11 +326,13 @@ test('campaign smoke uses only the first requested validation tasks and maps pro
   assert.equal(runtimeOptions.partitionOptions.verifierUid, 1103)
   assert.equal(runtimeOptions.gatewayOptions.maxRequests, 17)
   assert.equal(runtimeOptions.gatewayOptions.maxConcurrency, 3)
+  assert.equal(runtimeOptions.scratchRoot, '/runtime/scratch')
   assert.equal(runtimeOptions.campaignScratchRoot, '/runtime/scratch/fixture-campaign')
   assert.equal(runtimeOptions.updaterRunRoot, '/runtime/scratch/fixture-campaign/updater-runs')
   assert.equal(runtimeOptions.validationScratchRoot, '/runtime/scratch/fixture-campaign/validation')
   assert.equal(runtimeOptions.smokeScratchRoot, '/runtime/scratch/fixture-campaign/smoke')
   assert.equal(runtimeOptions.sourceSmokeRoot, '/runtime/scratch/fixture-campaign/source-smoke')
+  assert.equal(runtimeOptions.sealedScratchRoot, '/runtime/scratch/fixture-campaign/sealed-test')
   assert.equal(runtimeOptions.solverHome, '/runtime/scratch/fixture-campaign/solver-home')
   assert.equal(runtimeOptions.trustedUid, 0)
   assert.equal(runtimeOptions.trustedGid, 2101)

@@ -12,6 +12,7 @@ import {
   SOURCE_SMOKE_SANDBOX_PATHS,
   validateImmutableDependencyStore,
   validateFrozenEvaluationRuntime,
+  validateScratchTraversalRoot,
 } from '../src/production-runtime.mjs'
 import { renderPrompt } from '../src/updater-runner.mjs'
 
@@ -67,9 +68,11 @@ async function fixture({
   separateToolchains = false,
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'production-runtime-'))
-  const campaignScratch = join(root, 'campaign-scratch')
+  const scratchRoot = join(root, 'scratch-root')
+  const campaignScratch = join(scratchRoot, 'campaign')
   const paths = {
     root,
+    scratchRoot,
     campaignScratch,
     runtimes: join(root, 'runtimes'),
     store: join(root, 'pnpm-store'),
@@ -110,6 +113,7 @@ async function fixture({
     processes: [],
     copies: [],
     directories: [],
+    scratchValidations: [],
     grants: [],
     storeValidations: [],
     frozenRuntimeValidations: [],
@@ -195,6 +199,7 @@ async function fixture({
       calls.directories.push(options)
       await mkdir(options.path, { recursive: true })
     },
+    async validateScratchRoot(options) { calls.scratchValidations.push(options) },
     async grantBuildAccess(options) { calls.grants.push(options) },
     async validateDependencyStore(options) { calls.storeValidations.push(options) },
     async validateFrozenRuntime(options) { calls.frozenRuntimeValidations.push(options) },
@@ -318,6 +323,7 @@ async function fixture({
     runtimesRoot: paths.runtimes,
     pnpmStoreRoot: paths.store,
     buildHome: paths.buildHome,
+    scratchRoot: paths.scratchRoot,
     campaignScratchRoot: paths.campaignScratch,
     updaterRunRoot: paths.updaterRuns,
     validationScratchRoot: paths.scratch,
@@ -569,6 +575,10 @@ test('builds baseline and candidates offline inside the no-network build sandbox
   }
   assert.equal(context.calls.grants.every((entry) => entry.gid === 2102), true)
   assert.equal(context.calls.freezes.every((entry) => entry.gid === 2101), true)
+  assert.deepEqual(context.calls.scratchValidations, [{
+    root: context.paths.scratchRoot,
+    trustedUid: 0,
+  }])
   assert.deepEqual(context.calls.directories[0], {
     path: context.paths.campaignScratch,
     uid: 0,
@@ -583,6 +593,7 @@ test('builds baseline and candidates offline inside the no-network build sandbox
   assert.equal(parentModes.get(context.paths.scratch), 0o711)
   assert.equal(parentModes.get(join(context.paths.campaignScratch, 'smoke-scratch')), 0o711)
   assert.equal(parentModes.get(join(context.paths.campaignScratch, 'source-smoke')), 0o711)
+  assert.equal(parentModes.get(join(context.paths.campaignScratch, 'sealed-test')), 0o711)
   const isolatedSourceSmokeDirectories = context.calls.directories.filter((entry) => (
     entry.path.startsWith(`${join(context.paths.campaignScratch, 'source-smoke')}/`)
   ))
@@ -1251,6 +1262,13 @@ test('validation resumes non-error checkpoints, persists each new record, and re
   assert.equal(context.calls.partitions[0].baseEnvironment.DASHSCOPE_API_KEY, undefined)
   assert.equal(context.calls.partitions[0].baseEnvironment.ELAN_HOME, '/opt/pinned-elan')
   assert.equal(context.calls.partitions[0].getApiKey, context.getApiKey)
+  const preparedModes = new Map(context.calls.directories.map((entry) => [entry.path, entry.mode]))
+  assert.deepEqual(context.calls.scratchValidations, [{
+    root: context.paths.scratchRoot,
+    trustedUid: 0,
+  }])
+  assert.equal(preparedModes.get(context.paths.campaignScratch), 0o711)
+  assert.equal(preparedModes.get(join(context.paths.campaignScratch, 'sealed-test')), 0o711)
 
   const resumed = await context.runtime.evaluateValidation({
     candidateId: 'candidate', candidateRoot: context.paths.evaluationRuntime, instanceIds: ids,
@@ -1339,6 +1357,13 @@ test('sealed test delegates only candidate identity/root and returns only an opa
   }
   assert.equal(context.calls.partitions.length, 0)
   assert.equal(context.calls.dataset.length, 0)
+  const preparedModes = new Map(context.calls.directories.map((entry) => [entry.path, entry.mode]))
+  assert.deepEqual(context.calls.scratchValidations, [{
+    root: context.paths.scratchRoot,
+    trustedUid: 0,
+  }])
+  assert.equal(preparedModes.get(context.paths.campaignScratch), 0o711)
+  assert.equal(preparedModes.get(join(context.paths.campaignScratch, 'sealed-test')), 0o711)
 })
 
 test('sealed runner result-bearing fields are rejected as infrastructure contract failures', async () => {
@@ -1396,6 +1421,7 @@ test('campaign scratch leaves must be strictly contained and mutually isolated',
   await assert.rejects(
     () => fixture({ optionOverrides: {
       solverHome: join('/outside-campaign', 'nested', 'solver-home'),
+      scratchRoot: '/',
       campaignScratchRoot: '/outside-campaign',
       validationScratchRoot: join('/outside-campaign', 'validation'),
       updaterRunRoot: join('/outside-campaign', 'updater'),
@@ -1407,6 +1433,7 @@ test('campaign scratch leaves must be strictly contained and mutually isolated',
   await assert.rejects(
     () => fixture({ optionOverrides: {
       smokeScratchRoot: join('/outside-campaign', 'validation'),
+      scratchRoot: '/',
       campaignScratchRoot: '/outside-campaign',
       validationScratchRoot: join('/outside-campaign', 'validation'),
       updaterRunRoot: join('/outside-campaign', 'updater'),
@@ -1474,6 +1501,27 @@ test('production toolchain pin cannot be overridden by campaign configuration', 
   await assert.rejects(
     () => fixture({ optionOverrides: { expectedPnpmVersion: '11.6.0' } }),
     /must match PRODUCTION_TOOLCHAIN_PIN/u,
+  )
+})
+
+test('scratch traversal root must already be trusted-owned, nonsymlink, and 0711', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'production-scratch-root-'))
+  const scratch = join(parent, 'scratch')
+  const link = join(parent, 'scratch-link')
+  await mkdir(scratch)
+  await chmod(scratch, 0o711)
+  await validateScratchTraversalRoot({ root: scratch, trustedUid: process.getuid() })
+
+  await chmod(scratch, 0o700)
+  await assert.rejects(
+    () => validateScratchTraversalRoot({ root: scratch, trustedUid: process.getuid() }),
+    /trusted-owned 0711/u,
+  )
+  await chmod(scratch, 0o711)
+  await symlink('scratch', link)
+  await assert.rejects(
+    () => validateScratchTraversalRoot({ root: link, trustedUid: process.getuid() }),
+    /trusted-owned 0711/u,
   )
 })
 

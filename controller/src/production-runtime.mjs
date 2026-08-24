@@ -265,6 +265,19 @@ async function defaultPrepareOwnedDirectory({ path, uid, gid, mode }) {
   await chmod(path, mode)
 }
 
+/** Attest the setup-owned traversal root without following or taking over it. */
+export async function validateScratchTraversalRoot({ root, trustedUid }) {
+  const path = requireAbsolutePath(root, 'scratch traversal root')
+  if (!Number.isInteger(trustedUid) || trustedUid < 0) {
+    throw new TypeError('scratch traversal trustedUid must be a non-negative integer')
+  }
+  const stat = await lstat(path)
+  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== trustedUid
+      || (stat.mode & 0o777) !== 0o711) {
+    throw new Error('scratch traversal root must be a trusted-owned 0711 directory')
+  }
+}
+
 async function defaultCopyRuntimeSource({ sourceRoot, destination }) {
   const source = resolve(sourceRoot)
   await cp(source, destination, {
@@ -610,10 +623,14 @@ export class PutnamEvolutionRuntime {
     this.runtimesRoot = requireAbsolutePath(options.runtimesRoot, 'runtimesRoot')
     this.pnpmStoreRoot = requireAbsolutePath(options.pnpmStoreRoot, 'pnpmStoreRoot')
     this.buildHome = requireAbsolutePath(options.buildHome, 'buildHome')
+    this.scratchRoot = requireAbsolutePath(options.scratchRoot, 'scratchRoot')
     this.campaignScratchRoot = requireAbsolutePath(
       options.campaignScratchRoot,
       'campaignScratchRoot',
     )
+    if (dirname(this.campaignScratchRoot) !== this.scratchRoot) {
+      throw new TypeError('campaignScratchRoot must be a direct child of scratchRoot')
+    }
     this.updaterRunRoot = requireAbsolutePath(options.updaterRunRoot, 'updaterRunRoot')
     this.validationScratchRoot = requireAbsolutePath(
       options.validationScratchRoot,
@@ -627,6 +644,10 @@ export class PutnamEvolutionRuntime {
       options.sourceSmokeRoot ?? join(this.campaignScratchRoot, 'source-smoke'),
       'sourceSmokeRoot',
     )
+    this.sealedScratchRoot = requireAbsolutePath(
+      options.sealedScratchRoot ?? join(this.campaignScratchRoot, 'sealed-test'),
+      'sealedScratchRoot',
+    )
     this.solverHome = requireAbsolutePath(
       options.solverHome ?? join(this.campaignScratchRoot, 'solver-home'),
       'solverHome',
@@ -637,6 +658,7 @@ export class PutnamEvolutionRuntime {
       ['validationScratchRoot', this.validationScratchRoot],
       ['smokeScratchRoot', this.smokeScratchRoot],
       ['sourceSmokeRoot', this.sourceSmokeRoot],
+      ['sealedScratchRoot', this.sealedScratchRoot],
       ['solverHome', this.solverHome],
     ]
     for (const [name, path] of scratchChildren) {
@@ -656,10 +678,10 @@ export class PutnamEvolutionRuntime {
       }
     }
     for (const [leftName, left, rightName, right] of [
-      ['campaignScratchRoot', this.campaignScratchRoot, 'runtimesRoot', this.runtimesRoot],
-      ['campaignScratchRoot', this.campaignScratchRoot, 'pnpmStoreRoot', this.pnpmStoreRoot],
-      ['campaignScratchRoot', this.campaignScratchRoot, 'buildHome', this.buildHome],
-      ['campaignScratchRoot', this.campaignScratchRoot, 'datasetRoot', this.datasetRoot],
+      ['scratchRoot', this.scratchRoot, 'runtimesRoot', this.runtimesRoot],
+      ['scratchRoot', this.scratchRoot, 'pnpmStoreRoot', this.pnpmStoreRoot],
+      ['scratchRoot', this.scratchRoot, 'buildHome', this.buildHome],
+      ['scratchRoot', this.scratchRoot, 'datasetRoot', this.datasetRoot],
     ]) {
       if (isWithin(left, right) || isWithin(right, left)) {
         throw new TypeError(`${leftName} must be separate from ${rightName}`)
@@ -783,6 +805,12 @@ export class PutnamEvolutionRuntime {
         ?? defaultPrepareOwnedDirectory,
       'prepareOwnedDirectory',
     )
+    this.validateScratchRoot = requireFunction(
+      options.validateScratchRoot
+        ?? dependencies.validateScratchRoot
+        ?? validateScratchTraversalRoot,
+      'validateScratchRoot',
+    )
     this.grantBuildAccess = requireFunction(
       options.grantBuildAccess ?? dependencies.grantBuildAccess ?? defaultGrantBuildAccess,
       'grantBuildAccess',
@@ -884,6 +912,10 @@ export class PutnamEvolutionRuntime {
         // leaf. Materialize this shared campaign parent explicitly so the
         // restricted Solver/Verifier UIDs can traverse to their owned task
         // directories without gaining directory-listing permission.
+        await this.validateScratchRoot({
+          root: this.scratchRoot,
+          trustedUid: this.trustedUid,
+        })
         await this.prepareOwnedDirectory({
           path: this.campaignScratchRoot,
           uid: this.trustedUid,
@@ -927,6 +959,12 @@ export class PutnamEvolutionRuntime {
         })
         await this.prepareOwnedDirectory({
           path: this.sourceSmokeRoot,
+          uid: this.trustedUid,
+          gid: this.trustedGid,
+          mode: 0o711,
+        })
+        await this.prepareOwnedDirectory({
+          path: this.sealedScratchRoot,
           uid: this.trustedUid,
           gid: this.trustedGid,
           mode: 0o711,
@@ -1615,6 +1653,7 @@ export class PutnamEvolutionRuntime {
     const ids = validatePartitionIds(instanceIds, 500, 'validation')
     try {
       const runtimeRoot = await this.#evaluationRuntime(candidateRoot)
+      await this.#ensureInfrastructure()
       const allowedIds = new Set(ids)
       const checkpointRecords = await this.store.readValidationCheckpoints(candidateId)
       if (!Array.isArray(checkpointRecords)) throw new Error('validation checkpoints must be an array')
@@ -1723,6 +1762,7 @@ export class PutnamEvolutionRuntime {
     // receipt; it never validates, stores, or forwards the hidden manifest.
     try {
       const runtimeRoot = await this.#evaluationRuntime(candidateRoot)
+      await this.#ensureInfrastructure()
       const receipt = await this.sealedTestRunner({
         candidateId,
         candidateRoot: runtimeRoot,

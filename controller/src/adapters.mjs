@@ -19,6 +19,16 @@ import { ProtocolError, readJsonFile, validateBenchmark, validateEvaluationPolic
 const MUTATION_LEVELS = ['l1', 'l2', 'l3']
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/u
 const ENVIRONMENT_NAME = /^[A-Z_][A-Z0-9_]*$/u
+const VERIFIER_PROXY_ENVIRONMENT = new Set([
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'all_proxy',
+  'no_proxy',
+])
 
 function metadataId(input, label) {
   return expectText(expectObject(input.metadata, `${label}.metadata`).id, `${label}.metadata.id`)
@@ -377,6 +387,19 @@ export function validateEnvironmentAdapter(input) {
     }
     return `/logs/${relativePath(value.slice('/logs/'.length), `verifier.outputCandidates[${index}]`)}`
   })
+  const proxyEnvironment = expectStringArray(
+    verifier.proxyEnvironment ?? [],
+    'EnvironmentAdapter.spec.verifier.proxyEnvironment',
+    { nonEmpty: false },
+  )
+  if (new Set(proxyEnvironment).size !== proxyEnvironment.length) {
+    throw new ProtocolError('EnvironmentAdapter.spec.verifier.proxyEnvironment 不能重复')
+  }
+  for (const name of proxyEnvironment) {
+    if (!VERIFIER_PROXY_ENVIRONMENT.has(name)) {
+      throw new ProtocolError(`Verifier 只能继承标准代理环境变量：${name}`)
+    }
+  }
   const resolvedWorkspaceLimits = {
     maximumFiles: expectNumber(workspaceLimits.maximumFiles, 'task.workspaceLimits.maximumFiles', {
       integer: true,
@@ -483,6 +506,7 @@ export function validateEnvironmentAdapter(input) {
       pythonCommand: expectText(verifier.pythonCommand, 'EnvironmentAdapter.spec.verifier.pythonCommand'),
       shellCommand: expectText(verifier.shellCommand, 'EnvironmentAdapter.spec.verifier.shellCommand'),
       arguments: expectStringArray(verifier.arguments ?? [], 'EnvironmentAdapter.spec.verifier.arguments', { nonEmpty: false }),
+      proxyEnvironment,
       outputCandidates,
       network: verifierNetwork,
       runAsCurrentUser: expectBoolean(

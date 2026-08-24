@@ -445,6 +445,9 @@ export class SkillsBenchEnvironment {
           RSI_HOST_GID: String(typeof process.getgid === 'function' ? process.getgid() : ''),
           RSI_VERIFIER_WORKSPACE: this.environment.task.workspacePath,
         },
+        // 只有可信 Verifier 可以按 Adapter 白名单继承代理；Solver/Updater 仍在 internal network。
+        inheritEnvironment: (this.environment.verifier.proxyEnvironment ?? [])
+          .filter((nameValue) => Boolean(process.env[nameValue])),
         network: this.environment.verifier.network,
         runAsCurrentUser: this.environment.verifier.runAsCurrentUser,
         readOnlyRoot: false,

@@ -59,6 +59,16 @@ spec:
     pythonCommand: python
     shellCommand: bash
     arguments: []
+    # 上游脚本会安装固定版本的评分依赖；仅可信 Verifier 可选择性继承宿主代理。
+    proxyEnvironment:
+      - HTTP_PROXY
+      - HTTPS_PROXY
+      - ALL_PROXY
+      - NO_PROXY
+      - http_proxy
+      - https_proxy
+      - all_proxy
+      - no_proxy
     # Verifier 属于可信控制平面；部分 SkillsBench Verifier 会在首次运行时安装依赖。
     network: bridge
     # 真实 SkillsBench test.sh 需要 apt-get，因此 Verifier 单独以 root 运行；Solver/Updater 仍为普通用户。

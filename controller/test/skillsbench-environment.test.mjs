@@ -26,6 +26,7 @@ test('root Verifier 只读挂载 Solver 工作区并在退出时修复日志归�
       shellCommand: 'bash',
       arguments: [],
       outputCandidates: ['/logs/verifier/reward.txt'],
+      proxyEnvironment: ['HTTP_PROXY', 'HTTPS_PROXY'],
       network: 'bridge',
       runAsCurrentUser: false,
     },
@@ -58,6 +59,10 @@ test('root Verifier 只读挂载 Solver 工作区并在退出时修复日志归�
   assert.ok(runOptions.capabilities.includes('CHOWN'))
   assert.ok(!runOptions.capabilities.includes('SYS_ADMIN'))
   assert.equal(runOptions.environment.PYTHONDONTWRITEBYTECODE, '1')
+  assert.deepEqual(
+    runOptions.inheritEnvironment,
+    ['HTTP_PROXY', 'HTTPS_PROXY'].filter((nameValue) => Boolean(process.env[nameValue])),
+  )
 })
 
 test('Verifier Reward 符号链接不会被 Controller 跟随', async () => {

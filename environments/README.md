@@ -29,6 +29,8 @@ Runner 对每道题执行：
 
 Solver 看不到主机 Task Root 或 Verifier 挂载，只额外获得该任务自带 Skill 的只读目录。Candidate 通用 Skill 必须用 `cowork-*` 命名空间，不能遮蔽题目自带 Skill。Verifier 属于可信控制平面：宿主上的 Solver 产物以只读方式挂入，再复制到容器私有 tmpfs 工作区执行检查，因此需要生成临时文件的上游脚本仍能运行，但无法反向改写提交物。它只向独立日志目录写入评分产物，不会运行 Candidate 自带的“自报分数”。root Verifier 退出前会把日志归属恢复为启动 Controller 的普通用户。评分前会拒绝 Solver 新增/修改的符号链接、FIFO 等非普通文件，并清空 Python/Bash/uv 的工作区配置入口，降低通过导入劫持影响 Verifier 的风险。Reward 文件本身还必须是不超过 1 MiB 的普通文件，Controller 不会跟随符号链接读取宿主其他路径。当前固定 Revision 的脚本把分数写到 `/logs/verifier/reward.txt`。
 
+部分上游 Verifier 会在评分时下载固定版本依赖。`spec.verifier.proxyEnvironment` 只允许标准 HTTP 代理变量，并且只把宿主当前已设置的变量传给可信 Verifier；它不会传给 Solver 或 Updater。无代理环境可以保持这些变量未设置，直连运行。
+
 ## 运行前提
 
 ```bash

@@ -461,6 +461,9 @@ test('builds baseline and candidates offline inside the no-network build sandbox
     assert.equal(invocation.args.includes('--config.update-notifier=false'), true)
     assert.equal(invocation.args.includes('run'), true)
     assert.equal(invocation.args.includes('build:lib:host'), true)
+    const configLoaderIndex = invocation.args.indexOf('--config-loader')
+    assert.equal(configLoaderIndex > invocation.args.indexOf('build:lib:host'), true)
+    assert.equal(invocation.args[configLoaderIndex + 1], 'tsx')
     assert.equal(invocation.args.includes('--offline'), false)
     assert.equal(invocation.args.includes('--ignore-scripts'), false)
     assert.equal(mountMode(

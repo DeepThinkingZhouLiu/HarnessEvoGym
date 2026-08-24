@@ -963,6 +963,8 @@ export class PutnamEvolutionRuntime {
         ...pnpmSafetyArguments,
         'run',
         'build:lib:host',
+        '--config-loader',
+        'tsx',
       ]
       let installResult
       let hostBuildResult

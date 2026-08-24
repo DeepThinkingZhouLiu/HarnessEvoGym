@@ -29,6 +29,11 @@ const VERIFIER_PROXY_ENVIRONMENT = new Set([
   'all_proxy',
   'no_proxy',
 ])
+const VERIFIER_DEPENDENCY_ENVIRONMENT = new Set([
+  'PIP_INDEX_URL',
+  'UV_DOWNLOAD_URL',
+  'UV_INDEX_URL',
+])
 
 function metadataId(input, label) {
   return expectText(expectObject(input.metadata, `${label}.metadata`).id, `${label}.metadata.id`)
@@ -400,6 +405,20 @@ export function validateEnvironmentAdapter(input) {
       throw new ProtocolError(`Verifier 只能继承标准代理环境变量：${name}`)
     }
   }
+  const dependencyEnvironmentInput = expectObject(
+    verifier.dependencyEnvironment ?? {},
+    'EnvironmentAdapter.spec.verifier.dependencyEnvironment',
+  )
+  const dependencyEnvironment = {}
+  for (const [containerName, hostNameInput] of Object.entries(dependencyEnvironmentInput)) {
+    if (!VERIFIER_DEPENDENCY_ENVIRONMENT.has(containerName)) {
+      throw new ProtocolError(`Verifier 不允许注入依赖环境变量：${containerName}`)
+    }
+    dependencyEnvironment[containerName] = environmentName(
+      hostNameInput,
+      `EnvironmentAdapter.spec.verifier.dependencyEnvironment.${containerName}`,
+    )
+  }
   const resolvedWorkspaceLimits = {
     maximumFiles: expectNumber(workspaceLimits.maximumFiles, 'task.workspaceLimits.maximumFiles', {
       integer: true,
@@ -507,6 +526,7 @@ export function validateEnvironmentAdapter(input) {
       shellCommand: expectText(verifier.shellCommand, 'EnvironmentAdapter.spec.verifier.shellCommand'),
       arguments: expectStringArray(verifier.arguments ?? [], 'EnvironmentAdapter.spec.verifier.arguments', { nonEmpty: false }),
       proxyEnvironment,
+      dependencyEnvironment,
       outputCandidates,
       network: verifierNetwork,
       runAsCurrentUser: expectBoolean(

@@ -31,6 +31,8 @@ Solver 看不到主机 Task Root 或 Verifier 挂载，只额外获得该任务�
 
 部分上游 Verifier 会在评分时下载固定版本依赖。`spec.verifier.proxyEnvironment` 只允许标准 HTTP 代理变量，并且只把宿主当前已设置的变量传给可信 Verifier；它不会传给 Solver 或 Updater。无代理环境可以保持这些变量未设置，直连运行。
 
+若远端制品下载很慢，可通过 `spec.verifier.dependencyEnvironment` 把受限的 `UV_DOWNLOAD_URL`、`PIP_INDEX_URL` 或 `UV_INDEX_URL` 映射到宿主环境变量。Verifier 可通过 `host.docker.internal` 访问本机只读缓存服务；这一 Host Gateway 入口不会提供给 Solver/Updater。缓存制品必须固定版本并在实验记录中保存 SHA-256。
+
 ## 运行前提
 
 ```bash

@@ -27,6 +27,10 @@ test('Cowork Experiment 分别固定 Target/Updater Source 和模型上限', asy
   assert.equal(bundle.environment.modelGateway.upstreamApiKeyEnvironment, 'RSI_PROVIDER_API_KEY')
   assert.equal(bundle.environment.modelGateway.maximumRequestsPerRun, 512)
   assert.ok(bundle.environment.verifier.proxyEnvironment.includes('HTTPS_PROXY'))
+  assert.equal(
+    bundle.environment.verifier.dependencyEnvironment.UV_DOWNLOAD_URL,
+    'RSI_VERIFIER_UV_DOWNLOAD_URL',
+  )
   assert.equal(bundle.environment.feedback.maximumHistoryEntries, 10)
   assert.equal(bundle.environment.feedback.maximumArtifactEntriesPerCase, 100)
   assert.equal(bundle.environment.task.workspaceLimits.maximumChangedBytes, 536870912)
@@ -38,6 +42,12 @@ test('Environment Adapter 拒绝让 Verifier 继承非代理宿主变量', async
   const config = await readConfigFile(resolve(repositoryRoot, 'environments/skillsbench-cowork.yml'))
   config.spec.verifier.proxyEnvironment.push('HOME')
   assert.throws(() => validateEnvironmentAdapter(config), /只能继承标准代理环境变量/u)
+})
+
+test('Environment Adapter 拒绝向 Verifier 注入任意依赖变量', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'environments/skillsbench-cowork.yml'))
+  config.spec.verifier.dependencyEnvironment.LD_PRELOAD = 'RSI_VERIFIER_LD_PRELOAD'
+  assert.throws(() => validateEnvironmentAdapter(config), /不允许注入依赖环境变量/u)
 })
 
 test('Model Provider Adapter 拒绝重复模型目录', async () => {

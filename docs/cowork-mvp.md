@@ -32,6 +32,8 @@ Solver, Updater, Verifier, and Model Gateway are separate Docker roles. Agent co
 
 Pinned upstream verifiers may download fixed dependency versions at scoring time. A verifier-only standard proxy allowlist can inherit proxy variables already present on the host; these variables are never passed to Solver or Updater and therefore do not open their internal network.
 
+Slow environments may instead map a pinned local dependency-cache URL into the trusted Verifier. The Controller accepts only `UV_DOWNLOAD_URL`, `PIP_INDEX_URL`, or `UV_INDEX_URL` as target variables and exposes `host.docker.internal` only to this role, never to an Agent container.
+
 The feedback packet includes the feedback task instruction, reward, final answer, verifier evidence, runtime errors, a bounded artifact summary, and latency. Text has a per-case byte budget; artifacts have separate entry and JSON-byte budgets with an explicit omitted count. It never includes selection/final instructions or per-instance evidence.
 
 Each run creates a fresh Docker internal network. Solver and Updater have no external route and receive only an ephemeral token and internal URL. The dual-homed Model Gateway alone inherits the real provider key, proxies only the configured upstream `POST /chat/completions` endpoint, and enforces run-level request and concurrency caps. It parses streamed usage and measures each Solver/Updater session by counter deltas; if any response lacks valid usage, that session's token totals remain unknown. Real and ephemeral secrets are inherited through child-process environments rather than Docker command arguments.

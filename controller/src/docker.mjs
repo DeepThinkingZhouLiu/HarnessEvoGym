@@ -258,12 +258,14 @@ export class DockerClient {
       network = this.network,
       runAsCurrentUser = this.runAsCurrentUser,
       readOnlyRoot = true,
+      hostGateway = false,
       tmpfs = ['/tmp:rw,nosuid,nodev,size=1g', '/run:rw,nosuid,nodev,size=64m'],
       capabilities = [],
       timeoutMs = this.resources.timeoutSeconds * 1000,
       resources = this.resources,
     } = options
     if (network === 'host') throw new ProtocolError('安全策略禁止 Docker host 网络')
+    if (typeof hostGateway !== 'boolean') throw new ProtocolError('Docker hostGateway 必须是布尔值')
     if (
       entrypoint !== null &&
       (typeof entrypoint !== 'string' || entrypoint.length === 0 || entrypoint.startsWith('-') || /[\u0000-\u001f\u007f]/u.test(entrypoint))
@@ -292,6 +294,7 @@ export class DockerClient {
       resources.memory,
     ]
     appendCapabilities(args, capabilities)
+    if (hostGateway) args.push('--add-host', 'host.docker.internal:host-gateway')
     if (readOnlyRoot) args.push('--read-only')
     if (runAsCurrentUser && typeof process.getuid === 'function') {
       if (process.getuid() === 0) {

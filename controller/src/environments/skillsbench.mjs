@@ -411,6 +411,12 @@ export class SkillsBenchEnvironment {
     let result
     try {
       const command = verifierCommand(layout, this.environment)
+      const dependencyEnvironment = Object.fromEntries(
+        Object.entries(this.environment.verifier.dependencyEnvironment ?? {})
+          .flatMap(([containerName, hostName]) => process.env[hostName]
+            ? [[containerName, process.env[hostName]]]
+            : []),
+      )
       result = await this.docker.run({
         image,
         name,
@@ -444,11 +450,14 @@ export class SkillsBenchEnvironment {
           RSI_HOST_UID: String(typeof process.getuid === 'function' ? process.getuid() : ''),
           RSI_HOST_GID: String(typeof process.getgid === 'function' ? process.getgid() : ''),
           RSI_VERIFIER_WORKSPACE: this.environment.task.workspacePath,
+          ...dependencyEnvironment,
         },
         // 只有可信 Verifier 可以按 Adapter 白名单继承代理；Solver/Updater 仍在 internal network。
         inheritEnvironment: (this.environment.verifier.proxyEnvironment ?? [])
           .filter((nameValue) => Boolean(process.env[nameValue])),
         network: this.environment.verifier.network,
+        // 仅可信 Verifier 可解析宿主工具缓存；Agent 容器从不启用此入口。
+        hostGateway: true,
         runAsCurrentUser: this.environment.verifier.runAsCurrentUser,
         readOnlyRoot: false,
         tmpfs: [

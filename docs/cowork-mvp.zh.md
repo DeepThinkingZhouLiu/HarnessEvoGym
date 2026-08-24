@@ -93,6 +93,8 @@ Verifier 与 Agent 分开启动。Solver 不挂载 Verifier；Verifier 能读 Tr
 
 上游 Verifier 若需要临时下载固定版本依赖，可以按 Environment Adapter 的标准代理白名单继承宿主已设置的代理变量；该能力只属于可信 Verifier，不会打通 Solver/Updater 的 internal network。
 
+慢速环境还可以为可信 Verifier 映射固定版本的本机依赖缓存 URL；Controller 只接受 `UV_DOWNLOAD_URL`、`PIP_INDEX_URL`、`UV_INDEX_URL` 三个目标变量，并只为 Verifier 提供 `host.docker.internal`，Agent 仍无该入口。
+
 第四个角色是 Model Gateway。每个 Run 都会创建一张新的 Docker internal network，Solver/Updater 只接入这张无外网路由的网络。网关同时接入 internal network 和配置的出口网络，持有真正的 Provider Key，只接受一次性 Bearer Token，并且只代理固定上游的 `POST /chat/completions`。Environment Adapter 还设置 Run 级总请求数和并发上限，防止 Agent 绕过正常 Loop 无限调用。网关解析上游流式响应末尾的 Usage，并在每次 Solver/Updater Session 前后做计数器差分；只要其中一个响应缺少合法 Usage，本 Session 的 Token 字段就保持未知。真实 Key 与一次性 Token 都通过子进程环境继承，不写进 Docker 命令参数；Run 结束后容器和 internal network 会清理。
 
 ## 配置和入口

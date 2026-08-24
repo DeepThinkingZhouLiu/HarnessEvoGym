@@ -69,6 +69,11 @@ spec:
       - https_proxy
       - all_proxy
       - no_proxy
+    # 可选本机工具缓存；未设置宿主变量时仍按上游脚本直连下载。
+    dependencyEnvironment:
+      UV_DOWNLOAD_URL: RSI_VERIFIER_UV_DOWNLOAD_URL
+      PIP_INDEX_URL: RSI_VERIFIER_PYPI_INDEX_URL
+      UV_INDEX_URL: RSI_VERIFIER_PYPI_INDEX_URL
     # Verifier 属于可信控制平面；部分 SkillsBench Verifier 会在首次运行时安装依赖。
     network: bridge
     # 真实 SkillsBench test.sh 需要 apt-get，因此 Verifier 单独以 root 运行；Solver/Updater 仍为普通用户。

@@ -11,6 +11,8 @@ test('root Verifier 只读挂载 Solver 工作区并在退出时修复日志归�
   const logs = join(root, 'logs')
   await mkdir(workspace)
   let runOptions
+  const previousUvDownloadUrl = process.env.RSI_TEST_VERIFIER_UV_DOWNLOAD_URL
+  process.env.RSI_TEST_VERIFIER_UV_DOWNLOAD_URL = 'http://host.docker.internal:17891'
   const docker = {
     async run(options) {
       runOptions = options
@@ -27,6 +29,7 @@ test('root Verifier 只读挂载 Solver 工作区并在退出时修复日志归�
       arguments: [],
       outputCandidates: ['/logs/verifier/reward.txt'],
       proxyEnvironment: ['HTTP_PROXY', 'HTTPS_PROXY'],
+      dependencyEnvironment: { UV_DOWNLOAD_URL: 'RSI_TEST_VERIFIER_UV_DOWNLOAD_URL' },
       network: 'bridge',
       runAsCurrentUser: false,
     },
@@ -47,6 +50,8 @@ test('root Verifier 只读挂载 Solver 工作区并在退出时修复日志归�
     logs,
     name: 'verifier-test',
   })
+  if (previousUvDownloadUrl === undefined) delete process.env.RSI_TEST_VERIFIER_UV_DOWNLOAD_URL
+  else process.env.RSI_TEST_VERIFIER_UV_DOWNLOAD_URL = previousUvDownloadUrl
 
   assert.equal(result.reward, 1)
   assert.equal(runOptions.mounts.find((mount) => mount.source === workspace).readOnly, true)
@@ -59,6 +64,8 @@ test('root Verifier 只读挂载 Solver 工作区并在退出时修复日志归�
   assert.ok(runOptions.capabilities.includes('CHOWN'))
   assert.ok(!runOptions.capabilities.includes('SYS_ADMIN'))
   assert.equal(runOptions.environment.PYTHONDONTWRITEBYTECODE, '1')
+  assert.equal(runOptions.environment.UV_DOWNLOAD_URL, 'http://host.docker.internal:17891')
+  assert.equal(runOptions.hostGateway, true)
   assert.deepEqual(
     runOptions.inheritEnvironment,
     ['HTTP_PROXY', 'HTTPS_PROXY'].filter((nameValue) => Boolean(process.env[nameValue])),

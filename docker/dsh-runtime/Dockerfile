@@ -10,7 +10,9 @@ ARG DSH_BASE_IMAGE_IDENTITY=unknown
 
 FROM node:24-bookworm-slim AS dsh-build
 ARG DSH_SOURCE_PATH
+ARG DSH_SOURCE_REVISION
 ENV CI=1
+ENV DSH_CLIENT_COMMIT_HASH=${DSH_SOURCE_REVISION}
 WORKDIR /opt/dsh
 RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
 COPY ${DSH_SOURCE_PATH}/ ./

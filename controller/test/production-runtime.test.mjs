@@ -64,6 +64,7 @@ async function fixture({
   hostBuildResults,
   smokeResult,
   smokeResults,
+  separateToolchains = false,
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'production-runtime-'))
   const paths = {
@@ -75,7 +76,9 @@ async function fixture({
     scratch: join(root, 'scratch'),
     dataset: join(root, 'putnambench'),
     node: join(root, 'node-toolchain', 'bin', 'node'),
-    pnpm: join(root, 'node-toolchain', 'lib', 'pnpm.cjs'),
+    pnpm: separateToolchains
+      ? join(root, 'pnpm-toolchain', 'bin', 'pnpm')
+      : join(root, 'node-toolchain', 'lib', 'pnpm.cjs'),
     patch: join(root, 'control', 'runtime.patch.yml'),
     proposalTemplate: join(root, 'control', 'proposal.md'),
     applyTemplate: join(root, 'control', 'apply.md'),
@@ -463,7 +466,7 @@ test('builds baseline and candidates offline inside the no-network build sandbox
     assert.equal(invocation.args.includes('build:lib:host'), true)
     const configLoaderIndex = invocation.args.indexOf('--config-loader')
     assert.equal(configLoaderIndex > invocation.args.indexOf('build:lib:host'), true)
-    assert.equal(invocation.args[configLoaderIndex + 1], 'tsx')
+    assert.equal(invocation.args[configLoaderIndex + 1], 'native')
     assert.equal(invocation.args.includes('--offline'), false)
     assert.equal(invocation.args.includes('--ignore-scripts'), false)
     assert.equal(mountMode(
@@ -484,6 +487,13 @@ test('builds baseline and candidates offline inside the no-network build sandbox
     assert.equal(invocation.args.slice(boundary + 1).join(' ').includes(context.root), false)
     assert.equal(invocation.env.HOME, `${BUILD_SANDBOX_PATHS.workspace}/home`)
     assert.equal(invocation.env.TMPDIR, `${BUILD_SANDBOX_PATHS.workspace}/tmp`)
+    assert.equal(invocation.env.PATH, [
+      `${BUILD_SANDBOX_PATHS.sharedToolchain}/bin`,
+      `${BUILD_SANDBOX_PATHS.sharedToolchain}/lib`,
+      '/usr/bin',
+      '/bin',
+    ].join(':'))
+    assert.equal(invocation.env.PATH.includes(context.root), false)
     assert.equal(invocation.env.ZCLOUD_API_KEY, undefined)
     assert.equal(invocation.env.DASHSCOPE_API_KEY, undefined)
     assert.equal(invocation.env.NODE_OPTIONS, undefined)
@@ -577,6 +587,33 @@ test('builds baseline and candidates offline inside the no-network build sandbox
   assert.equal(isolatedBuildDirectories.every((entry) => (
     entry.uid === 1102 && entry.gid === 2102 && entry.mode === 0o700
   )), true)
+})
+
+test('build PATH pins separate production Node and pnpm toolchains ahead of /usr', async () => {
+  const context = await fixture({ separateToolchains: true })
+  const result = await context.runtime.buildCandidate({
+    candidateId: 'baseline', candidateRoot: context.paths.baselineSource, level: 'baseline',
+  })
+  assert.equal(result.ok, true)
+  const hostBuild = context.calls.processes.find((entry) => (
+    entry.args.includes('build:lib:host')
+  ))
+  assert.equal(hostBuild.env.PATH, [
+    `${BUILD_SANDBOX_PATHS.nodeToolchain}/bin`,
+    `${BUILD_SANDBOX_PATHS.pnpmToolchain}/bin`,
+    '/usr/bin',
+    '/bin',
+  ].join(':'))
+  assert.equal(mountMode(
+    hostBuild.args,
+    join(context.root, 'node-toolchain'),
+    BUILD_SANDBOX_PATHS.nodeToolchain,
+  ), '--ro-bind')
+  assert.equal(mountMode(
+    hostBuild.args,
+    join(context.root, 'pnpm-toolchain'),
+    BUILD_SANDBOX_PATHS.pnpmToolchain,
+  ), '--ro-bind')
 })
 
 test('candidate install nonzero is a candidate failure; operational failures are infrastructure', async (context) => {

@@ -234,6 +234,31 @@ function buildToolchainMounts(nodePath, pnpmCliPath) {
   ]
 }
 
+function buildToolchainEnvironment(nodePath, pnpmCliPath) {
+  const mounts = buildToolchainMounts(nodePath, pnpmCliPath)
+  const guestDirectory = (executablePath) => {
+    const distributionRoot = executableDistributionRoot(executablePath)
+    if (distributionRoot === null) return dirname(executablePath)
+    const mount = mounts.find(({ source }) => isWithin(source, executablePath))
+    if (mount === undefined) {
+      throw new Error('build tool executable is outside its sandbox toolchain mount')
+    }
+    return join(
+      mount.destination,
+      relative(mount.source, dirname(executablePath)),
+    )
+  }
+  return {
+    mounts,
+    path: [...new Set([
+      guestDirectory(nodePath),
+      guestDirectory(pnpmCliPath),
+      '/usr/bin',
+      '/bin',
+    ])].join(':'),
+  }
+}
+
 async function defaultPrepareOwnedDirectory({ path, uid, gid, mode }) {
   await mkdir(path, { recursive: true, mode })
   if (uid !== undefined && gid !== undefined) await chown(path, uid, gid)
@@ -964,8 +989,9 @@ export class PutnamEvolutionRuntime {
         'run',
         'build:lib:host',
         '--config-loader',
-        'tsx',
+        'native',
       ]
+      const buildToolchain = buildToolchainEnvironment(this.nodePath, this.pnpmCliPath)
       let installResult
       let hostBuildResult
       try {
@@ -991,6 +1017,9 @@ export class PutnamEvolutionRuntime {
               env: {
                 ...safeEnvironment(this.baseEnvironment, join(buildRunRoot, 'home')),
                 TMPDIR: join(buildRunRoot, 'tmp'),
+                // pnpm scripts use `#!/usr/bin/env node`; keep their lifecycle
+                // processes on the attested Node pin instead of sandbox /usr/bin.
+                PATH: buildToolchain.path,
               },
             },
             uid: this.buildUid,
@@ -1010,7 +1039,7 @@ export class PutnamEvolutionRuntime {
                 destination: BUILD_SANDBOX_PATHS.store,
                 readOnly: true,
               },
-              ...buildToolchainMounts(this.nodePath, this.pnpmCliPath),
+              ...buildToolchain.mounts,
               {
                 source: buildRunRoot,
                 destination: BUILD_SANDBOX_PATHS.workspace,

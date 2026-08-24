@@ -36,6 +36,8 @@ const TRUSTED_VERIFIER_CAPABILITIES = [
   'SYS_CHROOT',
 ]
 const MAXIMUM_VERIFIER_REWARD_BYTES = 1024 * 1024
+// `/opt/venv` 是部分固定 Task Image 在构建期创建的只读可信环境，不来自 Solver 提交物。
+const TRUSTED_VERIFIER_PATH = '/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
@@ -476,7 +478,7 @@ export class SkillsBenchEnvironment {
             UV_NO_CONFIG: '1',
             BASH_ENV: '/dev/null',
             ENV: '/dev/null',
-            PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+            PATH: TRUSTED_VERIFIER_PATH,
             RSI_HOST_UID: String(typeof process.getuid === 'function' ? process.getuid() : ''),
             RSI_HOST_GID: String(typeof process.getgid === 'function' ? process.getgid() : ''),
             RSI_VERIFIER_WORKSPACE: this.environment.task.workspacePath,

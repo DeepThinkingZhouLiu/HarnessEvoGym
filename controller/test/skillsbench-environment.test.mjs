@@ -65,6 +65,7 @@ test('root Verifier 只读挂载 Solver 工作区并在退出时修复日志归�
   assert.ok(runOptions.capabilities.includes('CHOWN'))
   assert.ok(!runOptions.capabilities.includes('SYS_ADMIN'))
   assert.equal(runOptions.environment.PYTHONDONTWRITEBYTECODE, '1')
+  assert.ok(runOptions.environment.PATH.startsWith('/opt/venv/bin:'))
   assert.equal(runOptions.environment.UV_DOWNLOAD_URL, 'http://host.docker.internal:17891')
   assert.equal(runOptions.hostGateway, true)
   assert.deepEqual(

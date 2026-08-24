@@ -18,9 +18,16 @@ import { ProtocolError, readJsonFile, validateBenchmark, validateEvaluationPolic
 
 const MUTATION_LEVELS = ['l1', 'l2', 'l3']
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/u
+const ENVIRONMENT_NAME = /^[A-Z_][A-Z0-9_]*$/u
 
 function metadataId(input, label) {
   return expectText(expectObject(input.metadata, `${label}.metadata`).id, `${label}.metadata.id`)
+}
+
+function environmentName(value, label) {
+  const name = expectText(value, label)
+  if (!ENVIRONMENT_NAME.test(name)) throw new ProtocolError(`${label} 必须是大写环境变量名`)
+  return name
 }
 
 function relativePath(value, label) {
@@ -31,7 +38,7 @@ function validateRuntime(raw, label) {
   const runtime = expectObject(raw, label)
   const secretEnvironment = expectStringArray(runtime.secretEnvironment, `${label}.secretEnvironment`)
   for (const name of secretEnvironment) {
-    if (!/^[A-Z_][A-Z0-9_]*$/u.test(name)) throw new ProtocolError(`${label}.secretEnvironment 包含非法名称：${name}`)
+    if (!ENVIRONMENT_NAME.test(name)) throw new ProtocolError(`${label}.secretEnvironment 包含非法名称：${name}`)
   }
   return {
     image: expectText(runtime.image, `${label}.image`),
@@ -214,6 +221,87 @@ export function validateUpdaterAdapter(input) {
   }
 }
 
+export function validateModelProviderAdapter(input) {
+  assertApiObject(input, 'ModelProviderAdapter')
+  const id = metadataId(input, 'ModelProviderAdapter')
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(id)) {
+    throw new ProtocolError('ModelProviderAdapter.metadata.id 必须是 kebab-case')
+  }
+  const metadata = expectObject(input.metadata, 'ModelProviderAdapter.metadata')
+  const spec = expectObject(input.spec, 'ModelProviderAdapter.spec')
+  const protocol = expectText(spec.protocol, 'ModelProviderAdapter.spec.protocol')
+  if (protocol !== 'openai-chat-completions') {
+    throw new ProtocolError(`当前未实现 Model Provider Protocol：${protocol}`)
+  }
+  const credentials = expectObject(spec.credentials, 'ModelProviderAdapter.spec.credentials')
+  const apiKeyEnvironment = environmentName(
+    credentials.apiKeyEnvironment,
+    'ModelProviderAdapter.spec.credentials.apiKeyEnvironment',
+  )
+  const baseUrlEnvironment = environmentName(
+    credentials.baseUrlEnvironment,
+    'ModelProviderAdapter.spec.credentials.baseUrlEnvironment',
+  )
+  if (apiKeyEnvironment === baseUrlEnvironment) {
+    throw new ProtocolError('Model Provider 的 API Key 与 Base URL 环境变量不能同名')
+  }
+
+  const compatibility = expectObject(spec.compatibility, 'ModelProviderAdapter.spec.compatibility')
+  const maxTokensField = expectText(
+    compatibility.maxTokensField,
+    'ModelProviderAdapter.spec.compatibility.maxTokensField',
+  )
+  if (!['max_tokens', 'max_completion_tokens'].includes(maxTokensField)) {
+    throw new ProtocolError('ModelProviderAdapter.spec.compatibility.maxTokensField 只支持 max_tokens 或 max_completion_tokens')
+  }
+
+  if (!Array.isArray(spec.models) || spec.models.length === 0) {
+    throw new ProtocolError('ModelProviderAdapter.spec.models 必须是非空数组')
+  }
+  const seenModelIds = new Set()
+  const models = spec.models.map((value, index) => {
+    const model = expectObject(value, `ModelProviderAdapter.spec.models[${index}]`)
+    const modelId = expectText(model.id, `ModelProviderAdapter.spec.models[${index}].id`)
+    if (seenModelIds.has(modelId)) throw new ProtocolError(`Model Provider 重复声明模型：${modelId}`)
+    seenModelIds.add(modelId)
+    return {
+      id: modelId,
+      name: expectText(model.name ?? modelId, `ModelProviderAdapter.spec.models[${index}].name`),
+      ...(model.contextWindow === undefined
+        ? {}
+        : {
+            contextWindow: expectNumber(
+              model.contextWindow,
+              `ModelProviderAdapter.spec.models[${index}].contextWindow`,
+              { integer: true, min: 1 },
+            ),
+          }),
+    }
+  })
+
+  return {
+    apiVersion: API_VERSION,
+    kind: 'ModelProviderAdapter',
+    id,
+    name: expectText(metadata.name ?? id, 'ModelProviderAdapter.metadata.name'),
+    protocol,
+    credentials: { apiKeyEnvironment, baseUrlEnvironment },
+    compatibility: {
+      supportsDeveloperRole: expectBoolean(
+        compatibility.supportsDeveloperRole,
+        'ModelProviderAdapter.spec.compatibility.supportsDeveloperRole',
+      ),
+      maxTokensField,
+    },
+    defaultContextWindow: expectNumber(
+      spec.defaultContextWindow,
+      'ModelProviderAdapter.spec.defaultContextWindow',
+      { integer: true, min: 1 },
+    ),
+    models,
+  }
+}
+
 export function validateEnvironmentAdapter(input) {
   assertApiObject(input, 'EnvironmentAdapter')
   const id = metadataId(input, 'EnvironmentAdapter')
@@ -239,25 +327,6 @@ export function validateEnvironmentAdapter(input) {
   const rootEnvironment = expectText(source.rootEnvironment, 'EnvironmentAdapter.spec.source.rootEnvironment')
   if (!/^[A-Z_][A-Z0-9_]*$/u.test(rootEnvironment)) {
     throw new ProtocolError('EnvironmentAdapter.spec.source.rootEnvironment 必须是大写环境变量名')
-  }
-  const upstreamApiKeyEnvironment = expectText(
-    modelGateway.upstreamApiKeyEnvironment,
-    'EnvironmentAdapter.spec.modelGateway.upstreamApiKeyEnvironment',
-  )
-  const upstreamBaseUrlEnvironment = expectText(
-    modelGateway.upstreamBaseUrlEnvironment,
-    'EnvironmentAdapter.spec.modelGateway.upstreamBaseUrlEnvironment',
-  )
-  for (const [label, name] of [
-    ['upstreamApiKeyEnvironment', upstreamApiKeyEnvironment],
-    ['upstreamBaseUrlEnvironment', upstreamBaseUrlEnvironment],
-  ]) {
-    if (!/^[A-Z_][A-Z0-9_]*$/u.test(name)) {
-      throw new ProtocolError(`EnvironmentAdapter.spec.modelGateway.${label} 必须是大写环境变量名`)
-    }
-  }
-  if (upstreamApiKeyEnvironment === upstreamBaseUrlEnvironment) {
-    throw new ProtocolError('Model Gateway 的 API Key 与 Base URL 环境变量不能同名')
   }
   const gatewayAlias = expectText(modelGateway.alias, 'EnvironmentAdapter.spec.modelGateway.alias')
   if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(gatewayAlias)) {
@@ -391,8 +460,6 @@ export function validateEnvironmentAdapter(input) {
         max: 65535,
       }),
       egressNetwork: gatewayEgressNetwork,
-      upstreamApiKeyEnvironment,
-      upstreamBaseUrlEnvironment,
       maximumRequestsPerRun: expectNumber(
         modelGateway.maximumRequestsPerRun,
         'EnvironmentAdapter.spec.modelGateway.maximumRequestsPerRun',
@@ -498,6 +565,7 @@ export function validateExperiment(input) {
       target: relativePath(adapters.target, 'EvolutionExperiment.spec.adapters.target'),
       updater: relativePath(adapters.updater, 'EvolutionExperiment.spec.adapters.updater'),
       environment: relativePath(adapters.environment, 'EvolutionExperiment.spec.adapters.environment'),
+      provider: relativePath(adapters.provider, 'EvolutionExperiment.spec.adapters.provider'),
     },
     benchmarkPath: relativePath(spec.benchmark, 'EvolutionExperiment.spec.benchmark'),
     policyPath: relativePath(spec.policy, 'EvolutionExperiment.spec.policy'),
@@ -534,6 +602,9 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
   const environment = validateEnvironmentAdapter(
     await readConfigFile(resolveInside(repositoryRoot, experiment.adapters.environment, 'Environment Adapter 路径')),
   )
+  const provider = validateModelProviderAdapter(
+    await readConfigFile(resolveInside(repositoryRoot, experiment.adapters.provider, 'Model Provider Adapter 路径')),
+  )
   const benchmark = validateBenchmark(
     await readJsonFile(benchmarkPath),
   )
@@ -556,8 +627,8 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
     throw new ProtocolError(`Target Adapter 没有定义 ${experiment.evolution.mutationLevel}`)
   }
   const gatewayEnvironment = new Set([
-    environment.modelGateway.upstreamApiKeyEnvironment,
-    environment.modelGateway.upstreamBaseUrlEnvironment,
+    provider.credentials.apiKeyEnvironment,
+    provider.credentials.baseUrlEnvironment,
   ])
   for (const [label, names] of [
     ['Target Solver', target.solver.runtime.secretEnvironment],
@@ -570,13 +641,36 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
       ])
     }
   }
-  return { experiment, target, updater, environment, benchmark, policy }
+  for (const [label, model] of [
+    ['Solver', experiment.models.solver],
+    ['Updater', experiment.models.updater],
+  ]) {
+    if (model.provider !== provider.id) {
+      throw new ProtocolError(`${label} Model 引用了未加载的 Provider`, [
+        `model.provider=${model.provider}`,
+        `adapter=${provider.id}`,
+      ])
+    }
+    if (!provider.models.some((item) => item.id === model.model)) {
+      throw new ProtocolError(`${label} Model 不在 Provider 固定目录中：${model.model}`)
+    }
+  }
+  const resolvedEnvironment = {
+    ...environment,
+    modelGateway: {
+      ...environment.modelGateway,
+      upstreamApiKeyEnvironment: provider.credentials.apiKeyEnvironment,
+      upstreamBaseUrlEnvironment: provider.credentials.baseUrlEnvironment,
+    },
+  }
+  return { experiment, target, updater, environment: resolvedEnvironment, provider, benchmark, policy }
 }
 
 export async function validateAnyAdapter(input) {
   if (!isObject(input) || !hasText(input.kind)) throw new ProtocolError('Adapter 配置缺少 kind')
   if (input.kind === 'TargetAdapter') return validateTargetAdapter(input)
   if (input.kind === 'UpdaterAdapter') return validateUpdaterAdapter(input)
+  if (input.kind === 'ModelProviderAdapter') return validateModelProviderAdapter(input)
   if (input.kind === 'EnvironmentAdapter') return validateEnvironmentAdapter(input)
   if (input.kind === 'EvolutionExperiment') return validateExperiment(input)
   throw new ProtocolError(`不支持校验 kind=${input.kind}`)

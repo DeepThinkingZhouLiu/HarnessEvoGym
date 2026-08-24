@@ -21,8 +21,8 @@ spec:
     profile: headless
     preset: standard
     secretEnvironment:
-      - DEEPSEEK_API_KEY
-      - DEEPSEEK_BASE_URL
+      - RSI_PROVIDER_API_KEY
+      - RSI_PROVIDER_BASE_URL
 
   prompt:
     path: prompts/updater.md

@@ -23,6 +23,7 @@ H0、每代 Candidate 和 Champion 都是独立 Overlay。L1/L2 不修改 DSH �
 | `controller/src/feedback.mjs`             | 只从 feedback 生成脱敏证据                           | 把 selection/final 泄漏给 Updater  |
 | Target Adapter                            | DSH Overlay、运行时和每层可写路径                    | 写死其他 Agent 的目录               |
 | Updater Adapter                           | 独立 Updater Source、Runtime、Prompt 与报告协议       | 决定 Target 的可写边界               |
+| Model Provider Adapter                    | 上游协议、凭据变量名、兼容参数和模型目录             | 保存真实 API Key                     |
 | Environment Adapter                       | SkillsBench Revision、任务布局、Docker 与 Verifier   | 写死到 Controller 核心              |
 | Experiment                                | 把 Target、Updater、Environment、Benchmark、Policy 组合 | 修改任一信任根                   |
 
@@ -99,6 +100,7 @@ Verifier 与 Agent 分开启动。Solver 不挂载 Verifier；Verifier 能读 Tr
 ```text
 adapters/targets/deepseek-harness.yml
 adapters/updaters/deepseek-harness.yml
+adapters/providers/zcloud-openai.yml
 environments/skillsbench-cowork.yml
 benchmarks/cowork-skillsbench-poc/benchmark.json
 evaluation/policies/cowork-rsi-poc.json
@@ -129,7 +131,7 @@ npm run rsi -- evolve finalize --run .rsi/runs/cowork-l1-smoke-001
 
 `preflight --skip-secrets` 只适合检查数据和 Docker 布局，真正运行仍会强制要求网关声明的 Provider 环境变量。Controller 信任根路径必须先提交，Run 会冻结主仓 SHA，Finalize 也必须在该 SHA 上执行；如果中间只改了文档，也需先 checkout 回运行时提交再做 Final，这是为了保守保证 Evaluator 没被替换。Solver/Updater Adapter 中同名字段表达“DSH 期待哪些变量”，实际收到的是内部地址和一次性令牌，不是真实 Provider 凭据。
 
-Solver 与 Updater 的 `provider`、`model`、`maxTokens` 都在 Experiment 中分别配置。POC 的 `deepseek-chat` 当前固定 8192；换成容量不同的模型时应显式改这里，不依赖 DSH 的全局默认值。
+上游连接只在 `ModelProviderAdapter` 配一次：协议、Base URL/API Key 的环境变量名、兼容参数和允许使用的模型目录都由它统一声明，真实凭据仍只在运行时注入。Solver 与 Updater 在 Experiment 中分别选择 `provider`、`model` 和 `maxTokens`；当前低成本 POC 两个角色都使用 `gpt-5.6-terra`，并固定为 8192 Token。DSH Runtime 会把这份通用配置翻译到其 `llm-pi-ai` OpenAI Chat Completions Adapter；后续接 pi-agent 时，只增加对应 Runtime 翻译，不复制凭据配置。
 
 ## Verifier 接口
 
@@ -197,6 +199,7 @@ Finalize 会用冻结 H0 与锁定 Champion 同时跑 feedback 和 final，报�
 通用 Controller
   -> Target Adapter（谁被改、哪些路径可改）
   -> Updater Adapter（谁来改、如何启动）
+  -> Model Provider Adapter（接哪个上游、可选哪些模型）
   -> Environment Adapter（在哪里做题、如何得到客观 Reward）
   -> Evaluation Policy（什么条件下允许晋升）
 ```

@@ -21,7 +21,7 @@ pin Controller revision, DSH Source, and SkillsBench revision
 -> lock the champion and run final exactly once
 ```
 
-The Controller implements independently pinned Target/Updater sources, adapter validation, SHA-256 candidate manifests that cover files and empty directories, lineage, Docker Solver/Updater/Gateway/Verifier isolation, SkillsBench task execution, streamed artifact hashing, workspace/artifact budgets and unsafe-file rejection, a continuous-reward protocol, paired bootstrap metrics, promotion/rollback, and a separately sealed finalization command. No-op proposals are rejected before selection so random model variance cannot masquerade as evolution. Verifier reward artifacts must be regular files no larger than 1 MiB. Candidate-owned generic skills must use the `cowork-*` namespace so they cannot shadow task-provided `pdf`, `xlsx`, or similar skills. Later generations receive prior hypotheses and aggregate selection gates, never per-instance selection evidence.
+The Controller implements independently pinned Target/Updater sources, strongly validated Target/Updater/Model Provider/Environment adapters, SHA-256 candidate manifests that cover files and empty directories, lineage, Docker Solver/Updater/Gateway/Verifier isolation, SkillsBench task execution, streamed artifact hashing, workspace/artifact budgets and unsafe-file rejection, a continuous-reward protocol, paired bootstrap metrics, promotion/rollback, and a separately sealed finalization command. No-op proposals are rejected before selection so random model variance cannot masquerade as evolution. Verifier reward artifacts must be regular files no larger than 1 MiB. Candidate-owned generic skills must use the `cowork-*` namespace so they cannot shadow task-provided `pdf`, `xlsx`, or similar skills. Later generations receive prior hypotheses and aggregate selection gates, never per-instance selection evidence.
 
 ## Mutation boundary
 
@@ -46,6 +46,8 @@ The prompt is guidance, not the security boundary. Updater containers never rece
 
 Solver and Updater containers join a fresh Docker internal network for each run. They receive only an ephemeral gateway token and internal URL, have no external route, and never receive the real provider key. The dual-homed Model Gateway is the only egress role, proxies only `POST /chat/completions` to the configured base URL, and enforces per-run total-request and concurrency limits. Agent containers also drop all capabilities, enable `no-new-privileges`, use a read-only root filesystem, and receive CPU, memory, PID, and timeout limits. Production can add DNS/IP allowlists outside the gateway.
 
+The provider protocol, credential environment names, compatibility switches, and pinned model catalog are declared once in `adapters/providers/zcloud-openai.yml`. The Experiment still selects each role independently; the current low-cost POC uses `gpt-5.6-terra` for both Solver and Updater. The DSH runtime translates this shared profile into DSH's built-in `llm-pi-ai` OpenAI Chat Completions route. A future pi-agent runtime should translate the same provider contract instead of duplicating connection configuration.
+
 Solver workspaces and the Updater DSH home are currently host bind mounts. The Controller snapshots them after each session and rejects over-budget output, but this is not a write-time filesystem quota. Treating an Updater as adversarial in a long formal run requires quota-backed volumes or bounded tmpfs mounts.
 
 ## Quick start
@@ -57,8 +59,8 @@ npm install
 git submodule update --init --recursive
 
 export RSI_SKILLSBENCH_ROOT=/absolute/path/to/skillsbench
-export DEEPSEEK_BASE_URL=https://your-provider.example/v1
-export DEEPSEEK_API_KEY=your-runtime-secret
+export RSI_PROVIDER_BASE_URL=https://api.zcloudapi.com/v1
+export RSI_PROVIDER_API_KEY=your-runtime-secret
 
 npm run check
 npm test

@@ -48,8 +48,6 @@ spec:
     alias: model-gateway
     port: 8080
     egressNetwork: bridge
-    upstreamApiKeyEnvironment: DEEPSEEK_API_KEY
-    upstreamBaseUrlEnvironment: DEEPSEEK_BASE_URL
     maximumRequestsPerRun: 512
     maximumConcurrentRequests: 8
     resources:

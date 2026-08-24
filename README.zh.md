@@ -24,7 +24,7 @@
 
 已经落地的能力包括：
 
-- Target、Updater、Environment 与 Experiment Adapter 的强类型校验；Controller、Target/Updater Source 和 SkillsBench 分别固定 SHA。
+- Target、Updater、Model Provider、Environment 与 Experiment Adapter 的强类型校验；Controller、Target/Updater Source 和 SkillsBench 分别固定 SHA。
 - H0/Candidate 复制、覆盖文件与空目录的 SHA-256 Manifest、父子谱系、晋升与回滚记录。
 - L1/L2 路径、扩展名、目录项、改动文件数、字节数和可执行位的最终 Diff Guard；零改动提案也会直接拒绝，避免把模型随机波动误当成进化。
 - DSH Solver、DSH Updater、可信 Verifier 和最小模型网关四种 Docker 角色。
@@ -74,6 +74,8 @@ Candidate 自带的通用 Skill 统一使用 `cowork-*` 命名空间，Controlle
 
 Solver/Updater 只接入每次 Run 新建的 Docker internal network，拿到的是一次性网关令牌和内部地址，既没有外网路由，也拿不到真实 Provider Key。只有 Model Gateway 同时接入 internal network 与出口网络，而且只代理固定 Base URL 的 `POST /chat/completions`，并执行 Run 级总请求数和并发上限。Agent 容器还默认 `cap-drop=ALL`、`no-new-privileges`、只读 RootFS，并限制 CPU、内存、PID 和超时；正式环境可在网关之外继续叠加 DNS/IP Allowlist。
 
+Provider 的连接协议、环境变量名、兼容开关和可用模型目录只在 `adapters/providers/zcloud-openai.yml` 声明一次。Experiment 仍然分别选择 Solver 和 Updater 的模型；当前低成本 POC 两个角色都使用 `gpt-5.6-terra`。DSH Runtime 会自动翻译为 DSH 内置的 `llm-pi-ai` OpenAI Chat Completions 路由；未来接 pi-agent 时只需新的 Runtime Adapter 翻译同一 Provider 协议，不应把连接信息复制到 Solver/Updater 两份配置。
+
 当前 Solver Workspace 和 Updater DSH Home 仍是宿主机 Bind Mount：Controller 会在 Session 结束后快照并拒绝超额产物，但这不是“写入当下就阻止”的硬配额。当 Updater 被当作对抗性代码运行时，应换成 quota-backed Volume 或有限 tmpfs，再进行长时正式实验。
 
 ## Cowork POC 任务
@@ -97,8 +99,8 @@ npm install
 git submodule update --init --recursive
 
 export RSI_SKILLSBENCH_ROOT=/absolute/path/to/skillsbench
-export DEEPSEEK_BASE_URL=https://your-provider.example/v1
-export DEEPSEEK_API_KEY=your-runtime-secret
+export RSI_PROVIDER_BASE_URL=https://api.zcloudapi.com/v1
+export RSI_PROVIDER_API_KEY=your-runtime-secret
 ```
 
 先做静态配置和运行环境检查：

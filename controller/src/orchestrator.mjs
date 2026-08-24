@@ -261,6 +261,7 @@ async function createContext({
     : null
   const solverDriver = createSolverDriver({
     target: bundle.target,
+    provider: bundle.provider,
     docker,
     repositoryRoot,
     sourceRevision: targetSource.revision,
@@ -269,6 +270,7 @@ async function createContext({
   })
   const updaterDriver = createUpdaterDriver({
     updater: bundle.updater,
+    provider: bundle.provider,
     docker,
     repositoryRoot,
     sourceRevision: updaterSource.revision,
@@ -465,6 +467,7 @@ function publicBundleSnapshot(bundle) {
     experiment: bundle.experiment,
     target: bundle.target,
     updater: bundle.updater,
+    provider: bundle.provider,
     environment: bundle.environment,
     benchmark: {
       id: bundle.benchmark.id,

@@ -2,16 +2,19 @@
 
 Adapter 把“通用进化算法”与“某个 Agent/Benchmark 的目录和命令”分开。所有仓库内相对路径从主仓根目录解析，并在启动前做路径包含检查。
 
-## 四类配置
+## 五类配置
 
 | Kind                  | 回答的问题                                                   |
 |-----------------------|--------------------------------------------------------------|
 | `TargetAdapter`       | 谁是 Solver、H0 在哪里、运行时是什么、L1/L2 能改哪些路径     |
 | `UpdaterAdapter`      | 用谁启动 Updater、共享提示词在哪里、报告文件叫什么           |
+| `ModelProviderAdapter` | 连接哪个模型网关、用哪些环境变量、有哪些固定模型与兼容开关 |
 | `EnvironmentAdapter`  | 任务从哪里来、如何建容器、如何调用 Verifier 和读取 Reward    |
-| `EvolutionExperiment` | 本次把哪个 Target/Updater/Environment/Benchmark/Policy 组合起来 |
+| `EvolutionExperiment` | 本次把哪个 Target/Updater/Provider/Environment/Benchmark/Policy 组合起来 |
 
-Experiment 分别声明 Solver/Updater 的 `provider`、`model` 与 `maxTokens`。当前 POC 对 `deepseek-chat` 显式使用 8192，避免把 DSH 面向新模型的较大默认输出上限误传给兼容网关。
+Provider Adapter 只声明连接元数据和“环境变量名”，永远不写字面 Key。Experiment 分别声明 Solver/Updater 的 `provider`、`model` 与 `maxTokens`；当前低成本 POC 两个角色都用 `gpt-5.6-terra`，并共用 `zcloud-openai` 连接。
+
+DSH Runtime 把 `openai-chat-completions` 协议翻译为它内置的 `llm-pi-ai` Profile，不再把非 DeepSeek 模型冒充成 `deepseek-official`。换 PI Agent 时，对应 Runtime Driver 应读取同一 Provider Adapter 并生成 PI 自己需要的环境或配置。
 
 ## DeepSeek Harness Target
 
@@ -40,13 +43,14 @@ Updater Adapter 拥有自己独立的 `source.path` 与固定 Revision，不再�
 /candidate/.rsi-output             # Mutation Report 输出
 ```
 
-Adapter 只声明 DSH 所期待的环境变量名。真正的 Provider Base URL/Key 只由 Model Gateway 从宿主环境继承；Solver/Updater 得到的是内部 URL 与 Run 级一次性令牌。真实值和令牌都不会拼进 Docker argv、YAML 或报告。
+Target/Updater Runtime 声明自己需要的环境变量名，Controller 会强制它们与 Provider Adapter 一致。真正的 Provider Base URL/Key 只由 Model Gateway 从宿主环境继承；Solver/Updater 得到的是内部 URL 与 Run 级一次性令牌。真实值和令牌都不会拼进 Docker argv、仓库 YAML 或报告。
 
 ## 校验
 
 ```bash
 npm run rsi -- adapter validate --config adapters/targets/deepseek-harness.yml
 npm run rsi -- adapter validate --config adapters/updaters/deepseek-harness.yml
+npm run rsi -- adapter validate --config adapters/providers/zcloud-openai.yml
 npm run rsi -- adapter validate --config environments/skillsbench-cowork.yml
 npm run rsi -- experiment validate --config experiments/cowork-skillsbench-dsh-l1.json
 ```

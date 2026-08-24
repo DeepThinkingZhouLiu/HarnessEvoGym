@@ -27,8 +27,8 @@ spec:
       profile: headless
       preset: cowork-rsi
       secretEnvironment:
-        - DEEPSEEK_API_KEY
-        - DEEPSEEK_BASE_URL
+        - RSI_PROVIDER_API_KEY
+        - RSI_PROVIDER_BASE_URL
 
   mutation:
     # 只靠 Prompt 不算隔离；此名单由 Controller 在 Updater 退出后重新验 Diff。

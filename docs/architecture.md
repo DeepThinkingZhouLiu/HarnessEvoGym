@@ -8,7 +8,7 @@ DeepSeek Harness RSI uses an independent GitHub repository as its trusted contro
 
 This separates the mutable Solver from the immutable evaluation root and allows projects such as DeepSeek Harness and pi-agent to become Targets or Updaters through adapters without changing the Controller loop.
 
-## Five objects
+## Six objects
 
 | Object     | Responsibility                                                  | Updater-writable |
 |------------|-----------------------------------------------------------------|------------------|
@@ -17,6 +17,7 @@ This separates the mutable Solver from the immutable evaluation root and allows 
 | Updater    | Reads evidence and code, then analyzes and edits in one session | Not its runtime  |
 | Controller | Materialization, permissions, scheduling, diff validation, lineage, promotion, rollback | No |
 | Evaluator  | Frozen tasks, rubrics, cost, and safety gates                   | No               |
+| Model Provider | Shared upstream protocol, credential environment names, compatibility, and model catalog | No |
 
 The Updater does not require fixed failure-analyzer, proposal, builder, or search-policy services. It reasons freely in one context; the Controller consumes structured evidence, a source diff, and a Mutation Report.
 
@@ -75,6 +76,8 @@ Prompt text alone cannot enforce scope. The complete boundary has three parts:
 L1, L2, and L3 are Target Adapter semantics rather than universal directories. A DeepSeek Harness preset and a pi-agent strategy may live in different paths; the Controller understands only the selected level's validated allowlist.
 
 Network access is part of the enforced boundary. Solver and Updater join a fresh Docker internal network for each run and receive only an internal URL plus ephemeral token. A minimal Model Gateway alone holds the real provider key and restricts forwarding to the fixed upstream `POST /chat/completions` endpoint plus run-level request/concurrency budgets. L2 scripts therefore have no direct external route.
+
+The Model Provider Adapter is the agent-independent connection contract. It declares the upstream protocol, credential environment names, compatibility flags, and model catalog, while the Experiment independently selects Solver and Updater models. The DSH runtime translates this contract into `llm-pi-ai` settings; a future pi-agent runtime translates it into its native configuration. Changing agents therefore does not duplicate API-key configuration, and changing models does not modify Controller core logic.
 
 ## Feedback and generalization
 

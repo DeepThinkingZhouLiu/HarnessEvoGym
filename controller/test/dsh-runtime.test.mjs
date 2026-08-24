@@ -5,6 +5,22 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { ensureDshRuntime, renderUpdaterPrompt, runDshSolver, runDshUpdater } from '../src/runtimes/dsh.mjs'
 
+const provider = {
+  id: 'zcloud-openai',
+  name: 'ZCloud OpenAI-Compatible Gateway',
+  protocol: 'openai-chat-completions',
+  credentials: {
+    apiKeyEnvironment: 'RSI_PROVIDER_API_KEY',
+    baseUrlEnvironment: 'RSI_PROVIDER_BASE_URL',
+  },
+  compatibility: { supportsDeveloperRole: false, maxTokensField: 'max_tokens' },
+  defaultContextWindow: 131072,
+  models: [
+    { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol' },
+    { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra' },
+  ],
+}
+
 test('Updater Prompt 必须完整渲染受控变量', () => {
   const prompt = renderUpdaterPrompt('层级={{ mutation.level }}\n目标={{target.name}}', {
     'mutation.level': 'l1',
@@ -39,17 +55,18 @@ test('DSH Solver 写入显式模型上限，并把一次性令牌作为秘密环
     runtime: {
       profile: 'headless',
       preset: 'cowork-rsi',
-      secretEnvironment: ['DEEPSEEK_API_KEY', 'DEEPSEEK_BASE_URL'],
+      secretEnvironment: ['RSI_PROVIDER_API_KEY', 'RSI_PROVIDER_BASE_URL'],
     },
     image: 'solver:test',
-    model: { provider: 'deepseek-official', model: 'deepseek-chat', maxTokens: 8192 },
+    model: { provider: 'zcloud-openai', model: 'gpt-5.6-terra', maxTokens: 8192 },
+    provider,
     candidatePreset,
     workspace,
     dshHome,
     modelAccess: {
       network: 'internal-net',
-      environment: { DEEPSEEK_BASE_URL: 'http://model-gateway:8080' },
-      secretEnvironment: { DEEPSEEK_API_KEY: 'ephemeral-token' },
+      environment: { RSI_PROVIDER_BASE_URL: 'http://model-gateway:8080' },
+      secretEnvironment: { RSI_PROVIDER_API_KEY: 'ephemeral-token' },
     },
     task: '完成任务',
     name: 'solver-test',
@@ -58,8 +75,11 @@ test('DSH Solver 写入显式模型上限，并把一次性令牌作为秘密环
 
   const settings = await readFile(join(dshHome, 'settings.yaml'), 'utf8')
   assert.match(settings, /maxTokens: 8192/u)
-  assert.equal(runOptions.environment.DEEPSEEK_API_KEY, undefined)
-  assert.equal(runOptions.secretEnvironment.DEEPSEEK_API_KEY, 'ephemeral-token')
+  assert.match(settings, /llm-pi-ai/u)
+  assert.match(settings, /provider: zcloud-openai/u)
+  assert.match(settings, /model: gpt-5\.6-terra/u)
+  assert.equal(runOptions.environment.RSI_PROVIDER_API_KEY, undefined)
+  assert.equal(runOptions.secretEnvironment.RSI_PROVIDER_API_KEY, 'ephemeral-token')
   assert.equal(runOptions.network, 'internal-net')
   assert.equal(runOptions.environment.HTTP_PROXY, '')
 })
@@ -99,10 +119,11 @@ test('DSH Updater 只挂载单个可写 Mutation Report，不暴露隐藏输出�
     runtime: {
       profile: 'headless',
       preset: 'standard',
-      secretEnvironment: ['DEEPSEEK_API_KEY', 'DEEPSEEK_BASE_URL'],
+      secretEnvironment: ['RSI_PROVIDER_API_KEY', 'RSI_PROVIDER_BASE_URL'],
     },
     image: 'updater:test',
-    model: { provider: 'deepseek-official', model: 'deepseek-chat', maxTokens: 8192 },
+    model: { provider: 'zcloud-openai', model: 'gpt-5.6-terra', maxTokens: 8192 },
+    provider,
     candidateWorkspace,
     upstreamSource,
     contextDirectory,
@@ -110,8 +131,8 @@ test('DSH Updater 只挂载单个可写 Mutation Report，不暴露隐藏输出�
     dshHome,
     modelAccess: {
       network: 'internal-net',
-      environment: { DEEPSEEK_BASE_URL: 'http://model-gateway:8080' },
-      secretEnvironment: { DEEPSEEK_API_KEY: 'ephemeral-token' },
+      environment: { RSI_PROVIDER_BASE_URL: 'http://model-gateway:8080' },
+      secretEnvironment: { RSI_PROVIDER_API_KEY: 'ephemeral-token' },
     },
     mutationLevel: 'l1',
     targetId: 'deepseek-harness',

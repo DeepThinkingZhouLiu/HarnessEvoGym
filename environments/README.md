@@ -9,7 +9,7 @@ Environment 负责把“任务如何运行、单题如何客观评分”接入 R
 - 本地 Checkout 环境变量和 `tasks/` 子目录。
 - instruction、Dockerfile、Build Context 和 Verifier 的候选路径。
 - 容器工作目录、网络、CPU、内存、PID 和超时。
-- Model Gateway 镜像、内部 DNS、上游环境变量名、出口网络、总请求预算和并发上限。
+- Model Gateway 镜像、内部 DNS、出口网络、总请求预算和并发上限；上游环境变量名由独立 Model Provider Adapter 提供。
 - Verifier 命令参数与 Reward 输出候选文件。
 - Reward 合法范围、全通过阈值、反馈文本与产物摘要上限、工作区/Artifact 磁盘预算和跨代搜索历史上限。
 
@@ -33,8 +33,8 @@ Solver 看不到主机 Task Root 或 Verifier 挂载，只额外获得该任务�
 
 ```bash
 export RSI_SKILLSBENCH_ROOT=/absolute/path/to/skillsbench
-export DEEPSEEK_BASE_URL=https://your-provider.example/v1
-export DEEPSEEK_API_KEY=your-runtime-secret
+export RSI_PROVIDER_BASE_URL=https://api.zcloudapi.com/v1
+export RSI_PROVIDER_API_KEY=your-runtime-secret
 
 npm run rsi -- experiment preflight \
   --config experiments/cowork-skillsbench-dsh-l1.json

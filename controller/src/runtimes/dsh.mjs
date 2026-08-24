@@ -5,16 +5,46 @@ import { stringify as stringifyYaml } from 'yaml'
 import { normalizeRelativePath } from '../path-policy.mjs'
 import { ProtocolError, readJsonFile } from '../protocol.mjs'
 
-async function prepareDshHome(dshHome, model) {
+function dshProviderApi(protocol) {
+  if (protocol === 'openai-chat-completions') return 'openai-completions'
+  throw new ProtocolError(`DSH Runtime 未实现 Provider Protocol：${protocol}`)
+}
+
+async function prepareDshHome(dshHome, model, provider, modelAccess) {
   await mkdir(join(dshHome, '.agent-presets'), { recursive: true })
+  if (model.provider !== provider.id) {
+    throw new ProtocolError('DSH Model 与当前 Provider Adapter 不匹配', [
+      `model.provider=${model.provider}`,
+      `adapter=${provider.id}`,
+    ])
+  }
+  const catalogModel = provider.models.find((item) => item.id === model.model)
+  if (!catalogModel) throw new ProtocolError(`DSH Model 不在 Provider 固定目录中：${model.model}`)
+  const baseURL = modelAccess.environment[provider.credentials.baseUrlEnvironment]
+  if (!baseURL) throw new ProtocolError('Model Gateway 未向 DSH 提供内部 Base URL')
   const settings = {
     'agent-default-model': {
-      provider: model.provider,
+      provider: provider.id,
       model: model.model,
     },
-  }
-  if (model.provider === 'deepseek-official') {
-    settings['llm-deepseek'] = { maxTokens: model.maxTokens }
+    'llm-pi-ai': {
+      providers: {
+        [provider.id]: {
+          displayName: provider.name,
+          apiKeyEnv: provider.credentials.apiKeyEnvironment,
+          api: dshProviderApi(provider.protocol),
+          baseURL,
+          compat: provider.compatibility,
+          defaultContextWindow: provider.defaultContextWindow,
+          models: [{
+            id: catalogModel.id,
+            name: catalogModel.name,
+            contextWindow: catalogModel.contextWindow ?? provider.defaultContextWindow,
+            maxTokens: model.maxTokens,
+          }],
+        },
+      },
+    },
   }
   await writeFile(join(dshHome, 'settings.yaml'), stringifyYaml(settings), { encoding: 'utf8', mode: 0o600 })
 }
@@ -153,6 +183,7 @@ export async function runDshSolver({
   runtime,
   image,
   model,
+  provider,
   candidatePreset,
   workspace,
   dshHome,
@@ -163,7 +194,6 @@ export async function runDshSolver({
   timeoutMs,
   containerWorkspace = '/workspace',
 }) {
-  await prepareDshHome(dshHome, model)
   const environment = runtimeEnvironment('/dsh-home', containerWorkspace)
   const mounts = [
     { source: workspace, target: containerWorkspace, readOnly: false },
@@ -184,6 +214,7 @@ export async function runDshSolver({
       throw new ProtocolError(`Model Gateway 未提供 Solver 环境变量：${nameValue}`)
     }
   }
+  await prepareDshHome(dshHome, model, provider, modelAccess)
   Object.assign(environment, modelAccess.environment)
   const result = await docker.run({
     image,
@@ -234,6 +265,7 @@ export async function runDshUpdater({
   runtime,
   image,
   model,
+  provider,
   candidateWorkspace,
   upstreamSource,
   contextDirectory,
@@ -246,13 +278,13 @@ export async function runDshUpdater({
   name,
   timeoutMs,
 }) {
-  await prepareDshHome(dshHome, model)
   if (!modelAccess) throw new ProtocolError('DSH Updater 缺少 Model Gateway Access')
   for (const nameValue of runtime.secretEnvironment) {
     if (!modelAccess.environment[nameValue] && !modelAccess.secretEnvironment[nameValue]) {
       throw new ProtocolError(`Model Gateway 未提供 Updater 环境变量：${nameValue}`)
     }
   }
+  await prepareDshHome(dshHome, model, provider, modelAccess)
   await mkdir(join(candidateWorkspace, '.rsi-context'), { recursive: true })
   await mkdir(join(candidateWorkspace, '.rsi-output'), { recursive: true })
   await mkdir(join(contextDirectory, 'upstream'), { recursive: true })

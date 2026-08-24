@@ -19,6 +19,7 @@ This path tests whether DeepSeek Harness can improve a Cowork candidate preset f
 | `evaluator.mjs` | Paired metrics, bootstrap intervals, frozen gates |
 | Target Adapter | Runtime and target-specific L1/L2 paths |
 | Updater Adapter | Independent updater source, runtime, prompt, and report contract |
+| Model Provider Adapter | Upstream protocol, credential environment names, compatibility, and model catalog |
 | Environment Adapter | Dataset revision, task layout, Docker resources, verifier contract |
 
 The Updater is one full coding-agent session. It performs cross-case diagnosis, hypothesis formation, and editing itself; the Controller does not replace it with fixed diagnosis/proposal services. Later generations receive bounded prior hypotheses, changed files, and aggregate selection gates so they do not repeat failed searches, while per-instance selection evidence remains hidden.
@@ -39,8 +40,8 @@ Each run creates a fresh Docker internal network. Solver and Updater have no ext
 npm install
 git submodule update --init --recursive
 export RSI_SKILLSBENCH_ROOT=/absolute/path/to/skillsbench
-export DEEPSEEK_BASE_URL=https://your-provider.example/v1
-export DEEPSEEK_API_KEY=your-runtime-secret
+export RSI_PROVIDER_BASE_URL=https://your-provider.example/v1
+export RSI_PROVIDER_API_KEY=your-runtime-secret
 
 npm run rsi -- experiment validate \
   --config experiments/cowork-skillsbench-dsh-l1.json
@@ -57,7 +58,7 @@ npm run rsi -- evolve finalize \
 
 The run command uses only feedback and selection. The Controller trust-root paths must be committed before preflight/evolution; each run freezes the superproject SHA and Finalization requires the same revision. Finalization locks the champion, replays feedback for a comparable training gain, and evaluates sealed final in one consumed attempt. Integrity and revision checks happen before unlock; an atomic create-if-absent `final-attempt.json` claim prevents concurrent finalizers from both entering replay. Once claimed, success, failure, or a crash does not silently make the sealed set reusable.
 
-Solver and Updater model settings are independent Experiment fields: `provider`, `model`, and `maxTokens`. The POC explicitly caps `deepseek-chat` at 8192 instead of inheriting DSH's larger new-model default.
+The upstream connection is configured once through a `ModelProviderAdapter`: it owns the protocol, credential environment names, compatibility flags, and allowed model catalog, while real credentials remain runtime-only. Solver and Updater independently select `provider`, `model`, and `maxTokens` in the Experiment. The current low-cost POC uses `gpt-5.6-terra` for both roles, capped at 8192 tokens. The DSH runtime translates the shared provider contract into its `llm-pi-ai` OpenAI Chat Completions adapter; a future pi-agent integration needs only its own runtime translation rather than another credential configuration.
 
 ## Evaluation
 

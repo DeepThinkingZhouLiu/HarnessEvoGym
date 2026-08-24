@@ -92,7 +92,7 @@ export function createEnvironmentRunner(options) {
   return factory(options)
 }
 
-export function createSolverDriver({ target, docker, repositoryRoot, sourceRevision, sourcePath, modelGateway = null }) {
+export function createSolverDriver({ target, provider, docker, repositoryRoot, sourceRevision, sourcePath, modelGateway = null }) {
   if (target.solver.protocol !== 'dsh-headless-docker') {
     throw new ProtocolError(`未实现的 Solver Protocol：${target.solver.protocol}`)
   }
@@ -116,7 +116,7 @@ export function createSolverDriver({ target, docker, repositoryRoot, sourceRevis
       if (!modelGateway) throw new ProtocolError('Solver 运行必须使用隔离 Model Gateway')
       const modelAccess = await modelGateway.access()
       return await runWithUsage(modelGateway, measuredUsage, async () =>
-        await runDshSolver({ docker, runtime: target.solver.runtime, modelAccess, ...options }))
+        await runDshSolver({ docker, runtime: target.solver.runtime, provider, modelAccess, ...options }))
     },
     usage() {
       return publicUsage(measuredUsage)
@@ -124,7 +124,7 @@ export function createSolverDriver({ target, docker, repositoryRoot, sourceRevis
   }
 }
 
-export function createUpdaterDriver({ updater, docker, repositoryRoot, sourceRevision, sourcePath, modelGateway = null }) {
+export function createUpdaterDriver({ updater, provider, docker, repositoryRoot, sourceRevision, sourcePath, modelGateway = null }) {
   if (updater.protocol !== 'dsh-headless-docker') {
     throw new ProtocolError(`未实现的 Updater Protocol：${updater.protocol}`)
   }
@@ -148,7 +148,7 @@ export function createUpdaterDriver({ updater, docker, repositoryRoot, sourceRev
       if (!modelGateway) throw new ProtocolError('Updater 运行必须使用隔离 Model Gateway')
       const modelAccess = await modelGateway.access()
       return await runWithUsage(modelGateway, measuredUsage, async () =>
-        await runDshUpdater({ docker, runtime: updater.runtime, modelAccess, ...options }))
+        await runDshUpdater({ docker, runtime: updater.runtime, provider, modelAccess, ...options }))
     },
     usage() {
       return publicUsage(measuredUsage)

@@ -5,6 +5,7 @@ import test from 'node:test'
 import {
   loadExperimentBundle,
   validateEnvironmentAdapter,
+  validateModelProviderAdapter,
   validateTargetAdapter,
 } from '../src/adapters.mjs'
 import { readConfigFile } from '../src/config.mjs'
@@ -20,12 +21,22 @@ test('Cowork Experiment 分别固定 Target/Updater Source 和模型上限', asy
   assert.equal(bundle.updater.source.revision.length, 40)
   assert.equal(bundle.experiment.models.solver.maxTokens, 8192)
   assert.equal(bundle.experiment.models.updater.maxTokens, 8192)
+  assert.equal(bundle.provider.id, 'zcloud-openai')
+  assert.equal(bundle.experiment.models.solver.model, 'gpt-5.6-terra')
+  assert.equal(bundle.experiment.models.updater.model, 'gpt-5.6-terra')
+  assert.equal(bundle.environment.modelGateway.upstreamApiKeyEnvironment, 'RSI_PROVIDER_API_KEY')
   assert.equal(bundle.environment.modelGateway.maximumRequestsPerRun, 512)
   assert.equal(bundle.environment.feedback.maximumHistoryEntries, 10)
   assert.equal(bundle.environment.feedback.maximumArtifactEntriesPerCase, 100)
   assert.equal(bundle.environment.task.workspaceLimits.maximumChangedBytes, 536870912)
   assert.equal(bundle.target.mutation.limits.maximumTreeEntries, 1000)
   assert.equal(bundle.target.mutation.semanticChecks.skills.requiredNamePrefix, 'cowork-')
+})
+
+test('Model Provider Adapter 拒绝重复模型目录', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'adapters/providers/zcloud-openai.yml'))
+  config.spec.models.push({ ...config.spec.models[0] })
+  assert.throws(() => validateModelProviderAdapter(config), /重复声明模型/u)
 })
 
 test('Environment Adapter 拒绝把 Model Gateway 命名为 localhost', async () => {

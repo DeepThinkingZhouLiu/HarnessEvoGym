@@ -8,7 +8,7 @@ DeepSeek Harness RSI 使用独立 GitHub 仓库作为可信控制平面，不再
 
 这个决策解决两个问题：一是把可变 Solver 与不可变评测根分开；二是让 DeepSeek Harness、pi-agent 等项目都能通过 Adapter 成为 Target 或 Updater，而不需要改变 Controller 的核心流程。
 
-## 五类对象
+## 六类对象
 
 | 对象        | 负责什么                                                   | 是否允许 Updater 修改 |
 |-------------|------------------------------------------------------------|------------------------|
@@ -17,6 +17,7 @@ DeepSeek Harness RSI 使用独立 GitHub 仓库作为可信控制平面，不再
 | Updater     | 读取反馈和源码，在一个 Session 内分析、提出假设并改 Candidate | 不修改自身运行底座     |
 | Controller  | 实例化、权限、调度、Diff 校验、谱系、晋升和回滚            | 否                     |
 | Evaluator   | 用冻结任务、Rubric、成本和安全 Gate 比较 Baseline/Candidate | 否                     |
+| Model Provider | 统一上游协议、凭据变量名、兼容参数和可选模型目录         | 否                     |
 
 Updater 内部无需固定的失败分析器、提案器、构建器或搜索策略服务。它可以在一次上下文中自由推理；Controller 只接收结构化证据、源码 Diff 和 Mutation Report。
 
@@ -75,6 +76,8 @@ L1/L2 的 Candidate 不是完整 DSH Worktree，而是项目自有 Preset Overla
 L1、L2、L3 是 Target Adapter 的语义，不应假设所有 Agent 目录相同。DeepSeek Harness 的 L1 可以对应 Preset，pi-agent 的 L1 可能对应另一套配置；Controller 只理解“当前层级白名单”，不写死具体目录。
 
 运行网络也属于强制边界。Solver/Updater 只接入每个 Run 新建的 Docker internal network，拿到内部地址和一次性 Token；只有最小 Model Gateway 持有真正 Provider Key，并把请求限制为固定上游的 `POST /chat/completions`、Run 总量和并发预算。因此 L2 脚本即使尝试任意联网，也没有直接外网路由。
+
+Model Provider Adapter 是 Agent 无关的统一连接层：它声明上游协议、凭据环境变量名、兼容参数和模型目录；Experiment 再分别选择 Solver 与 Updater 模型。DSH Runtime 把该契约翻译为 `llm-pi-ai` 设置，未来 pi-agent Runtime 翻译为它自己的配置格式。这样更换 Agent 不需要复制 API Key 配置，更换模型也不需要修改 Controller 核心。
 
 ## 反馈与泛化
 

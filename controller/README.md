@@ -7,7 +7,7 @@ Controller 是 RSI 系统的可信、确定性控制平面。Updater 负责开�
 | 文件                           | 职责                                                       |
 |--------------------------------|------------------------------------------------------------|
 | `src/cli.mjs`                  | 命令解析、sealed Final 显式入口、报告输出                   |
-| `src/adapters.mjs`             | Target/Updater/Environment/Experiment 配置校验              |
+| `src/adapters.mjs`             | Target/Updater/Provider/Environment/Experiment 配置校验     |
 | `src/candidate.mjs`            | Tree Snapshot、Digest、Diff Guard、Manifest、Mutation Report |
 | `src/path-policy.mjs`          | 安全相对路径、Glob、只读优先级和扩展名策略                  |
 | `src/docker.mjs`               | 无 Shell 的 Docker CLI、资源与权限限制                      |
@@ -60,3 +60,5 @@ npm run rsi -- evolve finalize --run .rsi/runs/<id>
 - Final 实际回放成功或失败后重复调用：直接拒绝，避免把测试集变成选择集。
 
 运行状态只写 `.rsi/`。Source Submodule、Benchmark、Evaluation Policy、Verifier、凭据和主仓 Git 元数据不会挂入 Updater 的可写面。Solver/Updater 只接入 Run 级 internal network；真实 Provider Key 仅由 Model Gateway 环境继承，Agent 收到的是一次性令牌。
+
+`ModelProviderAdapter` 统一声明上游协议、凭据环境变量名、兼容参数与模型目录；Experiment 分别选择 Solver/Updater 的模型。DSH Runtime 将它翻译为 `llm-pi-ai` 配置，其他 Agent Runtime 只需实现自己的翻译层，不需要复制凭据管理逻辑。

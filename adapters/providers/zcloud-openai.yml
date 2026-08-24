@@ -1,0 +1,28 @@
+apiVersion: harness-rsi/v1alpha1
+kind: ModelProviderAdapter
+
+metadata:
+  id: zcloud-openai
+  name: ZCloud OpenAI-Compatible Gateway
+
+spec:
+  # 连接和凭据在 Solver/Updater 之间共享，真实值只通过运行时环境变量注入。
+  protocol: openai-chat-completions
+  credentials:
+    baseUrlEnvironment: RSI_PROVIDER_BASE_URL
+    apiKeyEnvironment: RSI_PROVIDER_API_KEY
+
+  # ZCloud 是 OpenAI 兼容网关；先使用保守的 Chat Completions 字段，避免依赖厂商私有语义。
+  compatibility:
+    supportsDeveloperRole: false
+    maxTokensField: max_tokens
+
+  # 中转 /v1/models 不公布上下文容量，使用保守回退值；正式实验前应用供应商的可验证文档替换。
+  defaultContextWindow: 131072
+  models:
+    - id: gpt-5.5
+      name: GPT-5.5
+    - id: gpt-5.6-sol
+      name: GPT-5.6 Sol
+    - id: gpt-5.6-terra
+      name: GPT-5.6 Terra

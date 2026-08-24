@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { loadEvolutionCampaign } from '../src/campaign.mjs'
+import { materializePinnedSource } from '../src/materializer.mjs'
 import { EvolutionOrchestrator, UPDATER_LOGICAL_TIMESTAMP } from '../src/orchestrator.mjs'
 
 async function sourceFixture() {
@@ -135,6 +136,52 @@ async function recoveryScenario({ firstProposal, firstApply } = {}) {
   await orchestrator.initialize()
   return { orchestrator, createOrchestrator, calls }
 }
+
+test('orchestrator validates and forwards the baseline materialization timeout', async () => {
+  const source = await sourceFixture()
+  const loadedCampaign = await campaignFixture(source.revision)
+  const campaignsRoot = await mkdtemp(join(tmpdir(), 'orchestrator-materialize-timeout-'))
+  const runtime = Object.fromEntries(
+    ['buildCandidate', 'propose', 'apply', 'evaluateValidation', 'evaluateTest']
+      .map((method) => [method, async () => { throw new Error(`${method} must not run`) }]),
+  )
+  let received
+  const orchestrator = new EvolutionOrchestrator({
+    loadedCampaign,
+    campaignsRoot,
+    campaignId: 'materialize-timeout-run',
+    sourceRoot: source.root,
+    runtime,
+    materializeTimeoutMs: 1_800_000,
+    materializeSource: async (options) => {
+      received = options
+      return materializePinnedSource(options)
+    },
+  })
+  await orchestrator.initialize()
+  assert.equal(received.timeoutMs, 1_800_000)
+  assert.equal(received.sourceRoot, source.root)
+  assert.equal(received.revision, source.revision)
+
+  for (const invalid of [0, 1.5, Number.MAX_SAFE_INTEGER + 1, 7_200_001]) {
+    assert.throws(() => new EvolutionOrchestrator({
+      loadedCampaign,
+      campaignsRoot,
+      campaignId: 'invalid-materialize-timeout',
+      sourceRoot: source.root,
+      runtime,
+      materializeTimeoutMs: invalid,
+    }), /materializeTimeoutMs/u)
+  }
+  assert.throws(() => new EvolutionOrchestrator({
+    loadedCampaign,
+    campaignsRoot,
+    campaignId: 'invalid-materialize-source',
+    sourceRoot: source.root,
+    runtime,
+    materializeSource: null,
+  }), /materializeSource/u)
+})
 
 test('orchestrator runs baseline then 3 misses per L1/L2/L3 with sealed tests', async () => {
   const source = await sourceFixture()

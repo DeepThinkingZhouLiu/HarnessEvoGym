@@ -53,6 +53,69 @@ test('materializer rejects an escaping symlink and cleans the destination', asyn
   await assert.rejects(() => lstat(target))
 })
 
+test('materializer failure exposes only safe process diagnostics', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'materializer-diagnostics-'))
+  const target = join(parent, 'baseline')
+  const revision = 'a'.repeat(40)
+  const secret = 'sk-materializer-secret-value'
+  let invocation = 0
+  const execute = async () => {
+    invocation += 1
+    if (invocation === 1) {
+      return { ok: true, stdout: `${revision}\n` }
+    }
+    if (invocation === 2) return { ok: true }
+    return {
+      ok: false,
+      timedOut: true,
+      durationMs: 120_123,
+      exitCode: null,
+      signal: 'SIGTERM',
+      stderr: `failed below ${parent}/${secret}`,
+    }
+  }
+  await assert.rejects(
+    () => materializePinnedSource({
+      sourceRoot: join(parent, secret),
+      revision,
+      destination: target,
+      timeoutMs: 120_000,
+      execute,
+    }),
+    (error) => {
+      assert.equal(error instanceof ProtocolError, true)
+      assert.equal(error.message, '无法展开冻结 Source')
+      assert.deepEqual(error.details, [
+        'timedOut=true',
+        'durationMs=120123',
+        'exitCode=<none>',
+        'signal=SIGTERM',
+      ])
+      const rendered = `${error.message}\n${error.details.join('\n')}`
+      assert.doesNotMatch(rendered, new RegExp(secret, 'u'))
+      assert.doesNotMatch(rendered, new RegExp(parent.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'))
+      return true
+    },
+  )
+  assert.equal(invocation, 3)
+  await assert.rejects(() => lstat(target))
+})
+
+test('materializer validates timeout and process seam before execution', async () => {
+  await assert.rejects(
+    () => materializePinnedSource({
+      sourceRoot: '/unused', revision: 'a'.repeat(40), destination: '/unused-target', timeoutMs: 0,
+    }),
+    /timeoutMs/u,
+  )
+  await assert.rejects(
+    () => materializePinnedSource({
+      sourceRoot: '/unused', revision: 'a'.repeat(40), destination: '/unused-target', execute: null,
+    }),
+    /execute/u,
+  )
+})
+
 test('copyCandidate preserves source and rejects an existing destination', async () => {
   const fixture = await gitFixture()
   const parent = await mkdtemp(join(tmpdir(), 'materializer-copy-'))

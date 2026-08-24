@@ -18,6 +18,42 @@ import { runProcess } from './subprocess.mjs'
 
 const REVISION_PATTERN = /^[a-f0-9]{40}$/u
 
+function validateTimeoutMs(value) {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new ProtocolError('materialize timeoutMs 必须是正安全整数')
+  }
+  return value
+}
+
+function processFailureDetails(result) {
+  const durationMs = Number.isSafeInteger(result?.durationMs) && result.durationMs >= 0
+    ? String(result.durationMs)
+    : '<unavailable>'
+  const exitCode = Number.isInteger(result?.exitCode) && result.exitCode >= 0
+    ? String(result.exitCode)
+    : '<none>'
+  const signal = typeof result?.signal === 'string' && /^SIG[A-Z0-9]+$/u.test(result.signal)
+    ? result.signal
+    : '<none>'
+  return [
+    `timedOut=${result?.timedOut === true}`,
+    `durationMs=${durationMs}`,
+    `exitCode=${exitCode}`,
+    `signal=${signal}`,
+  ]
+}
+
+async function runMaterializationStep(execute, invocation, message) {
+  let result
+  try {
+    result = await execute(invocation)
+  } catch {
+    throw new ProtocolError(message, processFailureDetails(null))
+  }
+  if (!result?.ok) throw new ProtocolError(message, processFailureDetails(result))
+  return result
+}
+
 function globToRegExp(glob) {
   let source = '^'
   for (let index = 0; index < glob.length;) {
@@ -77,10 +113,18 @@ async function assertSafeSymlinks(root) {
   })
 }
 
-export async function materializePinnedSource({ sourceRoot, revision, destination, timeoutMs = 120_000 }) {
+export async function materializePinnedSource({
+  sourceRoot,
+  revision,
+  destination,
+  timeoutMs = 120_000,
+  execute = runProcess,
+}) {
   const source = resolve(sourceRoot)
   const target = resolve(destination)
   if (!REVISION_PATTERN.test(revision)) throw new ProtocolError('Source revision 必须是 40 位 Git SHA')
+  validateTimeoutMs(timeoutMs)
+  if (typeof execute !== 'function') throw new ProtocolError('materialize execute 必须是函数')
   try {
     await lstat(target)
     throw new ProtocolError(`Candidate destination 已存在：${target}`)
@@ -92,28 +136,28 @@ export async function materializePinnedSource({ sourceRoot, revision, destinatio
   const temporary = await mkdtemp(join(dirname(target), '.materialize-'))
   const archive = join(temporary, 'source.tar')
   try {
-    const resolved = await runProcess({
+    const resolved = await runMaterializationStep(execute, {
       command: 'git', args: ['-C', source, 'rev-parse', 'HEAD'], cwd: source,
       timeoutMs, outputLimitBytes: 1024 * 1024,
-    })
-    if (!resolved.ok || resolved.stdout.trim() !== revision) {
+    }, '无法解析冻结 Source revision')
+    if (resolved.stdout.trim() !== revision) {
+      const actual = REVISION_PATTERN.test(resolved.stdout.trim())
+        ? resolved.stdout.trim()
+        : '<invalid>'
       throw new ProtocolError('Source checkout 与冻结 revision 不一致', [
         `expected=${revision}`,
-        `actual=${resolved.stdout.trim() || '<unavailable>'}`,
-        resolved.stderr,
+        `actual=${actual}`,
       ])
     }
-    const archived = await runProcess({
+    await runMaterializationStep(execute, {
       command: 'git', args: ['-C', source, 'archive', '--format=tar', `--output=${archive}`, revision],
       cwd: source, timeoutMs, outputLimitBytes: 4 * 1024 * 1024,
-    })
-    if (!archived.ok) throw new ProtocolError('无法归档冻结 Source', [archived.stderr])
+    }, '无法归档冻结 Source')
     await mkdir(target, { recursive: false, mode: 0o700 })
-    const extracted = await runProcess({
+    await runMaterializationStep(execute, {
       command: 'tar', args: ['-xf', archive, '-C', target], cwd: target,
       timeoutMs, outputLimitBytes: 4 * 1024 * 1024,
-    })
-    if (!extracted.ok) throw new ProtocolError('无法展开冻结 Source', [extracted.stderr])
+    }, '无法展开冻结 Source')
     await assertSafeSymlinks(target)
     return target
   } catch (error) {

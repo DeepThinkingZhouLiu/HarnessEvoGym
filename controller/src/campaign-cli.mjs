@@ -648,6 +648,7 @@ export async function runCampaignCliCommand(group, action, args, dependencies = 
         campaignId: context.campaignId,
         sourceRoot: context.sourceRoot,
         runtime: stack.runtime,
+        materializeTimeoutMs: seconds(context.runtime.config.updater.timeoutSeconds),
         progress,
         updaterUid: stack.identities.updater.uid,
         updaterGid: stack.identities.updater.gid,

@@ -382,6 +382,7 @@ test('evolve start initializes, runs, and keeps updater gid as the Candidate tru
   assert.equal(orchestratorOptions.trustedUid, 0)
   assert.equal(orchestratorOptions.trustedGid, 2101)
   assert.equal(orchestratorOptions.updaterGid, 2101)
+  assert.equal(orchestratorOptions.materializeTimeoutMs, 456_000)
   assert.equal(result.status.status, 'EVOLVING_L1')
   assert.equal(fixture.cleaned, 1)
 })

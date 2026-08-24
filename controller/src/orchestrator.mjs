@@ -206,12 +206,21 @@ export class EvolutionOrchestrator {
     secretValues = [],
     runtimeSnapshot = null,
     implementationFingerprint = null,
+    materializeTimeoutMs = 120_000,
+    materializeSource = materializePinnedSource,
   }) {
     if (!loadedCampaign?.config || !loadedCampaign?.manifests || !loadedCampaign?.fingerprint) {
       throw new ProtocolError('EvolutionOrchestrator 需要已校验的 loadedCampaign')
     }
     for (const method of ['buildCandidate', 'propose', 'apply', 'evaluateValidation', 'evaluateTest']) {
       if (typeof runtime?.[method] !== 'function') throw new ProtocolError(`Runtime 缺少 ${method}()`)
+    }
+    if (!Number.isSafeInteger(materializeTimeoutMs)
+        || materializeTimeoutMs < 1 || materializeTimeoutMs > 7_200_000) {
+      throw new ProtocolError('materializeTimeoutMs 必须是 1..7200000 的安全整数')
+    }
+    if (typeof materializeSource !== 'function') {
+      throw new ProtocolError('materializeSource 必须是函数')
     }
     this.loaded = loadedCampaign
     this.config = loadedCampaign.config
@@ -225,6 +234,8 @@ export class EvolutionOrchestrator {
     this.trustedUid = trustedUid
     this.trustedGid = trustedGid
     this.secretValues = secretValues
+    this.materializeTimeoutMs = materializeTimeoutMs
+    this.materializeSource = materializeSource
     if (runtimeSnapshot !== null && !SHA256_PATTERN.test(implementationFingerprint ?? '')) {
       throw new ProtocolError('runtimeSnapshot 需要 64 位 implementationFingerprint')
     }
@@ -266,10 +277,11 @@ export class EvolutionOrchestrator {
     // remove only that exact campaign-owned workspace and materialize it again.
     await rm(workspace, { recursive: true, force: true })
     this.progress({ type: 'baseline-materialize-started', candidateId: 'baseline' })
-    await materializePinnedSource({
+    await this.materializeSource({
       sourceRoot: this.sourceRoot,
       revision: this.config.spec.solver.targetRevision,
       destination: workspace,
+      timeoutMs: this.materializeTimeoutMs,
     })
     await freezeCandidatePermissions({
       candidateRoot: workspace,

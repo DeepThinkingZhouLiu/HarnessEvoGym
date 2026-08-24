@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { parse as parseYaml } from 'yaml'
 import { ensureDshRuntime, renderUpdaterPrompt, runDshSolver, runDshUpdater } from '../src/runtimes/dsh.mjs'
 
 const provider = {
@@ -74,10 +75,22 @@ test('DSH Solver 写入显式模型上限，并把一次性令牌作为秘密环
   })
 
   const settings = await readFile(join(dshHome, 'settings.yaml'), 'utf8')
+  const runtimePatch = await readFile(join(dshHome, 'cordis.patch.yml'), 'utf8')
   assert.match(settings, /maxTokens: 8192/u)
   assert.match(settings, /llm-pi-ai/u)
   assert.match(settings, /provider: zcloud-openai/u)
   assert.match(settings, /model: gpt-5\.6-terra/u)
+  assert.deepEqual(parseYaml(runtimePatch), [
+    { id: 'bash-sandbox', name: '@deepseek-ai/dsh-bash-sandbox', disabled: true },
+    { id: 'fs-sandbox', name: '@deepseek-ai/dsh-fs-sandbox', disabled: true },
+    { id: 'permission', name: '@deepseek-ai/dsh-permission-presets', disabled: true },
+    {
+      insert: [
+        { id: 'bash-local', name: '@deepseek-ai/dsh-bash-local' },
+        { id: 'fs-local', name: '@deepseek-ai/dsh-fs-local' },
+      ],
+    },
+  ])
   assert.equal(runOptions.environment.RSI_PROVIDER_API_KEY, undefined)
   assert.equal(runOptions.secretEnvironment.RSI_PROVIDER_API_KEY, 'ephemeral-token')
   assert.equal(runOptions.network, 'internal-net')

@@ -10,6 +10,23 @@ function dshProviderApi(protocol) {
   throw new ProtocolError(`DSH Runtime 未实现 Provider Protocol：${protocol}`)
 }
 
+// Agent 的真正边界是外层 Docker：只读根、精确挂载、能力裁剪和内部网络。
+// DSH 内层已设为 danger-full-access，再保留 sandbox executor 只会向模型暴露
+// 不可用的“从最高权限继续升级”参数。Terra 会补全这些可选参数，使工具调用
+// 在执行前被 DSH 拒绝。用 Home Patch 换成同一能力 seam 的 local provider，
+// Solver 和 Updater 共用这一固定适配，候选 Candidate 不能修改它。
+const HEADLESS_DOCKER_PATCH = [
+  { id: 'bash-sandbox', name: '@deepseek-ai/dsh-bash-sandbox', disabled: true },
+  { id: 'fs-sandbox', name: '@deepseek-ai/dsh-fs-sandbox', disabled: true },
+  { id: 'permission', name: '@deepseek-ai/dsh-permission-presets', disabled: true },
+  {
+    insert: [
+      { id: 'bash-local', name: '@deepseek-ai/dsh-bash-local' },
+      { id: 'fs-local', name: '@deepseek-ai/dsh-fs-local' },
+    ],
+  },
+]
+
 async function prepareDshHome(dshHome, model, provider, modelAccess) {
   await mkdir(join(dshHome, '.agent-presets'), { recursive: true })
   if (model.provider !== provider.id) {
@@ -46,7 +63,13 @@ async function prepareDshHome(dshHome, model, provider, modelAccess) {
       },
     },
   }
-  await writeFile(join(dshHome, 'settings.yaml'), stringifyYaml(settings), { encoding: 'utf8', mode: 0o600 })
+  await Promise.all([
+    writeFile(join(dshHome, 'settings.yaml'), stringifyYaml(settings), { encoding: 'utf8', mode: 0o600 }),
+    writeFile(join(dshHome, 'cordis.patch.yml'), stringifyYaml(HEADLESS_DOCKER_PATCH), {
+      encoding: 'utf8',
+      mode: 0o600,
+    }),
+  ])
 }
 
 function runtimeEnvironment(dshHome = '/dsh-home', cwd = '/workspace') {

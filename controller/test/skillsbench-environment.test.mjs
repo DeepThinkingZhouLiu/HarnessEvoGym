@@ -87,7 +87,14 @@ test('Verifier 缺少结构化评分证据时自动重试，不能把基础设�
       names.push(options.name)
       await mkdir(join(logs, 'verifier'), { recursive: true })
       await writeFile(join(logs, 'verifier', 'reward.txt'), attempts === 1 ? '0\n' : '1\n')
-      if (attempts === 2) await writeFile(join(logs, 'verifier', 'ctrf.json'), '{"tests":[]}\n')
+      if (attempts === 2) {
+        await writeFile(join(logs, 'verifier', 'ctrf.json'), JSON.stringify({
+          results: {
+            summary: { tests: 1, passed: 1, failed: 0, skipped: 0, pending: 0, other: 0 },
+            tests: [{ name: 'test_ok', status: 'passed' }],
+          },
+        }))
+      }
       return { stdout: '', stderr: attempts === 1 ? 'dependency download failed' : '', durationMs: 1 }
     },
   }
@@ -126,6 +133,117 @@ test('Verifier 缺少结构化评分证据时自动重试，不能把基础设�
   assert.equal(result.error, null)
   assert.equal(result.durationMs, 2)
   assert.match(result.evidence, /attempt 1\/2/u)
+  assert.match(result.evidence, /tests=1 passed=1 failed=0/u)
+})
+
+test('Verifier 将 CTRF 失败断言置于安装日志之前', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rsi-skillsbench-verifier-feedback-'))
+  const workspace = join(root, 'workspace')
+  const logs = join(root, 'logs')
+  await mkdir(workspace)
+  const docker = {
+    async run() {
+      await mkdir(join(logs, 'verifier'), { recursive: true })
+      await writeFile(join(logs, 'verifier', 'reward.txt'), '0\n')
+      await writeFile(join(logs, 'verifier', 'ctrf.json'), JSON.stringify({
+        results: {
+          summary: { tests: 2, passed: 1, failed: 1, skipped: 0, pending: 0, other: 0 },
+          tests: [
+            { name: 'test_ok', status: 'passed' },
+            {
+              name: 'test_answer_value',
+              status: 'failed',
+              message: 'The test failed in the call phase',
+              trace: 'value = 25\nE AssertionError: Expected 23, got 25\nE assert 2 == 0',
+            },
+          ],
+        },
+      }))
+      return { stdout: 'apt install output'.repeat(1000), stderr: '', durationMs: 1 }
+    },
+  }
+  const runner = new SkillsBenchEnvironment({
+    environment: {
+      task: { workspacePath: '/root', workspaceLimits: { maximumBytes: 1024 * 1024 } },
+      verifier: {
+        pythonCommand: 'python',
+        shellCommand: 'bash',
+        arguments: [],
+        outputCandidates: ['/logs/verifier/reward.txt'],
+        requiredEvidenceCandidates: ['/logs/verifier/ctrf.json'],
+        maximumAttempts: 1,
+        network: 'bridge',
+        runAsCurrentUser: false,
+      },
+    },
+    benchmark: {},
+    target: {},
+    solverDriver: {},
+    docker,
+    runRoot: root,
+  })
+
+  const result = await runner.runVerifier({
+    layout: { verifierPath: '/trusted/verifier/test.sh' },
+    image: 'task:test',
+    workspace,
+    logs,
+    name: 'verifier-feedback-test',
+  })
+
+  assert.equal(result.reward, 0)
+  assert.ok(result.evidence.indexOf('[structured verifier evidence') < result.evidence.indexOf('apt install output'))
+  assert.match(result.evidence, /FAILED test_answer_value :: E AssertionError: Expected 23, got 25/u)
+})
+
+test('Verifier CTRF 结构损坏时按基础设施错误处理', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rsi-skillsbench-verifier-invalid-ctrf-'))
+  const workspace = join(root, 'workspace')
+  const logs = join(root, 'logs')
+  await mkdir(workspace)
+  let attempts = 0
+  const docker = {
+    async run() {
+      attempts += 1
+      await mkdir(join(logs, 'verifier'), { recursive: true })
+      await writeFile(join(logs, 'verifier', 'reward.txt'), '0\n')
+      await writeFile(join(logs, 'verifier', 'ctrf.json'), '{"results":{}}\n')
+      return { stdout: '', stderr: '', durationMs: 1 }
+    },
+  }
+  const runner = new SkillsBenchEnvironment({
+    environment: {
+      task: { workspacePath: '/root', workspaceLimits: { maximumBytes: 1024 * 1024 } },
+      verifier: {
+        pythonCommand: 'python',
+        shellCommand: 'bash',
+        arguments: [],
+        outputCandidates: ['/logs/verifier/reward.txt'],
+        requiredEvidenceCandidates: ['/logs/verifier/ctrf.json'],
+        maximumAttempts: 2,
+        network: 'bridge',
+        runAsCurrentUser: false,
+      },
+    },
+    benchmark: {},
+    target: {},
+    solverDriver: {},
+    docker,
+    runRoot: root,
+  })
+
+  const result = await runner.runVerifier({
+    layout: { verifierPath: '/trusted/verifier/test.sh' },
+    image: 'task:test',
+    workspace,
+    logs,
+    name: 'verifier-invalid-ctrf-test',
+  })
+
+  assert.equal(attempts, 2)
+  assert.equal(result.reward, null)
+  assert.equal(result.error, 'Verifier 缺少必需评分证据')
+  assert.match(result.evidence, /CTRF 结构无效/u)
 })
 
 test('Verifier 多次缺少结构化评分证据时返回基础设施错误而不是 0 分', async () => {

@@ -46,7 +46,7 @@ Champion Workspace（只读给 Solver）
 
 Updater 本身就是 Analyzer：它在一个 Session 中看多道题的证据、读上游接口、形成假设并修改 Candidate。Controller 不把它拆成固定 `failure-analyzer`、`mutation-proposer` 等规则服务。第二代开始还会看到历代假设、改动文件和 selection 聚合 Gate，避免重复已失败搜索；逐题 selection 证据始终不进入 Packet。历史条数与 JSON 字节数由 Environment Adapter 限制，防止无限挤占上下文。
 
-Feedback Packet 会给它 feedback 题的任务要求、Reward、Solver 答复、Verifier 证据、运行错误、产物和延迟。文本按每题总字节预算截断，产物列表另受条目数和 JSON 字节预算限制，并明确记录省略数量。它不会收到 selection/final 的任务要求、回答或 Verifier 文本。
+Feedback Packet 会给它 feedback 题的任务要求、Reward、Solver 答复、Verifier 证据、运行错误、产物和延迟。Controller 会先从可信 `ctrf.json` 提取断言总数和失败测试，再附上原始运行日志，避免依赖安装输出挤掉真正的失败原因。文本按每题总字节预算截断，产物列表另受条目数和 JSON 字节预算限制，并明确记录省略数量。它不会收到 selection/final 的任务要求、回答或 Verifier 文本。
 
 ## Candidate 实例
 

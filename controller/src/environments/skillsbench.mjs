@@ -13,6 +13,7 @@ import {
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { copyRegularTree, writeJsonLines } from '../candidate.mjs'
 import { assertPathKind } from '../config.mjs'
+import { compactUtf8, summarizeCtrf } from '../ctrf.mjs'
 import { safeDockerName } from '../docker.mjs'
 import { ProtocolError, validateResultRecords } from '../protocol.mjs'
 import { runProcess } from '../process.mjs'
@@ -36,6 +37,7 @@ const TRUSTED_VERIFIER_CAPABILITIES = [
   'SYS_CHROOT',
 ]
 const MAXIMUM_VERIFIER_REWARD_BYTES = 1024 * 1024
+const MAXIMUM_VERIFIER_EVIDENCE_BYTES = 4 * 1024 * 1024
 // `/opt/venv` 是部分固定 Task Image 在构建期创建的只读可信环境，不来自 Solver 提交物。
 const TRUSTED_VERIFIER_PATH = '/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 
@@ -249,7 +251,8 @@ async function loadVerifierReward(logDirectory, candidates, stdout) {
   return reward === null ? null : { reward, evidence: stdout }
 }
 
-async function missingVerifierEvidence(logDirectory, candidates) {
+async function loadRequiredVerifierEvidence(logDirectory, candidates) {
+  const summaries = []
   for (const candidate of candidates) {
     const relativeCandidate = candidate.startsWith('/logs/') ? candidate.slice('/logs/'.length) : candidate
     const pathValue = resolve(logDirectory, relativeCandidate)
@@ -259,17 +262,39 @@ async function missingVerifierEvidence(logDirectory, candidates) {
       if (info.isSymbolicLink() || !info.isFile()) {
         throw new ProtocolError(`Verifier 评分证据必须是普通文件：${relativeCandidate}`)
       }
-      if (info.size === 0) return `Verifier 评分证据为空：${relativeCandidate}`
+      if (info.size === 0) return { error: `Verifier 评分证据为空：${relativeCandidate}`, summary: '' }
+      if (info.size > MAXIMUM_VERIFIER_EVIDENCE_BYTES) {
+        throw new ProtocolError(`Verifier 评分证据文件超过上限：${relativeCandidate}`, [
+          `actual=${info.size}`,
+          `limit=${MAXIMUM_VERIFIER_EVIDENCE_BYTES}`,
+        ])
+      }
+      const text = await readFile(pathValue, 'utf8')
+      if (basename(relativeCandidate).toLowerCase() === 'ctrf.json') {
+        let value
+        try {
+          value = JSON.parse(text)
+        } catch {
+          return { error: `Verifier CTRF JSON 格式错误：${relativeCandidate}`, summary: '' }
+        }
+        const structured = summarizeCtrf(value, relativeCandidate)
+        if (structured.error) return structured
+        summaries.push(structured.summary)
+      } else {
+        summaries.push(`[structured verifier evidence: ${relativeCandidate}]\n${compactUtf8(text, 4096)}`)
+      }
     } catch (error) {
-      if (error.code === 'ENOENT') return `Verifier 缺少评分证据：${relativeCandidate}`
+      if (error.code === 'ENOENT') {
+        return { error: `Verifier 缺少评分证据：${relativeCandidate}`, summary: '' }
+      }
       throw error
     }
   }
-  return null
+  return { error: null, summary: summaries.join('\n\n') }
 }
 
-function verifierEvidence(result, parsed) {
-  return [result.stdout?.trim(), result.stderr?.trim(), parsed?.evidence?.trim()]
+function verifierEvidence(result, parsed, structuredEvidence = '') {
+  return [structuredEvidence.trim(), parsed?.evidence?.trim(), result.stderr?.trim(), result.stdout?.trim()]
     .filter(Boolean)
     .filter((value, index, values) => values.indexOf(value) === index)
     .join('\n\n[verifier output]\n')
@@ -508,14 +533,15 @@ export class SkillsBenchEnvironment {
       }
 
       let parsed
+      let requiredEvidence
       try {
         parsed = await loadVerifierReward(logs, this.environment.verifier.outputCandidates, result.stdout)
-        const missingEvidence = await missingVerifierEvidence(
+        requiredEvidence = await loadRequiredVerifierEvidence(
           logs,
           this.environment.verifier.requiredEvidenceCandidates ?? [],
         )
-        if (missingEvidence) {
-          attemptFailures.push(`attempt ${attempt}/${maximumAttempts}: ${missingEvidence}`)
+        if (requiredEvidence.error) {
+          attemptFailures.push(`attempt ${attempt}/${maximumAttempts}: ${requiredEvidence.error}`)
           if (attempt < maximumAttempts) continue
           return {
             reward: null,
@@ -539,7 +565,10 @@ export class SkillsBenchEnvironment {
       }
       return {
         ...parsed,
-        evidence: [...attemptFailures, verifierEvidence(result, parsed)].filter(Boolean).join('\n'),
+        evidence: [
+          ...attemptFailures,
+          verifierEvidence(result, parsed, requiredEvidence.summary),
+        ].filter(Boolean).join('\n'),
         error: null,
         durationMs: totalDurationMs,
       }

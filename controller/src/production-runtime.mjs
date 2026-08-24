@@ -610,36 +610,61 @@ export class PutnamEvolutionRuntime {
     this.runtimesRoot = requireAbsolutePath(options.runtimesRoot, 'runtimesRoot')
     this.pnpmStoreRoot = requireAbsolutePath(options.pnpmStoreRoot, 'pnpmStoreRoot')
     this.buildHome = requireAbsolutePath(options.buildHome, 'buildHome')
+    this.campaignScratchRoot = requireAbsolutePath(
+      options.campaignScratchRoot,
+      'campaignScratchRoot',
+    )
     this.updaterRunRoot = requireAbsolutePath(options.updaterRunRoot, 'updaterRunRoot')
     this.validationScratchRoot = requireAbsolutePath(
       options.validationScratchRoot,
       'validationScratchRoot',
     )
     this.smokeScratchRoot = requireAbsolutePath(
-      options.smokeScratchRoot ?? join(dirname(this.validationScratchRoot), 'smoke-scratch'),
+      options.smokeScratchRoot ?? join(this.campaignScratchRoot, 'smoke-scratch'),
       'smokeScratchRoot',
     )
     this.sourceSmokeRoot = requireAbsolutePath(
-      options.sourceSmokeRoot ?? join(dirname(this.validationScratchRoot), 'source-smoke'),
+      options.sourceSmokeRoot ?? join(this.campaignScratchRoot, 'source-smoke'),
       'sourceSmokeRoot',
     )
+    this.solverHome = requireAbsolutePath(
+      options.solverHome ?? join(this.campaignScratchRoot, 'solver-home'),
+      'solverHome',
+    )
+    this.datasetRoot = requireAbsolutePath(options.datasetRoot, 'datasetRoot')
+    const scratchChildren = [
+      ['updaterRunRoot', this.updaterRunRoot],
+      ['validationScratchRoot', this.validationScratchRoot],
+      ['smokeScratchRoot', this.smokeScratchRoot],
+      ['sourceSmokeRoot', this.sourceSmokeRoot],
+      ['solverHome', this.solverHome],
+    ]
+    for (const [name, path] of scratchChildren) {
+      // The directory preparer cannot safely infer/chmod arbitrary recursive
+      // ancestors. Direct children guarantee this explicitly prepared 0711
+      // parent is the only traversal boundary above every isolated leaf.
+      if (dirname(path) !== this.campaignScratchRoot) {
+        throw new TypeError(`${name} must be a direct child of campaignScratchRoot`)
+      }
+    }
+    for (let leftIndex = 0; leftIndex < scratchChildren.length; leftIndex += 1) {
+      const [leftName, left] = scratchChildren[leftIndex]
+      for (let rightIndex = leftIndex + 1; rightIndex < scratchChildren.length; rightIndex += 1) {
+        const [rightName, right] = scratchChildren[rightIndex]
+        if (!isWithin(left, right) && !isWithin(right, left)) continue
+        throw new TypeError(`${leftName} must be separate from ${rightName}`)
+      }
+    }
     for (const [leftName, left, rightName, right] of [
-      ['smokeScratchRoot', this.smokeScratchRoot,
-        'validationScratchRoot', this.validationScratchRoot],
-      ['sourceSmokeRoot', this.sourceSmokeRoot,
-        'validationScratchRoot', this.validationScratchRoot],
-      ['sourceSmokeRoot', this.sourceSmokeRoot, 'smokeScratchRoot', this.smokeScratchRoot],
-      ['sourceSmokeRoot', this.sourceSmokeRoot, 'runtimesRoot', this.runtimesRoot],
+      ['campaignScratchRoot', this.campaignScratchRoot, 'runtimesRoot', this.runtimesRoot],
+      ['campaignScratchRoot', this.campaignScratchRoot, 'pnpmStoreRoot', this.pnpmStoreRoot],
+      ['campaignScratchRoot', this.campaignScratchRoot, 'buildHome', this.buildHome],
+      ['campaignScratchRoot', this.campaignScratchRoot, 'datasetRoot', this.datasetRoot],
     ]) {
       if (isWithin(left, right) || isWithin(right, left)) {
         throw new TypeError(`${leftName} must be separate from ${rightName}`)
       }
     }
-    this.solverHome = requireAbsolutePath(
-      options.solverHome ?? join(this.validationScratchRoot, 'solver-home'),
-      'solverHome',
-    )
-    this.datasetRoot = requireAbsolutePath(options.datasetRoot, 'datasetRoot')
     this.nodePath = requireAbsolutePath(options.nodePath, 'nodePath')
     this.pnpmCliPath = requireAbsolutePath(options.pnpmCliPath, 'pnpmCliPath')
     this.runtimePatch = requireAbsolutePath(options.runtimePatch, 'runtimePatch')
@@ -855,6 +880,16 @@ export class PutnamEvolutionRuntime {
   async #ensureInfrastructure() {
     if (!this.infrastructurePromise) {
       this.infrastructurePromise = (async () => {
+        // mkdir({ recursive: true }) applies the requested mode only to its
+        // leaf. Materialize this shared campaign parent explicitly so the
+        // restricted Solver/Verifier UIDs can traverse to their owned task
+        // directories without gaining directory-listing permission.
+        await this.prepareOwnedDirectory({
+          path: this.campaignScratchRoot,
+          uid: this.trustedUid,
+          gid: this.trustedGid,
+          mode: 0o711,
+        })
         await this.prepareOwnedDirectory({
           path: this.runtimesRoot,
           uid: this.trustedUid,

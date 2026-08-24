@@ -67,13 +67,15 @@ async function fixture({
   separateToolchains = false,
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'production-runtime-'))
+  const campaignScratch = join(root, 'campaign-scratch')
   const paths = {
     root,
+    campaignScratch,
     runtimes: join(root, 'runtimes'),
     store: join(root, 'pnpm-store'),
     buildHome: join(root, 'build-home'),
-    updaterRuns: join(root, 'updater-runs'),
-    scratch: join(root, 'scratch'),
+    updaterRuns: join(campaignScratch, 'updater-runs'),
+    scratch: join(campaignScratch, 'validation'),
     dataset: join(root, 'putnambench'),
     node: join(root, 'node-toolchain', 'bin', 'node'),
     pnpm: separateToolchains
@@ -316,6 +318,7 @@ async function fixture({
     runtimesRoot: paths.runtimes,
     pnpmStoreRoot: paths.store,
     buildHome: paths.buildHome,
+    campaignScratchRoot: paths.campaignScratch,
     updaterRunRoot: paths.updaterRuns,
     validationScratchRoot: paths.scratch,
     datasetRoot: paths.dataset,
@@ -541,7 +544,7 @@ test('builds baseline and candidates offline inside the no-network build sandbox
     assert.equal(sourceSmokeMountIndex > 0, true)
     assert.equal(smoke.args[sourceSmokeMountIndex - 2], '--bind')
     const sourceSmokeHostRoot = smoke.args[sourceSmokeMountIndex - 1]
-    assert.equal(sourceSmokeHostRoot.startsWith(join(context.root, 'source-smoke')), true)
+    assert.equal(sourceSmokeHostRoot.startsWith(join(context.paths.campaignScratch, 'source-smoke')), true)
     for (const hidden of [
       context.paths.baselineSource,
       context.paths.candidateSource,
@@ -566,15 +569,22 @@ test('builds baseline and candidates offline inside the no-network build sandbox
   }
   assert.equal(context.calls.grants.every((entry) => entry.gid === 2102), true)
   assert.equal(context.calls.freezes.every((entry) => entry.gid === 2101), true)
+  assert.deepEqual(context.calls.directories[0], {
+    path: context.paths.campaignScratch,
+    uid: 0,
+    gid: 2101,
+    mode: 0o711,
+  })
   const parentModes = new Map(context.calls.directories.map((entry) => [entry.path, entry.mode]))
+  assert.equal(parentModes.get(context.paths.campaignScratch), 0o711)
   assert.equal(parentModes.get(context.paths.runtimes), 0o711)
   assert.equal(parentModes.get(context.paths.buildHome), 0o711)
   assert.equal(parentModes.get(context.paths.updaterRuns), 0o711)
   assert.equal(parentModes.get(context.paths.scratch), 0o711)
-  assert.equal(parentModes.get(join(context.root, 'smoke-scratch')), 0o711)
-  assert.equal(parentModes.get(join(context.root, 'source-smoke')), 0o711)
+  assert.equal(parentModes.get(join(context.paths.campaignScratch, 'smoke-scratch')), 0o711)
+  assert.equal(parentModes.get(join(context.paths.campaignScratch, 'source-smoke')), 0o711)
   const isolatedSourceSmokeDirectories = context.calls.directories.filter((entry) => (
-    entry.path.startsWith(`${join(context.root, 'source-smoke')}/`)
+    entry.path.startsWith(`${join(context.paths.campaignScratch, 'source-smoke')}/`)
   ))
   assert.equal(isolatedSourceSmokeDirectories.length > 0, true)
   assert.equal(isolatedSourceSmokeDirectories.every((entry) => (
@@ -1285,7 +1295,10 @@ test('smoke builds then reuses baseline and runs only caller-provided validation
   assert.equal(context.calls.partitions.length, 2)
   assert.deepEqual(context.calls.partitions[0].instanceIds, ids)
   assert.notEqual(context.calls.partitions[0].instanceIds, ids)
-  assert.equal(context.calls.partitions[0].scratchRoot, join(context.root, 'smoke-scratch'))
+  assert.equal(
+    context.calls.partitions[0].scratchRoot,
+    join(context.paths.campaignScratch, 'smoke-scratch'),
+  )
   assert.notEqual(context.calls.partitions[0].scratchRoot, context.paths.scratch)
   assert.equal(context.calls.partitions[0].sealed, false)
   assert.equal(context.calls.partitions[0].baseEnvironment.ELAN_HOME, '/opt/pinned-elan')
@@ -1373,6 +1386,39 @@ test('source/runtime overlap is rejected before destructive build work', async (
   )
   assert.equal(context.calls.processes.length, 0)
   assert.equal(context.calls.copies.length, 0)
+})
+
+test('campaign scratch leaves must be strictly contained and mutually isolated', async () => {
+  await assert.rejects(
+    () => fixture({ optionOverrides: { validationScratchRoot: '/outside-validation' } }),
+    /validationScratchRoot must be a direct child of campaignScratchRoot/u,
+  )
+  await assert.rejects(
+    () => fixture({ optionOverrides: {
+      solverHome: join('/outside-campaign', 'nested', 'solver-home'),
+      campaignScratchRoot: '/outside-campaign',
+      validationScratchRoot: join('/outside-campaign', 'validation'),
+      updaterRunRoot: join('/outside-campaign', 'updater'),
+      smokeScratchRoot: join('/outside-campaign', 'smoke'),
+      sourceSmokeRoot: join('/outside-campaign', 'source-smoke'),
+    } }),
+    /solverHome must be a direct child of campaignScratchRoot/u,
+  )
+  await assert.rejects(
+    () => fixture({ optionOverrides: {
+      smokeScratchRoot: join('/outside-campaign', 'validation'),
+      campaignScratchRoot: '/outside-campaign',
+      validationScratchRoot: join('/outside-campaign', 'validation'),
+      updaterRunRoot: join('/outside-campaign', 'updater'),
+      sourceSmokeRoot: join('/outside-campaign', 'source-smoke'),
+      solverHome: join('/outside-campaign', 'solver-home'),
+    } }),
+    /validationScratchRoot must be separate from smokeScratchRoot/u,
+  )
+  await assert.rejects(
+    () => fixture({ optionOverrides: { campaignScratchRoot: undefined } }),
+    /campaignScratchRoot must be an absolute path/u,
+  )
 })
 
 test('production identities require four distinct primary groups', async () => {

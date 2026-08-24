@@ -16,9 +16,10 @@ ENV DSH_CLIENT_COMMIT_HASH=${DSH_SOURCE_REVISION}
 WORKDIR /opt/dsh
 RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
 COPY ${DSH_SOURCE_PATH}/ ./
+# DSH 的动态 Loader 从安装根解析插件；生产运行时必须使用扁平依赖布局。
 RUN --mount=type=cache,id=harness-rsi-pnpm-store,target=/pnpm/store \
     pnpm config set store-dir /pnpm/store \
-    && pnpm install --frozen-lockfile \
+    && pnpm install --frozen-lockfile --config.node-linker=hoisted \
     && pnpm run build
 
 FROM ${BASE_IMAGE}

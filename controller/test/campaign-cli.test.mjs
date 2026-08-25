@@ -188,6 +188,24 @@ test('campaign validate combines fingerprints and exposes no task IDs or paths',
   assert.doesNotMatch(output, /provider-secret/u)
 })
 
+test('campaign validate accepts a frozen high reasoning effort', async () => {
+  const fixture = baseDependencies({
+    async loadEvolutionCampaign() {
+      const campaign = campaignFixture()
+      campaign.config.spec.solver.reasoningEffort = 'high'
+      return campaign
+    },
+  })
+  const result = await runCampaignCliCommand(
+    'campaign',
+    'validate',
+    [],
+    fixture.dependencies,
+  )
+  assert.equal(result.valid, true)
+  assert.equal(result.model.reasoningEffort, 'high')
+})
+
 test('partition and environment options come from the frozen runtime', () => {
   const runtime = runtimeFixture().config
   const identities = { verifier: { uid: 1103, gid: 2103 } }

@@ -7,6 +7,9 @@ import { ProtocolError } from './protocol.mjs'
 export const CAMPAIGN_API_VERSION = 'harness-rsi/v1alpha1'
 export const CAMPAIGN_LEVELS = Object.freeze(['l1', 'l2', 'l3'])
 export const LAYER_SELECTION_MODES = Object.freeze(['controller-sequential', 'updater-soft'])
+export const CAMPAIGN_REASONING_EFFORTS = Object.freeze([
+  'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
+])
 export const DEFAULT_TEST_EVALUATION_INTERVAL = 5
 export const CAMPAIGN_TERMINAL_STATES = new Set([
   'CLOSED',
@@ -205,7 +208,9 @@ export function validateEvolutionCampaign(input) {
   if (!MODEL_ID_PATTERN.test(solver.model ?? '')) {
     errors.push('spec.solver.model 不是合法模型标识')
   }
-  if (solver.reasoningEffort !== 'max') errors.push('spec.solver.reasoningEffort 必须是 max')
+  if (!CAMPAIGN_REASONING_EFFORTS.includes(solver.reasoningEffort)) {
+    errors.push('spec.solver.reasoningEffort 不是合法 effort')
+  }
   if (sourceFormat === 'hle-text-math' && spec.scoring?.judgeModel !== solver.model) {
     errors.push('HLE Solver 与 trusted judge 必须冻结为同一模型')
   }

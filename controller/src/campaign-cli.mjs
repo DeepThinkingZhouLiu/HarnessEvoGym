@@ -4,7 +4,11 @@ import { promisify } from 'node:util'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { loadEvolutionCampaign, markReported } from './campaign.mjs'
+import {
+  CAMPAIGN_REASONING_EFFORTS,
+  loadEvolutionCampaign,
+  markReported,
+} from './campaign.mjs'
 import { acquireCampaignLock } from './campaign-lock.mjs'
 import { CampaignStore } from './campaign-store.mjs'
 import { EvolutionOrchestrator } from './orchestrator.mjs'
@@ -152,8 +156,9 @@ export function assertCampaignRuntimeLayout(context) {
 
 function assertFrozenModel(loadedCampaign, loadedRuntime) {
   const solver = loadedCampaign.config.spec.solver
-  if (solver.reasoningEffort !== 'max' || solver.api !== 'openai-responses') {
-    throw new ProtocolError('Campaign 模型必须冻结为 max / openai-responses')
+  if (!CAMPAIGN_REASONING_EFFORTS.includes(solver.reasoningEffort)
+      || solver.api !== 'openai-responses') {
+    throw new ProtocolError('Campaign 模型必须冻结为受支持 effort / openai-responses')
   }
   if ((loadedCampaign.config.spec.source.format ?? 'putnambench-lean') === 'hle-text-math') {
     const scoring = loadedCampaign.config.spec.scoring

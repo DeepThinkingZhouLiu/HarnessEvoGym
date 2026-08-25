@@ -295,6 +295,11 @@ test('HLE loader accepts configurable validation size without opening test IDs',
   assert.equal(loaded.config.spec.evolution.testEvaluationInterval, 5)
   assert.equal(Object.hasOwn(loaded.manifests, 'test'), false)
 
+  config.spec.solver.reasoningEffort = 'high'
+  await writeFile(configPath, JSON.stringify(config))
+  const highEffort = await loadEvolutionCampaign(configPath)
+  assert.equal(highEffort.config.spec.solver.reasoningEffort, 'high')
+
   const validationTen = `${validation.trimEnd().split('\n').slice(0, 10).join('\n')}\n`
   await writeFile(join(directory, 'validation.ids'), validationTen)
   config.spec.partitions.validation.expectedCount = 10

@@ -231,7 +231,7 @@ export function buildUpdaterInvocation({
     bwrapPath,
     setprivPath,
     network: isolatedGateway ? 'none' : 'shared',
-    procMode: isolatedGateway ? 'empty' : 'mounted',
+    procMode: backend === 'codex-cli' || !isolatedGateway ? 'mounted' : 'empty',
     hostname: 'rsi-updater',
     mounts: [
       { source: runtime, destination: UPDATER_SANDBOX_PATHS.runtime, readOnly: true },

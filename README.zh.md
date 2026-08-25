@@ -7,6 +7,8 @@
 > [!IMPORTANT]
 > 当前仓库已实现可恢复的 Controller 闭环、可配置 L1/L2/L3 变异边界、模型网关、冻结评测、sealed test 处理、沙箱运行时与原始曲线报告。正式实验前仍必须通过 `campaign smoke`；实现就绪不等于已经得到实验结果。
 
+Controller 还可通过同一份冻结 `controller_config` 运行 Single、Independent、Mutualism、Competition 和 Combined 五种种群策略，详见 [Controller 五种进化模式](docs/controller-modes.zh.md)。
+
 ## 为什么不再做 DeepSeek Harness Fork
 
 RSI 系统需要同时管理源码实例、Updater、任务环境、外部评测、候选谱系和回滚。如果把这些内容直接写进 DeepSeek Harness Fork，Updater 很容易把“被优化对象”和“裁判系统”混在同一个仓库里，也很难接入 pi-agent 等其他 Coding Agent。

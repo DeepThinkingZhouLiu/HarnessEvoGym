@@ -93,6 +93,14 @@ export class MsaMinimalEvolutionRuntime {
     this.verifierGid = options.verifierGid
     this.signal = options.signal
     this.onProgress = options.onProgress ?? (() => {})
+    this.coordinationContextProvider = options.coordinationContextProvider ?? (() => ({
+      promptPrefix: '',
+      promptSuffix: '',
+      peerLogs: [],
+    }))
+    if (typeof this.coordinationContextProvider !== 'function') {
+      throw new TypeError('coordinationContextProvider must be a function')
+    }
     this.updaterExecute = options.updaterExecute
     this.partitionRunner = options.partitionRunner ?? runMsaHlePartition
     this.mutationTimeoutMs = options.mutationTimeoutMs
@@ -147,7 +155,7 @@ export class MsaMinimalEvolutionRuntime {
       : { ok: false, candidateId, level, kind: 'candidate', message: result.stderr || result.stdout }
   }
 
-  #templateValues({ campaignId, candidateId, parentId, level }) {
+  #templateValues({ campaignId, candidateId, parentId, level, coordination }) {
     const mutation = level === null || level === undefined
       ? {
           mode: this.mutationPolicy.mode,
@@ -167,6 +175,10 @@ export class MsaMinimalEvolutionRuntime {
         root: UPDATER_SANDBOX_PATHS.feedback,
         log: UPDATER_SANDBOX_PATHS.evolutionLog,
       },
+      controller: {
+        promptPrefix: coordination.promptPrefix ?? '',
+        promptSuffix: coordination.promptSuffix ?? '',
+      },
     }
   }
 
@@ -180,6 +192,12 @@ export class MsaMinimalEvolutionRuntime {
     feedbackRoot,
     evolutionLogPath,
   }) {
+    const coordination = await this.coordinationContextProvider({
+      campaignId,
+      candidateId,
+      parentId,
+      level,
+    }) ?? {}
     const runRoot = join(this.updaterRunRoot, `${candidateId}-${randomUUID()}`)
     const home = join(runRoot, 'home')
     const temporary = join(runRoot, 'tmp')
@@ -205,7 +223,13 @@ export class MsaMinimalEvolutionRuntime {
       })
       const { result, stopReason } = await runMutationPhase({
         templatePath: this.mutationTemplatePath,
-        templateValues: this.#templateValues({ campaignId, candidateId, parentId, level }),
+        templateValues: this.#templateValues({
+          campaignId,
+          candidateId,
+          parentId,
+          level,
+          coordination,
+        }),
         invocationOptions: {
           backend: this.updaterBackend,
           nodeBinary: this.nodePath,
@@ -225,6 +249,7 @@ export class MsaMinimalEvolutionRuntime {
           gid: this.updaterGid,
           feedbackRoot: resolve(feedbackRoot),
           evolutionLogPath: resolve(evolutionLogPath),
+          peerLogs: coordination.peerLogs ?? [],
           bwrapPath: this.bwrapPath,
           setprivPath: this.setprivPath,
           baseEnv: { ...safeEnvironment(this.baseEnvironment), HOME: home, TMPDIR: temporary },

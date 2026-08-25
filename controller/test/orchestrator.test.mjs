@@ -170,6 +170,17 @@ test('one round is one updater call, one commit, validation, and promotion', asy
   assert.equal(log[0].decision, 'promoted')
 })
 
+test('baselineOnly creates feedback without consuming a mutation round', async () => {
+  const { orchestrator, calls, revision } = await fixture()
+  await orchestrator.initialize()
+  const result = await orchestrator.run({ baselineOnly: true })
+  assert.equal(calls.mutations, 0)
+  assert.deepEqual(calls.validations, ['baseline'])
+  assert.equal(result.candidates.length, 1)
+  assert.equal(result.incumbent.commit, revision)
+  assert.equal(result.status, 'EVOLVING_L1')
+})
+
 test('non-improvement resets the same worktree to the incumbent commit', async () => {
   const { orchestrator, revision } = await fixture({ baselineScore: 2, candidateScore: 1 })
   await orchestrator.initialize()

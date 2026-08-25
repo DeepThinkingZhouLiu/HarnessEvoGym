@@ -430,6 +430,83 @@ test('evolve start initializes, runs, and keeps updater gid as the Candidate tru
   assert.equal(fixture.cleaned, 1)
 })
 
+test('controller_config routes evolve start through the population coordinator', async () => {
+  const populationCampaign = campaignFixture()
+  populationCampaign.config.controller_config = {
+    mode: 'independent',
+    concurrency: { n_branches: 2 },
+    budget: { total_budget: 4, beta: 0.5 },
+    peer_sharing: {
+      enabled: false,
+      log_path_template: '- {peer_id}: {log_path}',
+      inject_position: 'prompt_suffix',
+    },
+    competition: {
+      enabled: false,
+      bonus_grant_unit: 1,
+      scoring_metric: 'delta_score',
+    },
+  }
+  const populationState = {
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'PopulationCampaignState',
+    campaignId: 'fixture-campaign',
+    configFingerprint: SHA_C,
+    mode: 'independent',
+    status: 'EVOLVING',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:01.000Z',
+    epoch: 1,
+    budget: {
+      totalBudget: 4, consumed: 2, beta: 0.5,
+      bonusPool: 0, bonusRemaining: 0, bonusGranted: 0,
+    },
+    best: {
+      branchId: 'branch-001', candidateId: 'c0001', commit: 'a'.repeat(40),
+      digest: SHA_A, validationVerified: 2, validationTotal: 10,
+    },
+    branches: ['branch-001', 'branch-002'].map((branchId) => ({
+      branchId,
+      status: 'active',
+      baseBudget: 2,
+      bonusBudget: 0,
+      consumed: 1,
+      incumbent: {
+        candidateId: 'c0001', commit: 'a'.repeat(40), digest: SHA_A,
+        validationVerified: 2, validationTotal: 10,
+      },
+      peerLogPath: `/opt/harness-rsi/peer-logs/${branchId}.jsonl`,
+    })),
+    events: [],
+  }
+  let options
+  const calls = []
+  const fixture = baseDependencies({
+    async loadEvolutionCampaign() { return populationCampaign },
+    createPopulationOrchestrator(value) {
+      options = value
+      return {
+        async initialize() { calls.push('initialize') },
+        async run(runOptions) {
+          calls.push(['run', runOptions])
+          return populationState
+        },
+      }
+    },
+  })
+  const result = await runCampaignCliCommand(
+    'evolve',
+    'start',
+    ['--zcloud-key-fd', '5', '--round-limit', '1'],
+    fixture.dependencies,
+  )
+  assert.deepEqual(calls, ['initialize', ['run', { roundLimit: 1 }]])
+  assert.equal(typeof options.createBranch, 'function')
+  assert.equal(result.status.kind, 'PopulationCampaignStatus')
+  assert.equal(result.status.mode, 'independent')
+  assert.equal(result.status.budget.consumed, 2)
+})
+
 test('round-limit zero means no manual cap while positive values stay bounded', async () => {
   const seen = []
   const fixture = baseDependencies({

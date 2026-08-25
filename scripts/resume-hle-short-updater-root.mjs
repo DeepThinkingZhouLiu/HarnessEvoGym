@@ -243,8 +243,12 @@ async function main() {
   const selectedCampaignId = optionValue(args, '--campaign-id')
   const loadedCampaign = await loadEvolutionCampaign(optionValue(args, '--config'))
   const setting = loadedCampaign.config.metadata?.setting
-  if (!['single-branch-linear-validation-only', 'msa-minimal-linear-validation-only'].includes(setting)) {
-    throw new ProtocolError('Scoped HLE runner requires a linear validation-only setting')
+  if (![
+    'single-branch-linear-validation-only',
+    'msa-minimal-linear-validation-only',
+    'msa-minimal-population-validation-only',
+  ].includes(setting)) {
+    throw new ProtocolError('Scoped HLE runner requires an approved validation-only setting')
   }
   for (const option of ['--config', '--runtime', '--campaigns-root', '--source-root']) {
     requireScopedPath(optionValue(args, option), option)
@@ -299,7 +303,8 @@ async function main() {
         },
         updaterExecute,
       }
-      if (setting === 'msa-minimal-linear-validation-only') {
+      if (['msa-minimal-linear-validation-only', 'msa-minimal-population-validation-only']
+        .includes(setting)) {
         return new MsaMinimalEvolutionRuntime({
           ...common,
           updaterRuntimeRoot: join(RUNTIME_ROOT, 'trusted-baseline'),

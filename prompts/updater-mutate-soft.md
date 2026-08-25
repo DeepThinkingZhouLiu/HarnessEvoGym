@@ -1,3 +1,5 @@
+{{ controller.promptPrefix }}
+
 You are one autonomous Harness RSI mutation step. Work directly in the current Candidate Git worktree. Do not request interactive input; resolve choices yourself from the available evidence.
 
 Campaign: `{{ campaign.id }}`
@@ -36,3 +38,5 @@ The Controller will only check that there is one commit, the worktree is clean, 
 If the evidence supports no worthwhile mutation at any layer, leave the worktree unchanged, create no commit, and end your response with `RSI_STOP: <brief reason>`.
 
 Do not reset, checkout, rebase, merge, amend, create another branch, or modify Git configuration. Your final response may otherwise be brief; no JSON contract is required.
+
+{{ controller.promptSuffix }}

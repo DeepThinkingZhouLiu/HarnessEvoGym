@@ -7,6 +7,8 @@ English | [中文](README.zh.md)
 > [!IMPORTANT]
 > The repository now includes a resumable Controller loop, configurable L1/L2/L3 mutation boundaries, model gateways, frozen evaluation, sealed test handling, sandboxed runtimes, and raw-curve reporting. A successful `campaign smoke` is still required before a production campaign; implementation readiness is not an experimental result.
 
+The Controller also supports Single, Independent, Mutualism, Competition, and Combined population strategies through one frozen `controller_config`; see [Controller evolution modes](docs/controller-modes.md).
+
 ## Why this is no longer a DeepSeek Harness fork
 
 An RSI system must control source instances, Updaters, task environments, external evaluation, candidate lineage, and rollback. Keeping all of that inside a DeepSeek Harness fork mixes the system being optimized with the system judging it and makes other coding agents unnecessarily difficult to integrate.

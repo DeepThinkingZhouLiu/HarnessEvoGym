@@ -69,6 +69,7 @@ test('soft mutation prompt receives the complete configurable L1-L3 catalogue', 
     campaign: { id: 'soft' },
     candidate: { id: 'c0001', parentId: 'baseline', root: '/candidate' },
     feedback: { root: '/feedback', log: '/feedback/evolution-log.jsonl' },
+    controller: { promptPrefix: '', promptSuffix: '' },
     mutation: {
       layers: mutation.layers,
       readOnlyPaths: mutation.alwaysReadOnly,
@@ -107,6 +108,21 @@ test('single updater call gets one writable worktree and read-only feedback', ()
   assert.equal(invocation.env.GIT_WORK_TREE, UPDATER_SANDBOX_PATHS.candidate)
   const preset = invocation.args.lastIndexOf('--preset')
   assert.equal(invocation.args[preset + 1], 'standard')
+})
+
+test('peer histories are mounted read-only at stable branch paths', () => {
+  const options = invocationOptions()
+  options.peerLogs = [{
+    branchId: 'branch-002',
+    sourcePath: '/srv/population/branch-002/evolution-log.jsonl',
+    sandboxPath: '/opt/harness-rsi/peer-logs/branch-002.jsonl',
+  }]
+  const invocation = buildUpdaterInvocation(options)
+  assert.equal(mountMode(
+    invocation.args,
+    '/srv/population/branch-002/evolution-log.jsonl',
+    '/opt/harness-rsi/peer-logs/branch-002.jsonl',
+  ), '--ro-bind')
 })
 
 test('isolated updater reaches the gateway only through the Unix relay', () => {

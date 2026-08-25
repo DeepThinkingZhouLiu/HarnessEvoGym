@@ -30,6 +30,7 @@ export const UPDATER_SANDBOX_PATHS = Object.freeze({
   git: '/opt/harness-rsi/git',
   feedback: '/opt/harness-rsi/feedback',
   evolutionLog: '/opt/harness-rsi/evolution-log.jsonl',
+  peerLogs: '/opt/harness-rsi/peer-logs',
   runtimePatch: '/opt/harness-rsi/runtime.patch.yml',
   nodeToolchain: '/opt/harness-rsi/node-toolchain',
   run: '/work',
@@ -99,6 +100,7 @@ export function buildUpdaterInvocation({
   gid,
   feedbackRoot,
   evolutionLogPath,
+  peerLogs = [],
   bwrapPath,
   setprivPath = '/usr/bin/setpriv',
   baseEnv = process.env,
@@ -113,6 +115,23 @@ export function buildUpdaterInvocation({
   const repository = resolve(gitRoot)
   const feedback = resolve(feedbackRoot)
   const evolutionLog = resolve(evolutionLogPath)
+  if (!Array.isArray(peerLogs)) throw new ProtocolError('Updater peerLogs 必须是数组')
+  const normalizedPeerLogs = peerLogs.map((peer, index) => {
+    if (!peer || typeof peer !== 'object' || Array.isArray(peer)
+        || !/^branch-[0-9]{3}$/u.test(peer.branchId ?? '')) {
+      throw new ProtocolError(`Updater peerLogs[${index}] 格式无效`)
+    }
+    const source = resolve(peer.sourcePath)
+    const destination = join(UPDATER_SANDBOX_PATHS.peerLogs, `${peer.branchId}.jsonl`)
+    if (peer.sandboxPath !== destination) {
+      throw new ProtocolError(`Updater peerLogs[${index}] sandboxPath 无效`)
+    }
+    return { source, destination, readOnly: true }
+  })
+  if (new Set(normalizedPeerLogs.map((peer) => peer.destination)).size
+      !== normalizedPeerLogs.length) {
+    throw new ProtocolError('Updater peerLogs 不能包含重复 branch')
+  }
   const run = resolve(runRoot)
   const node = resolve(nodeBinary)
   const patch = resolve(runtimePatch)
@@ -261,6 +280,7 @@ export function buildUpdaterInvocation({
         destination: UPDATER_SANDBOX_PATHS.evolutionLog,
         readOnly: true,
       },
+      ...normalizedPeerLogs,
       { source: run, destination: UPDATER_SANDBOX_PATHS.run, readOnly: false },
       ...(backend === 'deepseek-harness' ? [{
         source: patch,

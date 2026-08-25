@@ -279,10 +279,13 @@ export class EvolutionOrchestrator {
     return this.run(options)
   }
 
-  async run({ roundLimit = 0 } = {}) {
+  async run({ roundLimit = 0, baselineOnly = false } = {}) {
     if (!(roundLimit === Number.POSITIVE_INFINITY
         || (Number.isSafeInteger(roundLimit) && roundLimit >= 0))) {
       throw new ProtocolError('roundLimit 必须是非负整数')
+    }
+    if (typeof baselineOnly !== 'boolean') {
+      throw new ProtocolError('baselineOnly 必须是 boolean')
     }
     const effectiveRoundLimit = roundLimit === 0
       ? Number.POSITIVE_INFINITY
@@ -292,6 +295,7 @@ export class EvolutionOrchestrator {
     try {
       if (state.status === 'CONFIG_FROZEN') state = await this.#freezeBaseline(state)
       if (state.status === 'BASELINE_FROZEN') state = await this.#runBaseline(state)
+      if (baselineOnly) return state
       while (EVOLVING_STATUSES.has(state.status)
           && completedRounds < effectiveRoundLimit) {
         if (!state.inFlight) state = await this.#startRound(state)

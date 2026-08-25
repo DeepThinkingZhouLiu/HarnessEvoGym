@@ -780,6 +780,14 @@ export class PutnamEvolutionRuntime {
     this.gatewayOptions = { ...(options.gatewayOptions ?? {}) }
     this.signal = options.signal
     this.onProgress = typeof options.onProgress === 'function' ? options.onProgress : () => {}
+    this.coordinationContextProvider = requireFunction(
+      options.coordinationContextProvider ?? (() => ({
+        promptPrefix: '',
+        promptSuffix: '',
+        peerLogs: [],
+      })),
+      'coordinationContextProvider',
+    )
     this.gatewayAudit = typeof options.gatewayAudit === 'function' ? options.gatewayAudit : () => {}
     this.clock = typeof options.clock === 'function' ? options.clock : () => new Date()
 
@@ -1505,6 +1513,7 @@ export class PutnamEvolutionRuntime {
     candidateId,
     parentId,
     level,
+    coordination,
   }) {
     return {
       campaign: { id: campaignId },
@@ -1521,6 +1530,10 @@ export class PutnamEvolutionRuntime {
       feedback: {
         root: UPDATER_SANDBOX_PATHS.feedback,
         log: UPDATER_SANDBOX_PATHS.evolutionLog,
+      },
+      controller: {
+        promptPrefix: coordination.promptPrefix ?? '',
+        promptSuffix: coordination.promptSuffix ?? '',
       },
     }
   }
@@ -1676,6 +1689,7 @@ export class PutnamEvolutionRuntime {
     gitRoot,
     feedbackRoot,
     evolutionLogPath,
+    peerLogs,
     runRoot,
     home,
     gateway,
@@ -1695,6 +1709,7 @@ export class PutnamEvolutionRuntime {
       runtimePatch: this.runtimePatch,
       feedbackRoot,
       evolutionLogPath,
+      peerLogs,
       gatewayUrl: gateway.url,
       ...(gateway.socketPath === undefined ? {} : { gatewaySocketPath: gateway.socketPath }),
       gatewayDummyKey: dummyKey,
@@ -1721,6 +1736,12 @@ export class PutnamEvolutionRuntime {
     const repository = requireAbsolutePath(gitRoot, 'gitRoot')
     const feedback = requireAbsolutePath(feedbackRoot, 'feedbackRoot')
     const evolutionLog = requireAbsolutePath(evolutionLogPath, 'evolutionLogPath')
+    const coordination = await this.coordinationContextProvider({
+      campaignId,
+      candidateId,
+      parentId,
+      level,
+    }) ?? {}
     const run = await this.#prepareUpdaterRun({ candidateId })
     return this.#withGateway('updater-mutation', candidateId, run.runRoot, async (gateway, dummyKey) => {
       const { result, stopReason } = await this.mutationRunner({
@@ -1730,12 +1751,14 @@ export class PutnamEvolutionRuntime {
           candidateId,
           parentId,
           level,
+          coordination,
         }),
         invocationOptions: this.#updaterInvocation({
           candidateRoot: candidate,
           gitRoot: repository,
           feedbackRoot: feedback,
           evolutionLogPath: evolutionLog,
+          peerLogs: coordination.peerLogs ?? [],
           runRoot: run.runRoot,
           home: run.home,
           gateway,

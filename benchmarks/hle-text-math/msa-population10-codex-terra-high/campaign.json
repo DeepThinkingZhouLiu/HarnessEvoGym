@@ -1,0 +1,89 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "EvolutionCampaign",
+  "metadata": {
+    "id": "hle-math-msa-minimal-population10-codex-terra-high",
+    "name": "HLE Math MSA-minimal five-mode population RSI with Codex/Terra-High",
+    "setting": "msa-minimal-population-validation-only"
+  },
+  "controller_config": {
+    "mode": "single",
+    "concurrency": {
+      "n_branches": 1
+    },
+    "budget": {
+      "total_budget": 32,
+      "beta": 0.5
+    },
+    "peer_sharing": {
+      "enabled": false,
+      "log_path_template": "- Peer {peer_id}: {log_path}",
+      "inject_position": "prompt_suffix"
+    },
+    "competition": {
+      "enabled": false,
+      "bonus_grant_unit": 1,
+      "scoring_metric": "delta_score"
+    }
+  },
+  "spec": {
+    "source": {
+      "format": "hle-text-math",
+      "dataset": "cais/hle",
+      "revision": "5a81a4c7271a2a2a312b9a690f0c2fde837e4c29",
+      "filter": {
+        "category": "Math",
+        "textOnly": true
+      },
+      "sampling": {
+        "method": "frozen-stratified-validation-subset",
+        "strata": [
+          "raw_subject",
+          "answer_type"
+        ],
+        "seed": "hle-linear-validation-only-v1",
+        "eligibleCount": 50
+      }
+    },
+    "partitions": {
+      "validation": {
+        "manifest": "validation.ids",
+        "expectedCount": 10,
+        "sha256": "17dc2a3eef423892cfe34fd6ee5dd0cab856f87831272f58435fa18d22fbec4b",
+        "visibility": "feedback"
+      },
+      "test": {
+        "manifest": "TEST_DISABLED_DO_NOT_CREATE.ids",
+        "expectedCount": 50,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "visibility": "sealed-until-closed"
+      }
+    },
+    "evolution": {
+      "levels": [
+        "l1",
+        "l2",
+        "l3"
+      ],
+      "layerSelection": "updater-soft",
+      "promotion": "strict-validation-verified-count",
+      "testEvaluationInterval": 0,
+      "topology": "population-synchronous"
+    },
+    "scoring": {
+      "method": "trusted-llm-judge",
+      "judgeModel": "gpt-5.6-terra",
+      "judgeReasoningEffort": "low",
+      "exposeValidationTrace": true,
+      "exposeTestDetails": false
+    },
+    "solver": {
+      "targetRevision": "4532f4b82424ed13de64b930e84b51914b7b7893",
+      "profile": "headless",
+      "preset": "minimal",
+      "api": "openai-responses",
+      "model": "gpt-5.6-terra",
+      "reasoningEffort": "high"
+    }
+  }
+}

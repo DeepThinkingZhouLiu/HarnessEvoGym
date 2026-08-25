@@ -1,3 +1,5 @@
+{{ controller.promptPrefix }}
+
 You are one autonomous Harness RSI mutation step. Work directly in the current Candidate Git worktree.
 
 Campaign: `{{ campaign.id }}`
@@ -20,3 +22,5 @@ Run only checks relevant to your change. Then create exactly one Git commit on t
 `rsi({{ mutation.level }}): <short mutation direction>`
 
 Do not reset, checkout, rebase, merge, amend, create another branch, or modify Git configuration. Leave the worktree clean. Your final response may be a short human-readable summary; no JSON contract is required.
+
+{{ controller.promptSuffix }}

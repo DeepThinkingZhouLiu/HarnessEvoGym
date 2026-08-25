@@ -295,6 +295,34 @@ export class LinearGitWorkspace {
     return current
   }
 
+  async implementation(baseCommit, commit) {
+    await this.initialize()
+    if (!COMMIT_PATTERN.test(baseCommit ?? '') || !COMMIT_PATTERN.test(commit ?? '')) {
+      throw new ProtocolError('Implementation revision 无效')
+    }
+    const current = await this.current()
+    if (current.commit !== commit) {
+      throw new ProtocolError('Best Harness commit 必须是当前 branch incumbent')
+    }
+    const ancestor = await this.#git(
+      ['merge-base', '--is-ancestor', baseCommit, commit],
+      { allowedExitCodes: [0, 1] },
+    )
+    if (ancestor.exitCode !== 0) {
+      throw new ProtocolError('Best Harness commit 不继承冻结 baseline')
+    }
+    const changedFiles = (await this.#git([
+      'diff', '--name-only', '-z', '--no-renames', baseCommit, commit,
+    ])).stdout.split('\0').filter(Boolean)
+    const diffStat = (await this.#git([
+      'diff', '--stat', '--no-renames', baseCommit, commit,
+    ])).stdout.trim()
+    const patch = (await this.#git([
+      'diff', '--no-ext-diff', '--no-renames', '--binary', baseCommit, commit,
+    ], { outputLimitBytes: 4 * 1024 * 1024 })).stdout
+    return { ...current, baseCommit, changedFiles, diffStat, patch }
+  }
+
   async rejectMutation(parentCommit) {
     await this.grantUpdaterAccess()
     if (!COMMIT_PATTERN.test(parentCommit ?? '')) throw new ProtocolError('Invalid reset target')

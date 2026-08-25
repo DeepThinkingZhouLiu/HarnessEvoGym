@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 
+import { normalizeControllerConfig } from './evolution-modes.mjs'
 import { ProtocolError } from './protocol.mjs'
 
 export const CAMPAIGN_API_VERSION = 'harness-rsi/v1alpha1'
@@ -215,10 +216,24 @@ export function validateEvolutionCampaign(input) {
     errors.push('HLE Solver 与 trusted judge 必须冻结为同一模型')
   }
 
+  let controllerConfig = null
+  if (input.controller_config !== undefined) {
+    try {
+      controllerConfig = normalizeControllerConfig(input.controller_config)
+    } catch (error) {
+      if (error instanceof ProtocolError && Array.isArray(error.details)) {
+        errors.push(...error.details)
+      } else {
+        errors.push(error.message)
+      }
+    }
+  }
+
   if (errors.length > 0) throw new ProtocolError('EvolutionCampaign 配置校验失败', errors)
   const normalized = structuredClone(input)
   normalized.spec.evolution.layerSelection = layerSelection
   normalized.spec.evolution.testEvaluationInterval = testEvaluationInterval
+  if (controllerConfig !== null) normalized.controller_config = structuredClone(controllerConfig)
   return normalized
 }
 

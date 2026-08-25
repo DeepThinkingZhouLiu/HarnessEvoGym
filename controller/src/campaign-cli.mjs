@@ -12,6 +12,11 @@ import {
 import { acquireCampaignLock } from './campaign-lock.mjs'
 import { CampaignStore } from './campaign-store.mjs'
 import { EvolutionOrchestrator } from './orchestrator.mjs'
+import {
+  PopulationOrchestrator,
+  formatPopulationStatus,
+} from './population-orchestrator.mjs'
+import { PopulationStore } from './population-store.mjs'
 import { fingerprintControllerImplementation } from './implementation-fingerprint.mjs'
 import { prepareHleTextMathDataset } from './hle-dataset.mjs'
 import { recommendHleConcurrency } from './hle-concurrency.mjs'
@@ -68,6 +73,10 @@ const SAFE_PROGRESS_TYPES = new Set([
   'candidate-decided',
   'campaign-closed',
   'infrastructure-paused',
+  'population-baseline-evaluated',
+  'population-wave-started',
+  'population-wave-completed',
+  'population-closed',
 ])
 
 function parseOptions(args, extraOptions = []) {
@@ -362,6 +371,9 @@ export function safeProgressEvent(event) {
   if (typeof event.candidateId === 'string' && CAMPAIGN_ID_PATTERN.test(event.candidateId)) {
     safe.candidateId = event.candidateId
   }
+  if (typeof event.branchId === 'string' && /^branch-[0-9]{3}$/u.test(event.branchId)) {
+    safe.branchId = event.branchId
+  }
   if (['l1', 'l2', 'l3', 'baseline'].includes(event.level)) safe.level = event.level
   if (['completed', 'candidate_failure'].includes(event.outcome)) safe.outcome = event.outcome
   if (['baseline', 'promoted', 'rejected'].includes(event.decision)) safe.decision = event.decision
@@ -377,6 +389,11 @@ export function safeProgressEvent(event) {
   if (typeof event.operation === 'string' && /^[a-z][a-z0-9-]{0,63}$/u.test(event.operation)
       && !/(?:test|sealed|hidden)/iu.test(event.operation)) {
     safe.operation = event.operation
+  }
+  for (const field of ['epoch', 'branches', 'bonusGrant']) {
+    if (Number.isSafeInteger(event[field]) && event[field] >= 0 && event[field] <= 10_000) {
+      safe[field] = event[field]
+    }
   }
   return Object.freeze(safe)
 }
@@ -395,11 +412,12 @@ export function createSealedRunner({
   signal,
   environment = process.env,
   runChild = runSealedTestInChild,
+  runtimeNamespace = context.campaignId,
 }) {
   const runtime = context.runtime.config
   const benchmark = context.campaign.config.spec.source.format ?? 'putnambench-lean'
   const hle = benchmark === 'hle-text-math'
-  const campaignScratchRoot = join(runtime.paths.scratchRoot, context.campaignId)
+  const campaignScratchRoot = join(runtime.paths.scratchRoot, runtimeNamespace)
   const solverHome = join(campaignScratchRoot, 'solver-home')
   const partitionOptions = {
     ...buildPartitionOptions(runtime, runtime.solver.initialConcurrency, identities),
@@ -483,7 +501,31 @@ function createStore(context, dependencies) {
   return new CampaignStore(context.campaignsRoot, context.campaignId)
 }
 
-async function createRuntimeStack({ context, mode, getApiKey, signal, dependencies, progress }) {
+function isPopulationContext(context) {
+  return context.campaign.config.controller_config !== undefined
+}
+
+function createStateStore(context, dependencies) {
+  if (isPopulationContext(context)) {
+    if (typeof dependencies.createPopulationStore === 'function') {
+      return dependencies.createPopulationStore(context.campaignsRoot, context.campaignId)
+    }
+    return new PopulationStore(context.campaignsRoot, context.campaignId)
+  }
+  return createStore(context, dependencies)
+}
+
+export async function createRuntimeStack({
+  context,
+  mode,
+  getApiKey,
+  signal,
+  dependencies,
+  progress,
+  runtimeNamespace = context.campaignId,
+  coordinationContextProvider,
+  storeOverride,
+}) {
   const runtimeConfig = context.runtime.config
   const benchmark = context.campaign.config.spec.source.format ?? 'putnambench-lean'
   const hle = benchmark === 'hle-text-math'
@@ -506,12 +548,12 @@ async function createRuntimeStack({ context, mode, getApiKey, signal, dependenci
     ],
     isolatedNetwork: hle,
   })
-  const store = createStore(context, dependencies)
+  const store = storeOverride ?? createStore(context, dependencies)
   const environment = dependencies.environment ?? process.env
-  const campaignScratchRoot = join(runtimeConfig.paths.scratchRoot, context.campaignId)
+  const campaignScratchRoot = join(runtimeConfig.paths.scratchRoot, runtimeNamespace)
   const runtimeOptions = {
     store,
-    runtimesRoot: join(runtimeConfig.paths.persistentRoot, 'runtimes', context.campaignId),
+    runtimesRoot: join(runtimeConfig.paths.persistentRoot, 'runtimes', runtimeNamespace),
     ...(mode === 'campaign' ? {
       runtimeCacheRoot: join(runtimeConfig.paths.persistentRoot, 'runtime-cache', 'v1'),
     } : {}),
@@ -606,12 +648,14 @@ async function createRuntimeStack({ context, mode, getApiKey, signal, dependenci
     trustedGid: identities.updater.gid,
     signal,
     onProgress: progress,
+    ...(coordinationContextProvider ? { coordinationContextProvider } : {}),
     sealedTestRunner: createSealedRunner({
       context,
       identities,
       getApiKey,
       signal,
       environment,
+      runtimeNamespace,
       runChild: dependencies.runSealedTestInChild ?? runSealedTestInChild,
     }),
   }
@@ -637,7 +681,9 @@ function commandResult(status, report) {
   return {
     apiVersion: 'harness-rsi/v1alpha1',
     kind: 'EvolutionCommandResult',
-    status: formatCampaignStatus(status),
+    status: status.kind === 'PopulationCampaignState'
+      ? formatPopulationStatus(status)
+      : formatCampaignStatus(status),
     ...(report ? { report: { directory: report.directory, paths: report.paths } } : {}),
   }
 }
@@ -686,16 +732,21 @@ export async function runCampaignCliCommand(group, action, args, dependencies = 
         validation: context.campaign.config.spec.partitions.validation.expectedCount,
         test: context.campaign.config.spec.partitions.test.expectedCount,
       },
+      ...(context.campaign.config.controller_config === undefined
+        ? {}
+        : { controllerConfig: context.campaign.config.controller_config }),
     })
   }
 
   if (command === 'evolve status') {
-    const store = createStore(context, dependencies)
+    const store = createStateStore(context, dependencies)
     const state = await store.readState()
     verifyFrozenFingerprint(state, context)
-    const status = dependencies.readCampaignStatus
-      ? await dependencies.readCampaignStatus(store)
-      : await readCampaignStatus(store)
+    const status = isPopulationContext(context)
+      ? formatPopulationStatus(state)
+      : (dependencies.readCampaignStatus
+        ? await dependencies.readCampaignStatus(store)
+        : await readCampaignStatus(store))
     return emitJson(writeLine, status)
   }
 
@@ -707,9 +758,16 @@ export async function runCampaignCliCommand(group, action, args, dependencies = 
   })
   try {
     if (command === 'evolve report') {
-      const store = createStore(context, dependencies)
+      const store = createStateStore(context, dependencies)
       const state = await store.readState()
       verifyFrozenFingerprint(state, context)
+      if (isPopulationContext(context)) {
+        if (!['CLOSED', 'REPORTED'].includes(state.status)) {
+          throw new ProtocolError('Population 关闭前不能生成报告')
+        }
+        const report = await store.readReport()
+        return emitJson(writeLine, commandResult(state, report))
+      }
       const writeReport = dependencies.writeClosedCampaignReport ?? writeClosedCampaignReport
       const report = await writeReport(store)
       let finalState = state
@@ -724,7 +782,7 @@ export async function runCampaignCliCommand(group, action, args, dependencies = 
     // A resumed campaign must authenticate its frozen combined fingerprint
     // before any runtime-selected executable is run or the credential FD is read.
     if (command === 'evolve run' || command === 'evolve resume') {
-      const existingStore = createStore(context, dependencies)
+      const existingStore = createStateStore(context, dependencies)
       verifyFrozenFingerprint(await existingStore.readState(), context)
     }
 
@@ -748,15 +806,15 @@ export async function runCampaignCliCommand(group, action, args, dependencies = 
       : createAbortSignal(dependencies.processObject ?? process)
     const progress = createProgressWriter(writeLine)
     try {
-      const stack = await createRuntimeStack({
-        context,
-        mode: command === 'campaign smoke' ? 'smoke' : 'campaign',
-        getApiKey,
-        signal: signals.signal,
-        dependencies,
-        progress,
-      })
       if (command === 'campaign smoke') {
+        const stack = await createRuntimeStack({
+          context,
+          mode: 'smoke',
+          getApiKey,
+          signal: signals.signal,
+          dependencies,
+          progress,
+        })
         const tasks = parseTaskCount(options.get('tasks'))
         const result = await stack.runtime.smoke({
           candidateRoot: context.sourceRoot,
@@ -780,24 +838,103 @@ export async function runCampaignCliCommand(group, action, args, dependencies = 
         })
       }
 
-      const orchestratorOptions = {
-        loadedCampaign: context.campaign,
-        campaignsRoot: context.campaignsRoot,
-        campaignId: context.campaignId,
-        sourceRoot: context.sourceRoot,
-        runtime: stack.runtime,
-        progress,
-        updaterUid: stack.identities.updater.uid,
-        updaterGid: stack.identities.updater.gid,
-        trustedUid: 0,
-        trustedGid: stack.identities.updater.gid,
-        secretValues: [await getApiKey()],
-        runtimeSnapshot: context.runtime.config,
-        implementationFingerprint: context.implementationFingerprint,
+      const secretValues = [await getApiKey()]
+      let orchestrator
+      if (isPopulationContext(context)) {
+        const frozenConfig = {
+          apiVersion: 'harness-rsi/v1alpha1',
+          kind: 'CampaignRuntimeSnapshot',
+          campaign: context.campaign.config,
+          runtime: structuredClone(context.runtime.config),
+          implementationFingerprint: context.implementationFingerprint,
+        }
+        const populationOptions = {
+          loadedCampaign: context.campaign,
+          campaignsRoot: context.campaignsRoot,
+          campaignId: context.campaignId,
+          progress,
+          frozenConfig,
+          secretValues,
+          ...(dependencies.clock ? { clock: dependencies.clock } : {}),
+          createBranch: async ({ branchId, branchesRoot }) => {
+            let coordinationContext = {
+              promptPrefix: '', promptSuffix: '', peerLogs: [],
+            }
+            const branchContext = {
+              ...context,
+              campaignsRoot: branchesRoot,
+              campaignId: branchId,
+            }
+            const branchProgress = (event) => progress({ ...event, branchId })
+            const branchStore = typeof dependencies.createBranchStore === 'function'
+              ? dependencies.createBranchStore(branchesRoot, branchId)
+              : new CampaignStore(branchesRoot, branchId)
+            const stack = await createRuntimeStack({
+              context: branchContext,
+              mode: 'campaign',
+              getApiKey,
+              signal: signals.signal,
+              dependencies,
+              progress: branchProgress,
+              runtimeNamespace: join(context.campaignId, 'branches', branchId),
+              coordinationContextProvider: () => coordinationContext,
+              storeOverride: branchStore,
+            })
+            const branchOptions = {
+              loadedCampaign: context.campaign,
+              campaignsRoot: branchesRoot,
+              campaignId: branchId,
+              sourceRoot: context.sourceRoot,
+              runtime: stack.runtime,
+              progress: branchProgress,
+              updaterUid: stack.identities.updater.uid,
+              updaterGid: stack.identities.updater.gid,
+              trustedUid: 0,
+              trustedGid: stack.identities.updater.gid,
+              secretValues,
+              runtimeSnapshot: context.runtime.config,
+              implementationFingerprint: context.implementationFingerprint,
+            }
+            const branchOrchestrator = typeof dependencies.createBranchOrchestrator === 'function'
+              ? dependencies.createBranchOrchestrator(branchOptions)
+              : new EvolutionOrchestrator(branchOptions)
+            return {
+              orchestrator: branchOrchestrator,
+              setCoordinationContext(value) { coordinationContext = value },
+            }
+          },
+        }
+        orchestrator = typeof dependencies.createPopulationOrchestrator === 'function'
+          ? dependencies.createPopulationOrchestrator(populationOptions)
+          : new PopulationOrchestrator(populationOptions)
+      } else {
+        const stack = await createRuntimeStack({
+          context,
+          mode: 'campaign',
+          getApiKey,
+          signal: signals.signal,
+          dependencies,
+          progress,
+        })
+        const orchestratorOptions = {
+          loadedCampaign: context.campaign,
+          campaignsRoot: context.campaignsRoot,
+          campaignId: context.campaignId,
+          sourceRoot: context.sourceRoot,
+          runtime: stack.runtime,
+          progress,
+          updaterUid: stack.identities.updater.uid,
+          updaterGid: stack.identities.updater.gid,
+          trustedUid: 0,
+          trustedGid: stack.identities.updater.gid,
+          secretValues,
+          runtimeSnapshot: context.runtime.config,
+          implementationFingerprint: context.implementationFingerprint,
+        }
+        orchestrator = typeof dependencies.createOrchestrator === 'function'
+          ? dependencies.createOrchestrator(orchestratorOptions)
+          : new EvolutionOrchestrator(orchestratorOptions)
       }
-      const orchestrator = typeof dependencies.createOrchestrator === 'function'
-        ? dependencies.createOrchestrator(orchestratorOptions)
-        : new EvolutionOrchestrator(orchestratorOptions)
       let state
       const runOptions = { roundLimit: parseRoundLimit(options.get('round-limit')) }
       if (action === 'start') {

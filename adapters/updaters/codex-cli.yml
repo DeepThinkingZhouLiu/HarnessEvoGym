@@ -19,4 +19,4 @@ spec:
 
   output:
     candidate: git-commit
-    events: jsonl
+    events: text

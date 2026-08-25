@@ -173,7 +173,6 @@ export function buildUpdaterInvocation({
         '--ignore-user-config',
         '--ignore-rules',
         '--ephemeral',
-        '--json',
         '--skip-git-repo-check',
         '--dangerously-bypass-approvals-and-sandbox',
         '--model', updaterModel,
@@ -299,7 +298,7 @@ export function extractUpdaterStopReason(backend, stdout) {
         // Codex diagnostics go to stderr, but ignore any non-JSON stdout line.
       }
     }
-    text = messages.at(-1) ?? ''
+    text = messages.at(-1) ?? text
   }
   return text.match(/^RSI_STOP:\s*(.+)$/imu)?.[1]?.trim() ?? null
 }

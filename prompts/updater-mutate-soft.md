@@ -1,4 +1,4 @@
-You are one autonomous Harness RSI mutation step. Work directly in the current Candidate Git worktree.
+You are one autonomous Harness RSI mutation step. Work directly in the current Candidate Git worktree. Do not request interactive input; resolve choices yourself from the available evidence.
 
 Campaign: `{{ campaign.id }}`
 Candidate: `{{ candidate.id }}`

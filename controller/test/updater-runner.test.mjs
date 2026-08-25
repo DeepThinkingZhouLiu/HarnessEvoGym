@@ -140,9 +140,9 @@ test('Codex updater uses only the isolated local configuration and keeps DSH ava
     '--ignore-user-config',
     '--ignore-rules',
     '--ephemeral',
-    '--json',
     '--dangerously-bypass-approvals-and-sandbox',
   ]) assert.ok(invocation.args.includes(flag))
+  assert.equal(invocation.args.includes('--json'), false)
   assert.ok(invocation.args.includes('model_provider="zcloud"'))
   assert.ok(invocation.args.includes('model_reasoning_effort="max"'))
   assert.equal(invocation.env.CODEX_HOME, '/work/home')
@@ -170,6 +170,7 @@ test('extracts RSI_STOP from Codex JSONL final agent message', () => {
     extractUpdaterStopReason('codex-cli', output),
     'no general mutation remains',
   )
+  assert.equal(extractUpdaterStopReason('codex-cli', 'RSI_STOP: plain output'), 'plain output')
   assert.equal(extractUpdaterStopReason('deepseek-harness', 'RSI_STOP: done'), 'done')
 })
 

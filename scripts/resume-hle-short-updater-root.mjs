@@ -251,6 +251,8 @@ async function main() {
   }
   await mkdir(GATEWAY_SOCKET_ROOT, { recursive: true, mode: 0o711 })
   await chmod(GATEWAY_SOCKET_ROOT, 0o711)
+  await mkdir(UPDATER_RUN_ROOT, { recursive: true, mode: 0o711 })
+  await chmod(UPDATER_RUN_ROOT, 0o711)
   const environment = buildDirectCommandEnvironment(process.env)
 
   await runCampaignCliCommand(group, action, args, {

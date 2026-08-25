@@ -127,7 +127,7 @@ async function runController(campaign, action) {
     '--campaign-id', campaign.campaignId,
     '--campaigns-root', CAMPAIGNS_ROOT,
     '--source-root', SOURCE_ROOT,
-    '--zcloud-key-fd', '3',
+    '--provider-key-fd', '3',
   ]
   const child = spawn(process.execPath, args, {
     cwd: REPOSITORY_ROOT,
@@ -139,6 +139,10 @@ async function runController(campaign, action) {
   child.stderr.pipe(log, { end: false })
   child.stdout.pipe(process.stdout, { end: false })
   child.stderr.pipe(process.stderr, { end: false })
+  let credentialPipeError = null
+  child.stdio[3].on('error', (error) => {
+    if (!['EPIPE', 'ECONNRESET'].includes(error?.code)) credentialPipeError = error
+  })
   child.stdio[3].end(`${key}\n`)
   const result = await new Promise((resolvePromise, reject) => {
     child.once('error', reject)
@@ -152,6 +156,7 @@ async function runController(campaign, action) {
     ...result,
   })}\n`)
   await new Promise((resolvePromise) => log.end(resolvePromise))
+  if (credentialPipeError) throw credentialPipeError
   if (result.code !== 0) {
     throw new Error(`${campaign.mode} ${action} 失败：code=${result.code} signal=${result.signal}`)
   }

@@ -1,0 +1,74 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "EvolutionCampaign",
+  "metadata": {
+    "id": "hle-math50-terra-high-competition-n2-b32-beta05",
+    "name": "HLE Math50 Terra-High Competition N2 B32 Beta 0.5",
+    "setting": "msa-minimal-population-validation-only"
+  },
+  "controller_config": {
+    "mode": "competition",
+    "concurrency": { "n_branches": 2 },
+    "budget": { "total_budget": 32, "beta": 0.5 },
+    "peer_sharing": {
+      "enabled": false,
+      "log_path_template": "- Peer {peer_id}: {log_path}",
+      "inject_position": "prompt_suffix"
+    },
+    "competition": {
+      "enabled": true,
+      "bonus_grant_unit": 1,
+      "scoring_metric": "delta_score"
+    }
+  },
+  "spec": {
+    "source": {
+      "format": "hle-text-math",
+      "dataset": "cais/hle",
+      "revision": "5a81a4c7271a2a2a312b9a690f0c2fde837e4c29",
+      "filter": { "category": "Math", "textOnly": true },
+      "sampling": {
+        "method": "deterministic-largest-remainder",
+        "strata": ["raw_subject", "answer_type"],
+        "seed": "hle-text-math-rsi-v1",
+        "eligibleCount": 976
+      }
+    },
+    "partitions": {
+      "validation": {
+        "manifest": "validation.ids",
+        "expectedCount": 50,
+        "sha256": "e5a236c27584679b3506f41391da00092e7570fc9ce8a3cee12c6c558a32277f",
+        "visibility": "feedback"
+      },
+      "test": {
+        "manifest": "TEST_DISABLED_DO_NOT_CREATE.ids",
+        "expectedCount": 50,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "visibility": "sealed-until-closed"
+      }
+    },
+    "evolution": {
+      "levels": ["l1", "l2", "l3"],
+      "layerSelection": "updater-soft",
+      "promotion": "strict-validation-verified-count",
+      "testEvaluationInterval": 0,
+      "topology": "population-synchronous"
+    },
+    "scoring": {
+      "method": "trusted-llm-judge",
+      "judgeModel": "gpt-5.6-terra",
+      "judgeReasoningEffort": "low",
+      "exposeValidationTrace": true,
+      "exposeTestDetails": false
+    },
+    "solver": {
+      "targetRevision": "4532f4b82424ed13de64b930e84b51914b7b7893",
+      "profile": "headless",
+      "preset": "minimal",
+      "api": "openai-responses",
+      "model": "gpt-5.6-terra",
+      "reasoningEffort": "high"
+    }
+  }
+}

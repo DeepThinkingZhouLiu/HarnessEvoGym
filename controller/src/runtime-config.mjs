@@ -8,6 +8,9 @@ import { ProtocolError } from './protocol.mjs'
 const API_VERSION = 'harness-rsi/v1alpha1'
 const RUNTIME_KINDS = new Set(['PutnamBenchRuntime', 'HleTextMathRuntime'])
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u
+const UPDATER_BACKENDS = new Set(['deepseek-harness', 'codex-cli'])
+const CODEX_PROVIDER_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u
+const REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 const PROVIDER_KEY_FD_OPTIONS = new Set(['provider-key-fd', 'zcloud-key-fd'])
 
 function object(value, path, errors) {
@@ -70,7 +73,7 @@ function validatePathTopology(paths, toolchain, errors) {
       errors.push(`paths.${name} 必须严格位于 paths.persistentRoot 内`)
     }
   }
-  for (const name of ['nodePath', 'pnpmPath', 'elanHome', 'lakePath']) {
+  for (const name of ['nodePath', 'pnpmPath', 'elanHome', 'lakePath', 'codexPath']) {
     const value = toolchain[name]
     if (typeof value === 'string' && isAbsolute(value) && !strictChild(persistent, value)) {
       errors.push(`toolchain.${name} 必须严格位于 paths.persistentRoot 内`)
@@ -186,8 +189,27 @@ export function validatePutnamRuntime(input) {
 
   const updater = object(root.updater, 'updater', errors)
   exactKeys(updater, new Set([
+    'backend', 'provider', 'model', 'reasoningEffort',
     'timeoutSeconds', 'maximumModelRequestsPerPhase', 'gatewayConcurrency',
   ]), 'updater', errors)
+  if (updater.backend !== undefined && !UPDATER_BACKENDS.has(updater.backend)) {
+    errors.push('updater.backend 必须是 deepseek-harness 或 codex-cli')
+  }
+  if (updater.provider !== undefined && !CODEX_PROVIDER_PATTERN.test(updater.provider)) {
+    errors.push('updater.provider 不是合法 Codex provider 标识')
+  }
+  if (updater.model !== undefined && !MODEL_ID_PATTERN.test(updater.model)) {
+    errors.push('updater.model 不是合法模型标识')
+  }
+  if (updater.reasoningEffort !== undefined
+      && !REASONING_EFFORTS.has(updater.reasoningEffort)) {
+    errors.push('updater.reasoningEffort 不是合法 effort')
+  }
+  if (updater.backend === 'codex-cli') {
+    for (const name of ['provider', 'model', 'reasoningEffort']) {
+      if (updater[name] === undefined) errors.push(`Codex Updater 必须配置 updater.${name}`)
+    }
+  }
   if (updater.timeoutSeconds !== undefined) {
     integer(updater.timeoutSeconds, 'updater.timeoutSeconds', errors, { minimum: 60, maximum: 7200 })
   }
@@ -272,7 +294,7 @@ export function validatePutnamRuntime(input) {
   const toolchain = object(root.toolchain, 'toolchain', errors)
   exactKeys(toolchain, new Set([
     'nodeVersion', 'nodePath', 'pnpmVersion', 'pnpmPath', 'elanHome',
-    'lakePath', 'leanToolchain', 'bwrapPath', 'setprivPath',
+    'lakePath', 'leanToolchain', 'codexPath', 'bwrapPath', 'setprivPath',
   ]), 'toolchain', errors)
   if (toolchain.nodeVersion !== '24.19.0') errors.push('toolchain.nodeVersion 必须冻结为 24.19.0')
   if (toolchain.pnpmVersion !== '11.7.0') errors.push('toolchain.pnpmVersion 必须冻结为 11.7.0')
@@ -281,6 +303,12 @@ export function validatePutnamRuntime(input) {
   }
   for (const name of ['nodePath', 'pnpmPath', 'elanHome', 'lakePath', 'bwrapPath', 'setprivPath']) {
     absolutePath(toolchain[name], `toolchain.${name}`, errors)
+  }
+  if (toolchain.codexPath !== undefined) {
+    absolutePath(toolchain.codexPath, 'toolchain.codexPath', errors)
+  }
+  if (updater.backend === 'codex-cli' && toolchain.codexPath === undefined) {
+    errors.push('Codex Updater 必须配置 toolchain.codexPath')
   }
   validatePathTopology(paths, toolchain, errors)
 

@@ -111,6 +111,21 @@ test('MSA runtime leaves Solver-owned model budgets unfrozen', async () => {
   )
 })
 
+test('Codex/Terra runtime externalizes updater backend and model configuration', async () => {
+  const path = fileURLToPath(new URL(
+    '../../environments/hle-text-math/msa-codex-terra-runtime.json',
+    import.meta.url,
+  ))
+  const loaded = await loadPutnamRuntime(path)
+  assert.equal(loaded.config.updater.backend, 'codex-cli')
+  assert.equal(loaded.config.updater.provider, 'zcloud')
+  assert.equal(loaded.config.updater.model, 'gpt-5.6-terra')
+  assert.equal(loaded.config.updater.reasoningEffort, 'max')
+  assert.equal(loaded.config.gateway.upstreamBaseUrl, 'https://api.zcloudapi.com/v1')
+  assert.equal(loaded.config.verifier.judgeModel, 'gpt-5.6-terra')
+  assert.match(loaded.config.toolchain.codexPath, /codex-cli-0\.149\.0/u)
+})
+
 test('rejects unknown fields, mutable secrets, unsafe endpoints, and incompatible limits', () => {
   const value = fixture()
   value.secretKey = 'must-not-exist'

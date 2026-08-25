@@ -13,6 +13,8 @@ import { runProcess } from './subprocess.mjs'
 
 const SOURCE_WRAPPER = 'process.chdir(process.env.TASK_CWD); await import(process.env.DSH_SOURCE_BIN)'
 const SAFE_ENV_KEYS = new Set(['HOME', 'LANG', 'LC_ALL', 'PATH', 'TMPDIR', 'TZ'])
+const UPDATER_BACKENDS = new Set(['deepseek-harness', 'codex-cli'])
+const CODEX_PROVIDER_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u
 
 // The Updater is frozen infrastructure. Only the evaluated Solver uses the
 // evolving minimal preset.
@@ -64,8 +66,13 @@ function safeBaseEnvironment(baseEnv) {
 }
 
 export function buildUpdaterInvocation({
+  backend = 'deepseek-harness',
   nodeBinary,
   updaterRuntime,
+  codexPath,
+  updaterProvider,
+  updaterModel,
+  updaterReasoningEffort,
   candidateRoot,
   gitRoot,
   runRoot,
@@ -82,10 +89,12 @@ export function buildUpdaterInvocation({
   setprivPath = '/usr/bin/setpriv',
   baseEnv = process.env,
 }) {
+  if (!UPDATER_BACKENDS.has(backend)) {
+    throw new ProtocolError(`未知 Updater backend：${backend}`)
+  }
   if (!Number.isInteger(uid) || uid < 1 || !Number.isInteger(gid) || gid < 1) {
     throw new ProtocolError('Updater uid/gid 必须是正整数')
   }
-  const runtime = resolve(updaterRuntime)
   const workspace = resolve(candidateRoot)
   const repository = resolve(gitRoot)
   const feedback = resolve(feedbackRoot)
@@ -94,6 +103,11 @@ export function buildUpdaterInvocation({
   const node = resolve(nodeBinary)
   const patch = resolve(runtimePatch)
   const nodeToolchain = executableDistributionRoot(node)
+  const codex = backend === 'codex-cli' ? resolve(codexPath) : null
+  const runtime = backend === 'codex-cli'
+    ? executableDistributionRoot(codex)
+    : resolve(updaterRuntime)
+  if (runtime === null) throw new ProtocolError('Codex CLI 必须来自可挂载的独立 distribution')
   const relaySourcePath = join(dirname(patch), 'model-gateway-relay.mjs')
   const isolatedGateway = gatewaySocketPath !== undefined
   if (isolatedGateway) {
@@ -103,45 +117,91 @@ export function buildUpdaterInvocation({
     }
   }
 
-  const invocation = {
-    command: node,
-    args: [
-      '--import', 'tsx/esm',
-      '--eval', SOURCE_WRAPPER,
-      '--', 'dsh',
-      '--profile', 'headless',
-      '--patch', patch,
-      '--preset', INFRASTRUCTURE_UPDATER_PRESET,
-      prompt,
-    ],
-    cwd: runtime,
-    env: {
-      ...safeBaseEnvironment(baseEnv),
-      HOME: join(run, 'home'),
-      TMPDIR: join(run, 'tmp'),
-      TASK_CWD: workspace,
-      DSH_SOURCE_BIN: pathToFileURL(join(runtime, 'apps', 'cli', 'src', 'bin.ts')).href,
-      TSX_TSCONFIG_PATH: join(runtime, 'tsconfig.json'),
-      DSH_HOME: join(run, 'dsh-home'),
-      DSH_SESSION_ROOT: join(run, 'session-trace'),
-      DSH_TELEMETRY_DISABLED: '1',
-      DSH_PERMISSION_MODE: 'workspace-write',
-      GIT_DIR: UPDATER_SANDBOX_PATHS.git,
-      GIT_WORK_TREE: UPDATER_SANDBOX_PATHS.candidate,
-      GIT_CONFIG_NOSYSTEM: '1',
-      GIT_CONFIG_GLOBAL: '/dev/null',
-      GIT_CONFIG_SYSTEM: '/dev/null',
-      GIT_TERMINAL_PROMPT: '0',
-      GIT_AUTHOR_NAME: 'Harness RSI Updater',
-      GIT_AUTHOR_EMAIL: 'harness-rsi@localhost',
-      GIT_COMMITTER_NAME: 'Harness RSI Updater',
-      GIT_COMMITTER_EMAIL: 'harness-rsi@localhost',
-      RSI_MODEL_GATEWAY_URL: gatewayUrl,
-      RSI_MODEL_GATEWAY_DUMMY_KEY: gatewayDummyKey,
-      ...(gatewaySocketPath === undefined
-        ? {}
-        : { RSI_MODEL_GATEWAY_SOCKET: resolve(gatewaySocketPath) }),
-    },
+  const commonEnvironment = {
+    ...safeBaseEnvironment(baseEnv),
+    HOME: join(run, 'home'),
+    TMPDIR: join(run, 'tmp'),
+    GIT_DIR: repository,
+    GIT_WORK_TREE: workspace,
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_SYSTEM: '/dev/null',
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_AUTHOR_NAME: 'Harness RSI Updater',
+    GIT_AUTHOR_EMAIL: 'harness-rsi@localhost',
+    GIT_COMMITTER_NAME: 'Harness RSI Updater',
+    GIT_COMMITTER_EMAIL: 'harness-rsi@localhost',
+    RSI_MODEL_GATEWAY_URL: gatewayUrl,
+    RSI_MODEL_GATEWAY_DUMMY_KEY: gatewayDummyKey,
+    ...(gatewaySocketPath === undefined
+      ? {}
+      : { RSI_MODEL_GATEWAY_SOCKET: resolve(gatewaySocketPath) }),
+  }
+  let invocation
+  if (backend === 'codex-cli') {
+    if (!CODEX_PROVIDER_PATTERN.test(updaterProvider ?? '')) {
+      throw new ProtocolError('Codex Updater provider 标识无效')
+    }
+    for (const [name, value] of [
+      ['model', updaterModel],
+      ['reasoning effort', updaterReasoningEffort],
+    ]) {
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        throw new ProtocolError(`Codex Updater ${name} 不能为空`)
+      }
+    }
+    const toml = (value) => JSON.stringify(value)
+    invocation = {
+      command: node,
+      args: [
+        codex,
+        'exec',
+        '--ignore-user-config',
+        '--ignore-rules',
+        '--ephemeral',
+        '--json',
+        '--skip-git-repo-check',
+        '--dangerously-bypass-approvals-and-sandbox',
+        '--model', updaterModel,
+        '--config', `model_provider=${toml(updaterProvider)}`,
+        '--config', `model_reasoning_effort=${toml(updaterReasoningEffort)}`,
+        '--config', `model_providers.${updaterProvider}.name=${toml(updaterProvider)}`,
+        '--config', `model_providers.${updaterProvider}.base_url=${toml(gatewayUrl)}`,
+        '--config', `model_providers.${updaterProvider}.env_key=${toml('RSI_MODEL_GATEWAY_DUMMY_KEY')}`,
+        '--config', `model_providers.${updaterProvider}.wire_api=${toml('responses')}`,
+        '--cd', workspace,
+        prompt,
+      ],
+      cwd: workspace,
+      env: {
+        ...commonEnvironment,
+        CODEX_HOME: join(run, 'codex-home'),
+      },
+    }
+  } else {
+    invocation = delegateDshConfinementToOuterSandbox({
+      command: node,
+      args: [
+        '--import', 'tsx/esm',
+        '--eval', SOURCE_WRAPPER,
+        '--', 'dsh',
+        '--profile', 'headless',
+        '--patch', patch,
+        '--preset', INFRASTRUCTURE_UPDATER_PRESET,
+        prompt,
+      ],
+      cwd: runtime,
+      env: {
+        ...commonEnvironment,
+        TASK_CWD: workspace,
+        DSH_SOURCE_BIN: pathToFileURL(join(runtime, 'apps', 'cli', 'src', 'bin.ts')).href,
+        TSX_TSCONFIG_PATH: join(runtime, 'tsconfig.json'),
+        DSH_HOME: join(run, 'dsh-home'),
+        DSH_SESSION_ROOT: join(run, 'session-trace'),
+        DSH_TELEMETRY_DISABLED: '1',
+        DSH_PERMISSION_MODE: 'workspace-write',
+      },
+    })
   }
   const innerInvocation = isolatedGateway
     ? relayWrappedInvocation({
@@ -151,18 +211,19 @@ export function buildUpdaterInvocation({
         socketPath: gatewaySocketPath,
       })
     : invocation
-  const delegatedInvocation = delegateDshConfinementToOuterSandbox(innerInvocation)
   return buildBubblewrapInvocation({
     invocation: {
-      ...delegatedInvocation,
+      ...innerInvocation,
       env: {
-        ...delegatedInvocation.env,
-        TASK_CWD: UPDATER_SANDBOX_PATHS.candidate,
+        ...innerInvocation.env,
         GIT_DIR: UPDATER_SANDBOX_PATHS.git,
         GIT_WORK_TREE: UPDATER_SANDBOX_PATHS.candidate,
-        DSH_SOURCE_BIN: pathToFileURL(
-          join(UPDATER_SANDBOX_PATHS.runtime, 'apps', 'cli', 'src', 'bin.ts'),
-        ).href,
+        ...(backend === 'deepseek-harness' ? {
+          TASK_CWD: UPDATER_SANDBOX_PATHS.candidate,
+          DSH_SOURCE_BIN: pathToFileURL(
+            join(UPDATER_SANDBOX_PATHS.runtime, 'apps', 'cli', 'src', 'bin.ts'),
+          ).href,
+        } : {}),
       },
     },
     uid,
@@ -183,7 +244,11 @@ export function buildUpdaterInvocation({
         readOnly: true,
       },
       { source: run, destination: UPDATER_SANDBOX_PATHS.run, readOnly: false },
-      { source: patch, destination: UPDATER_SANDBOX_PATHS.runtimePatch, readOnly: true },
+      ...(backend === 'deepseek-harness' ? [{
+        source: patch,
+        destination: UPDATER_SANDBOX_PATHS.runtimePatch,
+        readOnly: true,
+      }] : []),
       ...(isolatedGateway ? [{
         source: relaySourcePath,
         destination: UPDATER_SANDBOX_PATHS.relay,
@@ -196,6 +261,28 @@ export function buildUpdaterInvocation({
       }]),
     ],
   })
+}
+
+export function extractUpdaterStopReason(backend, stdout) {
+  let text = typeof stdout === 'string' ? stdout : ''
+  if (backend === 'codex-cli') {
+    const messages = []
+    for (const line of text.split(/\r?\n/u)) {
+      if (!line.trim()) continue
+      try {
+        const event = JSON.parse(line)
+        if (event?.type === 'item.completed'
+            && event.item?.type === 'agent_message'
+            && typeof event.item.text === 'string') {
+          messages.push(event.item.text)
+        }
+      } catch {
+        // Codex diagnostics go to stderr, but ignore any non-JSON stdout line.
+      }
+    }
+    text = messages.at(-1) ?? ''
+  }
+  return text.match(/^RSI_STOP:\s*(.+)$/imu)?.[1]?.trim() ?? null
 }
 
 export class UpdaterRunError extends Error {
@@ -227,5 +314,11 @@ export async function runMutationPhase({
     const kind = result.timedOut || result.aborted ? 'infrastructure' : 'updater_failure'
     throw new UpdaterRunError(`Updater ${kind}`, { kind, result })
   }
-  return { result }
+  return {
+    result,
+    stopReason: extractUpdaterStopReason(
+      invocationOptions.backend ?? 'deepseek-harness',
+      result.stdout,
+    ),
+  }
 }

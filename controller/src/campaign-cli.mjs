@@ -530,6 +530,15 @@ async function createRuntimeStack({ context, mode, getApiKey, signal, dependenci
     expectedPnpmVersion: runtimeConfig.toolchain.pnpmVersion,
     upstreamBaseUrl: runtimeConfig.gateway.upstreamBaseUrl,
     getApiKey,
+    updaterBackend: runtimeConfig.updater.backend ?? 'deepseek-harness',
+    updaterProvider: runtimeConfig.updater.provider ?? 'gateway',
+    updaterModel: runtimeConfig.updater.model
+      ?? context.campaign.config.spec.solver.model,
+    updaterReasoningEffort: runtimeConfig.updater.reasoningEffort
+      ?? context.campaign.config.spec.solver.reasoningEffort,
+    ...(runtimeConfig.toolchain.codexPath
+      ? { codexPath: runtimeConfig.toolchain.codexPath }
+      : {}),
     preset: context.campaign.config.spec.solver.preset,
     model: context.campaign.config.spec.solver.model,
     reasoningEffort: context.campaign.config.spec.solver.reasoningEffort,

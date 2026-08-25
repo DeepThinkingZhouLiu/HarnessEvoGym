@@ -747,6 +747,19 @@ export class PutnamEvolutionRuntime {
     )
     this.model = requireText(options.model ?? 'gpt-5.6-sol', 'model')
     this.reasoningEffort = requireText(options.reasoningEffort ?? 'max', 'reasoningEffort')
+    this.updaterBackend = requireText(
+      options.updaterBackend ?? 'deepseek-harness',
+      'updaterBackend',
+    )
+    this.updaterProvider = requireText(options.updaterProvider ?? 'gateway', 'updaterProvider')
+    this.updaterModel = requireText(options.updaterModel ?? this.model, 'updaterModel')
+    this.updaterReasoningEffort = requireText(
+      options.updaterReasoningEffort ?? this.reasoningEffort,
+      'updaterReasoningEffort',
+    )
+    this.codexPath = options.codexPath === undefined
+      ? undefined
+      : requireAbsolutePath(options.codexPath, 'codexPath')
     this.lakePath = requireText(options.lakePath ?? 'lake', 'lakePath')
     this.pythonPath = requireText(options.pythonPath ?? 'python3', 'pythonPath')
     if (Object.prototype.hasOwnProperty.call(options, 'testInstanceIds')) {
@@ -1541,8 +1554,8 @@ export class PutnamEvolutionRuntime {
     try {
       gateway = await this.startGateway({
         ...this.gatewayOptions,
-        trustedModel: this.model,
-        trustedReasoningEffort: this.reasoningEffort,
+        trustedModel: this.updaterModel,
+        trustedReasoningEffort: this.updaterReasoningEffort,
         ...(isolatedGateway ? {
           socketPath: join(runRoot, 'model-gateway.sock'),
           publicUrl: MODEL_GATEWAY_RELAY_URL,
@@ -1669,8 +1682,13 @@ export class PutnamEvolutionRuntime {
     dummyKey,
   }) {
     return {
+      backend: this.updaterBackend,
       nodeBinary: this.nodePath,
       updaterRuntime: this.baselineRuntimeRoot,
+      codexPath: this.codexPath,
+      updaterProvider: this.updaterProvider,
+      updaterModel: this.updaterModel,
+      updaterReasoningEffort: this.updaterReasoningEffort,
       candidateRoot,
       gitRoot,
       runRoot,
@@ -1705,7 +1723,7 @@ export class PutnamEvolutionRuntime {
     const evolutionLog = requireAbsolutePath(evolutionLogPath, 'evolutionLogPath')
     const run = await this.#prepareUpdaterRun({ candidateId })
     return this.#withGateway('updater-mutation', candidateId, run.runRoot, async (gateway, dummyKey) => {
-      const { result } = await this.mutationRunner({
+      const { result, stopReason } = await this.mutationRunner({
         templatePath: run.templatePath,
         templateValues: this.#templateValues({
           campaignId,
@@ -1731,6 +1749,7 @@ export class PutnamEvolutionRuntime {
         durationMs: result.durationMs,
         startedAt: result.startedAt,
         completedAt: result.completedAt,
+        stopReason,
       }
     })
   }

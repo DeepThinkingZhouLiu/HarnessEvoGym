@@ -9,6 +9,7 @@ import {
   INFRASTRUCTURE_UPDATER_PRESET,
   UPDATER_SANDBOX_PATHS,
   buildUpdaterInvocation,
+  extractUpdaterStopReason,
   renderPrompt,
   runMutationPhase,
 } from '../src/updater-runner.mjs'
@@ -116,6 +117,58 @@ test('isolated updater reaches the gateway only through the Unix relay', () => {
   assert.equal(invocation.args.includes('--proc'), false)
   assert.equal(invocation.env.RSI_MODEL_GATEWAY_SOCKET, '/work/model-gateway.sock')
   assert.ok(invocation.args.includes(UPDATER_SANDBOX_PATHS.relay))
+})
+
+test('Codex updater uses only the isolated local configuration and keeps DSH available', () => {
+  const options = invocationOptions()
+  Object.assign(options, {
+    backend: 'codex-cli',
+    codexPath: '/srv/codex-cli/bin/codex.js',
+    updaterProvider: 'zcloud',
+    updaterModel: 'gpt-5.6-terra',
+    updaterReasoningEffort: 'max',
+    gatewaySocketPath: '/srv/updater-run/model-gateway.sock',
+    baseEnv: {
+      ...options.baseEnv,
+      CODEX_HOME: '/host/codex-home',
+      HTTP_PROXY: 'http://proxy.invalid:8017',
+    },
+  })
+  const invocation = buildUpdaterInvocation(options)
+  assert.ok(invocation.args.includes('/opt/harness-rsi/updater-runtime/bin/codex.js'))
+  for (const flag of [
+    '--ignore-user-config',
+    '--ignore-rules',
+    '--ephemeral',
+    '--json',
+    '--dangerously-bypass-approvals-and-sandbox',
+  ]) assert.ok(invocation.args.includes(flag))
+  assert.ok(invocation.args.includes('model_provider="zcloud"'))
+  assert.ok(invocation.args.includes('model_reasoning_effort="max"'))
+  assert.equal(invocation.env.CODEX_HOME, '/work/codex-home')
+  assert.equal(invocation.env.HTTP_PROXY, undefined)
+  assert.equal(invocation.env.DSH_HOME, undefined)
+  assert.equal(invocation.env.DSH_PERMISSION_MODE, undefined)
+  assert.equal(
+    mountMode(invocation.args, '/srv/codex-cli', UPDATER_SANDBOX_PATHS.runtime),
+    '--ro-bind',
+  )
+  assert.ok(invocation.args.includes('--unshare-net'))
+})
+
+test('extracts RSI_STOP from Codex JSONL final agent message', () => {
+  const output = [
+    JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'working' } }),
+    JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'agent_message', text: 'RSI_STOP: no general mutation remains' },
+    }),
+  ].join('\n')
+  assert.equal(
+    extractUpdaterStopReason('codex-cli', output),
+    'no general mutation remains',
+  )
+  assert.equal(extractUpdaterStopReason('deepseek-harness', 'RSI_STOP: done'), 'done')
 })
 
 test('mutation phase accepts free-text output and only checks process success', async () => {

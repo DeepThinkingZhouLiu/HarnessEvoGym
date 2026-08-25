@@ -1,0 +1,22 @@
+apiVersion: harness-rsi/v1alpha1
+kind: UpdaterAdapter
+
+metadata:
+  id: codex-cli
+  name: Codex CLI Updater
+
+spec:
+  runtime:
+    isolation: dedicated-read-only-instance
+    protocol: codex-exec
+    ephemeral: true
+    ignoreUserConfig: true
+
+  inputs:
+    candidateSource: active-level-write
+    feedbackPacket: read-only
+    mutationPolicy: read-only
+
+  output:
+    candidate: git-commit
+    events: jsonl

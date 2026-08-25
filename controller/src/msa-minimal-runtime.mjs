@@ -22,7 +22,6 @@ const PYTHON_SYNTAX_CHECK = [
   'for path in files: ast.parse(path.read_text(encoding="utf-8"), filename=str(path))',
   'print(len(files))',
 ].join('\n')
-const STOP_PATTERN = /^RSI_STOP:\s*(.+)$/imu
 
 function safeEnvironment(base = {}) {
   const env = {}
@@ -77,6 +76,11 @@ export class MsaMinimalEvolutionRuntime {
     this.getApiKey = options.getApiKey
     this.model = options.model
     this.reasoningEffort = options.reasoningEffort
+    this.updaterBackend = options.updaterBackend ?? 'deepseek-harness'
+    this.updaterProvider = options.updaterProvider ?? 'gateway'
+    this.updaterModel = options.updaterModel ?? this.model
+    this.updaterReasoningEffort = options.updaterReasoningEffort ?? this.reasoningEffort
+    this.codexPath = options.codexPath === undefined ? undefined : resolve(options.codexPath)
     this.baseEnvironment = options.baseEnvironment
     this.secretValues = options.secretValues ?? []
     this.partitionOptions = options.partitionOptions ?? {}
@@ -191,20 +195,25 @@ export class MsaMinimalEvolutionRuntime {
         ...this.gatewayOptions,
         upstreamBaseUrl: this.upstreamBaseUrl,
         getApiKey: this.getApiKey,
-        trustedModel: this.model,
-        trustedReasoningEffort: this.reasoningEffort,
+        trustedModel: this.updaterModel,
+        trustedReasoningEffort: this.updaterReasoningEffort,
         candidateApiKey: dummyKey,
         socketPath: join(runRoot, 'model-gateway.sock'),
         publicUrl: MODEL_GATEWAY_RELAY_URL,
         socketUid: this.updaterUid,
         socketGid: this.updaterGid,
       })
-      const { result } = await runMutationPhase({
+      const { result, stopReason } = await runMutationPhase({
         templatePath: this.mutationTemplatePath,
         templateValues: this.#templateValues({ campaignId, candidateId, parentId, level }),
         invocationOptions: {
+          backend: this.updaterBackend,
           nodeBinary: this.nodePath,
           updaterRuntime: this.updaterRuntimeRoot,
+          codexPath: this.codexPath,
+          updaterProvider: this.updaterProvider,
+          updaterModel: this.updaterModel,
+          updaterReasoningEffort: this.updaterReasoningEffort,
           candidateRoot: resolve(candidateRoot),
           gitRoot: resolve(gitRoot),
           runRoot,
@@ -228,7 +237,7 @@ export class MsaMinimalEvolutionRuntime {
         durationMs: result.durationMs,
         startedAt: result.startedAt,
         completedAt: result.completedAt,
-        stopReason: result.stdout.match(STOP_PATTERN)?.[1]?.trim() ?? null,
+        stopReason,
       }
     } catch (error) {
       if (error?.kind === 'infrastructure') {

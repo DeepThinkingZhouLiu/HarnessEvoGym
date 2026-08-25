@@ -145,7 +145,7 @@ test('Codex updater uses only the isolated local configuration and keeps DSH ava
   ]) assert.ok(invocation.args.includes(flag))
   assert.ok(invocation.args.includes('model_provider="zcloud"'))
   assert.ok(invocation.args.includes('model_reasoning_effort="max"'))
-  assert.equal(invocation.env.CODEX_HOME, '/work/codex-home')
+  assert.equal(invocation.env.CODEX_HOME, '/work/home')
   assert.equal(invocation.env.HTTP_PROXY, undefined)
   assert.equal(invocation.env.DSH_HOME, undefined)
   assert.equal(invocation.env.DSH_PERMISSION_MODE, undefined)

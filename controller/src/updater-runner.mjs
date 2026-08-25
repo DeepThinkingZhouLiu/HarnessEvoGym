@@ -175,7 +175,7 @@ export function buildUpdaterInvocation({
       cwd: workspace,
       env: {
         ...commonEnvironment,
-        CODEX_HOME: join(run, 'codex-home'),
+        CODEX_HOME: commonEnvironment.HOME,
       },
     }
   } else {

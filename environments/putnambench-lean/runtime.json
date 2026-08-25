@@ -1,0 +1,62 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "PutnamBenchRuntime",
+  "solver": {
+    "smokeConcurrency": 4,
+    "initialConcurrency": 8,
+    "maximumConcurrency": 16,
+    "taskTimeoutSeconds": 1800,
+    "maximumModelRequestsPerTask": 16,
+    "maximumResponseTokens": 32768,
+    "gatewayConcurrencyPerTask": 4,
+    "infrastructureRetries": 2,
+    "infrastructureRetryBaseDelaySeconds": 3
+  },
+  "updater": {
+    "timeoutSeconds": 1800,
+    "maximumModelRequestsPerPhase": 32,
+    "gatewayConcurrency": 4
+  },
+  "gateway": {
+    "upstreamBaseUrl": "https://api.zcloudapi.com/v1",
+    "requestTimeoutSeconds": 600
+  },
+  "verifier": {
+    "concurrency": 24,
+    "threadsPerProcess": 2,
+    "timeoutSeconds": 300
+  },
+  "testBroker": {
+    "timeoutSeconds": 604800
+  },
+  "paths": {
+    "persistentRoot": "/mnt/data/hzy/dsh-rsi-runtime",
+    "scratchRoot": "/dev/shm/dsh-rsi",
+    "datasetRoot": "/mnt/data/hzy/dsh-rsi-runtime/datasets/PutnamBench",
+    "pnpmStore": "/mnt/data/hzy/dsh-rsi-runtime/pnpm-store",
+    "buildHome": "/mnt/data/hzy/dsh-rsi-runtime/build-home",
+    "runtimePatch": "/mnt/data/hzy/dsh-rsi-runtime/control/zcloud-max-headless.patch.yml"
+  },
+  "toolchain": {
+    "nodeVersion": "24.19.0",
+    "nodePath": "/mnt/data/hzy/dsh-rsi-runtime/node-v24.19.0-linux-x64/bin/node",
+    "pnpmVersion": "11.7.0",
+    "pnpmPath": "/mnt/data/hzy/dsh-rsi-runtime/pnpm-11.7.0/bin/pnpm",
+    "elanHome": "/mnt/data/hzy/dsh-rsi-runtime/elan",
+    "lakePath": "/mnt/data/hzy/dsh-rsi-runtime/elan/bin/lake",
+    "leanToolchain": "leanprover/lean4:v4.27.0",
+    "bwrapPath": "/usr/bin/bwrap",
+    "setprivPath": "/usr/bin/setpriv"
+  },
+  "identities": {
+    "updaterUser": "dsh-rsi-updater",
+    "solverUser": "dsh-rsi-solver",
+    "buildUser": "dsh-rsi-build",
+    "verifierUser": "dsh-rsi-verifier"
+  },
+  "secrets": {
+    "primaryKeyFdOption": "zcloud-key-fd",
+    "backupPolicy": "separate-campaign-only",
+    "allowEnvironmentKeys": false
+  }
+}

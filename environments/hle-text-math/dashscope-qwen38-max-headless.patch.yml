@@ -1,0 +1,37 @@
+# HLE Solver/Updater patch. The trusted Controller gateway freezes the
+# DashScope model, effort, and output budget; the Harness receives only a
+# loopback dummy credential.
+- id: settings
+  disabled: true
+
+# Session titles are UI metadata and never enter the benchmark answer. Avoid
+# spending a separate model request before each headless solve and retry.
+- id: session-title-llm
+  disabled: true
+
+- id: llm-pi-ai
+  config:
+    providers:
+      dashscope:
+        displayName: DashScope (RSI controlled gateway)
+        apiKeyEnv: RSI_MODEL_GATEWAY_DUMMY_KEY
+        api: openai-responses
+        baseURL: !!js process.env.RSI_MODEL_GATEWAY_URL
+        reasoning: max
+        models:
+          - id: qwen3.8-max
+            contextWindow: 262144
+            maxTokens: 32768
+            reasoningEfforts:
+              max: max
+
+- id: agent-default-model
+  config:
+    provider: dashscope
+    model: qwen3.8-max
+
+- id: session-persistence-jsonl
+  config:
+    root: !!js process.env.DSH_SESSION_ROOT
+    compression: none
+    packChunks: false

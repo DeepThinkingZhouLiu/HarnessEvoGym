@@ -1,0 +1,66 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "HleTextMathRuntime",
+  "solver": {
+    "smokeConcurrency": 4,
+    "initialConcurrency": 15,
+    "maximumConcurrency": 24,
+    "taskTimeoutSeconds": 1200,
+    "partitionTimeoutSeconds": 3600,
+    "maximumModelRequestsPerTask": 12,
+    "maximumResponseTokens": 32768,
+    "gatewayConcurrencyPerTask": 1,
+    "infrastructureRetries": 2,
+    "infrastructureRetryBaseDelaySeconds": 3
+  },
+  "updater": {
+    "timeoutSeconds": 1800,
+    "maximumModelRequestsPerPhase": 24,
+    "gatewayConcurrency": 2
+  },
+  "gateway": {
+    "upstreamBaseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "requestTimeoutSeconds": 900
+  },
+  "verifier": {
+    "concurrency": 24,
+    "threadsPerProcess": 1,
+    "timeoutSeconds": 120,
+    "judgeModel": "qwen3.8-max",
+    "judgeReasoningEffort": "low",
+    "judgeMaximumOutputTokens": 1024
+  },
+  "testBroker": {
+    "timeoutSeconds": 7200
+  },
+  "paths": {
+    "persistentRoot": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime",
+    "scratchRoot": "/dev/shm/dsh-rsi-hle",
+    "datasetRoot": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/datasets/hle-text-math",
+    "pnpmStore": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/pnpm-store",
+    "buildHome": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/build-home",
+    "runtimePatch": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/control/hle-dashscope-qwen38-max-headless.patch.yml"
+  },
+  "toolchain": {
+    "nodeVersion": "24.19.0",
+    "nodePath": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/node-v24.19.0-linux-x64/bin/node",
+    "pnpmVersion": "11.7.0",
+    "pnpmPath": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/pnpm-11.7.0/bin/pnpm",
+    "elanHome": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/elan",
+    "lakePath": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/elan/bin/lake",
+    "leanToolchain": "unused-for-hle",
+    "bwrapPath": "/usr/bin/bwrap",
+    "setprivPath": "/usr/bin/setpriv"
+  },
+  "identities": {
+    "updaterUser": "dsh-rsi-updater",
+    "solverUser": "dsh-rsi-solver",
+    "buildUser": "dsh-rsi-build",
+    "verifierUser": "dsh-rsi-verifier"
+  },
+  "secrets": {
+    "primaryKeyFdOption": "provider-key-fd",
+    "backupPolicy": "separate-campaign-only",
+    "allowEnvironmentKeys": false
+  }
+}

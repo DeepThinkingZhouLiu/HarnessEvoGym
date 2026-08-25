@@ -1,0 +1,52 @@
+apiVersion: harness-rsi/v1alpha1
+kind: TargetAdapter
+
+metadata:
+  id: msa-minimal
+  name: MSA-derived Minimal Harness
+
+spec:
+  source:
+    kind: local-git
+    path: /mnt/data/hzy/03_dsh_rsi/sources/msa-minimal-harness
+    revision: pinned
+
+  materialization:
+    strategy: single-git-worktree
+    compile: false
+
+  solver:
+    protocol: python-responses-over-unix-socket
+    profile: math
+    tools:
+      - bash
+
+  mutation:
+    selection: updater-soft
+    alwaysReadOnly:
+      - .git
+      - .git/**
+      - LICENSE.md
+      - NOTICE.md
+      - README.md
+      - '**/.env'
+      - '**/.env.*'
+    levels:
+      l1:
+        description: Declarative strategy in math.md/math.json—Solver role, math/coding and Bash policy, action/final contract, answer format, self-checking guidance, and step/token/tool budgets.
+        writable:
+          - profiles/**
+      l2:
+        description: Local behavioral extensions in agent.py/tools.py—the minimal Harness's combined middleware, hooks, memory/router, workflow, parser, trace, and Bash-tool surfaces.
+        writable:
+          - profiles/**
+          - agent.py
+          - tools.py
+      l3:
+        description: Structural Solver-core changes plus Responses/SSE transport, error/retry semantics, session/CLI wiring, artifact lifecycle, adapters, and runtime entrypoint assembly.
+        writable:
+          - profiles/**
+          - agent.py
+          - tools.py
+          - model.py
+          - run.py

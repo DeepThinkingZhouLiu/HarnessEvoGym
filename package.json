@@ -12,7 +12,7 @@
   },
   "scripts": {
     "rsi": "node ./controller/src/cli.mjs",
-    "check": "node --check ./controller/src/cli.mjs && node --check ./controller/src/protocol.mjs && node --check ./controller/src/evaluator.mjs",
+    "check": "for file in ./controller/src/*.mjs ./benchmarks/hle-text-math/*.mjs ./scripts/*.mjs; do node --check \"$file\"; done && python3 -c \"compile(open('scripts/download-hle-text-math.py', encoding='utf-8').read(), 'scripts/download-hle-text-math.py', 'exec')\" && bash -n ./scripts/setup-putnambench-runtime.sh ./scripts/setup-hle-runtime.sh",
     "test": "node --test ./controller/test/*.test.mjs"
   }
 }

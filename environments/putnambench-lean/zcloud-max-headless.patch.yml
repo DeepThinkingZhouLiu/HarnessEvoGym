@@ -1,0 +1,32 @@
+# Controller-owned runtime patch. Candidate and Updater mount this file read-only.
+# RSI_MODEL_GATEWAY_URL points to a Controller-side proxy; the real provider key
+# is never present in the Candidate process or its environment.
+- id: settings
+  disabled: true
+
+- id: llm-pi-ai
+  config:
+    providers:
+      zcloud:
+        displayName: ZCloud (RSI controlled gateway)
+        apiKeyEnv: RSI_MODEL_GATEWAY_DUMMY_KEY
+        api: openai-responses
+        baseURL: !!js process.env.RSI_MODEL_GATEWAY_URL
+        reasoning: max
+        models:
+          - id: gpt-5.6-sol
+            contextWindow: 262144
+            maxTokens: 32768
+            reasoningEfforts:
+              max: max
+
+- id: agent-default-model
+  config:
+    provider: zcloud
+    model: gpt-5.6-sol
+
+- id: session-persistence-jsonl
+  config:
+    root: !!js process.env.DSH_SESSION_ROOT
+    compression: none
+    packChunks: false

@@ -1,5 +1,7 @@
 # Benchmark
 
+仓库包含两条生产 Campaign 路径：`putnambench-lean/` 固定 672 道 Lean 题并切成 500/172；`hle-text-math/` 从官方门控 HLE revision 按 `raw_subject × answer_type` 分层采样为 50/50。两者都只用验证集决策；PutnamBench 每个 Candidate 测 test，HLE 则在 baseline 和默认每 5 个 Candidate 的预定轮次测 sealed test。关闭前均不向 Controller/Updater 暴露测试题目、过程或分数。HLE 的私有 manifest 和答案库不提交 Git，详见 `hle-text-math/README.zh.md`。
+
 Benchmark 固定“评哪些任务”，不负责让 Solver 解题，也不负责修改 Candidate。每份配置必须记录不可变数据版本、Evaluator Adapter、精确 Instance ID，以及 `feedback/selection/final` 三个互斥 Partition。
 
 ## 三种 Partition
@@ -26,3 +28,9 @@ npm run rsi -- benchmark validate \
 ```
 
 校验会拒绝移动数据版本、空 Partition、重复 ID、跨 Partition 泄漏、数量不一致和错误的可见性配置。
+
+生产 PutnamBench 配置使用专用入口：
+
+```bash
+npm run rsi -- campaign validate
+```

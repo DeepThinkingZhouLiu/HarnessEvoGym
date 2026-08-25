@@ -1,6 +1,9 @@
 # RSI 运行时状态：候选实例、轨迹、评测产物与决策记录
 /.rsi/
 
+# HLE 是受控数据集；分区 ID、题目、答案与生成的 Campaign 不得进入 Git。
+/benchmarks/hle-text-math/.private/
+
 # 本地 Worktree 与生成报告
 /.WorkTrees/
 /docs/repo-report/

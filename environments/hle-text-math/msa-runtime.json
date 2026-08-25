@@ -1,0 +1,90 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "HleTextMathRuntime",
+  "solver": {
+    "smokeConcurrency": 1,
+    "initialConcurrency": 15,
+    "maximumConcurrency": 24,
+    "taskTimeoutSeconds": 600,
+    "partitionTimeoutSeconds": 3600,
+    "infrastructureRetries": 2,
+    "infrastructureRetryBaseDelaySeconds": 3
+  },
+  "updater": {
+    "gatewayConcurrency": 2
+  },
+  "mutation": {
+    "mode": "updater-soft",
+    "alwaysReadOnly": [
+      ".git",
+      ".git/**",
+      "LICENSE.md",
+      "NOTICE.md",
+      "README.md",
+      "**/.env",
+      "**/.env.*"
+    ],
+    "layers": [
+      {
+        "id": "l1",
+        "description": "Declarative strategy in profiles/**. In this Harness, profiles/math.md controls the Solver role, math-versus-coding approach, when to reason versus invoke Bash, the <bash>/<final> action contract, answer/explanation/confidence format, and generalization/safety instructions; profiles/math.json controls max steps, command timeout, observation truncation, and response-token budget. Explore profile-level hypotheses broadly: problem decomposition, proof or answer self-checking, tool-use thresholds, final-answer discipline, uncertainty calibration, recovery instructions, and allocation of step/token/tool budgets. Prefer L1 whenever behavior can change without new runtime state or control flow; never encode benchmark-specific questions or answers.",
+        "writablePaths": ["profiles/**"]
+      },
+      {
+        "id": "l2",
+        "description": "Behavioral extensions in profiles/**, agent.py, and tools.py. This tiny Harness folds the middleware, hooks, memory/router, workflow, tool, and plugin surfaces of a larger agent into two files: message/history construction; the model-to-action-to-observation loop; localized action/final parsing and repair; step scheduling and early finalization; context retention or compaction; trace events; Bash process lifecycle; timeout handling; and output/error encoding or trimming. Consider general mechanisms such as robust parsing, evidence-aware retries, self-verification passes, adaptive tool/step use, preservation of useful observations, and clearer tool feedback. Choose L2 when traces implicate orchestration, state, or tool behavior that cannot be expressed cleanly as a profile-only change; keep the mutation one coherent behavioral hypothesis rather than replacing the whole core.",
+        "writablePaths": ["profiles/**", "agent.py", "tools.py"]
+      },
+      {
+        "id": "l3",
+        "description": "Solver core and runtime assembly in profiles/**, agent.py, tools.py, model.py, and run.py. L3 permits structural changes to the agent loop plus the surfaces unique to this Harness: OpenAI Responses request construction over the Controller Unix socket; streaming SSE/event decoding and output-text recovery; HTTP error, timeout, and retry semantics; CLI/profile/session wiring; workspace, trace, and answer lifecycles; and entrypoint composition. This is the analogue of agent loop, session/context, registries, adapters, and build/runtime wiring in a larger Harness. Consider L3 for transport/session/runtime failure mechanisms or genuinely cross-cutting designs such as resilient streaming, request/response normalization, model-call orchestration, or pluggable composition. Use it only when evidence shows L1/L2 cannot address the mechanism, and preserve trusted model selection, credentials, gateway isolation, evaluation, and promotion boundaries.",
+        "writablePaths": ["profiles/**", "agent.py", "tools.py", "model.py", "run.py"]
+      }
+    ]
+  },
+  "gateway": {
+    "upstreamBaseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "requestTimeoutSeconds": 600
+  },
+  "verifier": {
+    "concurrency": 24,
+    "threadsPerProcess": 1,
+    "timeoutSeconds": 120,
+    "judgeModel": "qwen3.8-max",
+    "judgeReasoningEffort": "low",
+    "judgeMaximumOutputTokens": 1024
+  },
+  "testBroker": {
+    "timeoutSeconds": 7200
+  },
+  "paths": {
+    "persistentRoot": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime",
+    "scratchRoot": "/mnt/data/hzy/03_dsh_rsi/s",
+    "datasetRoot": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/datasets/hle-text-math",
+    "pnpmStore": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/pnpm-store",
+    "buildHome": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/build-home",
+    "runtimePatch": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/control/hle-dashscope-qwen38-max-headless.patch.yml"
+  },
+  "toolchain": {
+    "nodeVersion": "24.19.0",
+    "nodePath": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/node-v24.19.0-linux-x64/bin/node",
+    "pnpmVersion": "11.7.0",
+    "pnpmPath": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/pnpm-11.7.0/bin/pnpm",
+    "elanHome": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/elan",
+    "lakePath": "/mnt/data/hzy/03_dsh_rsi/dsh-rsi-runtime/elan/bin/lake",
+    "leanToolchain": "unused-for-hle",
+    "bwrapPath": "/usr/bin/bwrap",
+    "setprivPath": "/usr/bin/setpriv"
+  },
+  "identities": {
+    "updaterUser": "dsh-rsi-updater",
+    "solverUser": "dsh-rsi-solver",
+    "buildUser": "dsh-rsi-build",
+    "verifierUser": "dsh-rsi-verifier"
+  },
+  "secrets": {
+    "primaryKeyFdOption": "provider-key-fd",
+    "backupPolicy": "separate-campaign-only",
+    "allowEnvironmentKeys": false
+  }
+}

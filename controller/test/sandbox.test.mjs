@@ -173,6 +173,25 @@ test('generic sandbox can provide an empty proc directory for restricted kernels
   }), ProtocolError)
 })
 
+test('generic sandbox can expose only a synthetic proc self executable', () => {
+  const executable = '/opt/runtime/bin/tool'
+  const result = buildBubblewrapInvocation({
+    invocation: { command: executable, args: [], cwd: '/work', env: {} },
+    uid: 1001,
+    gid: 2001,
+    procMode: 'synthetic-self',
+    procSelfExecutable: executable,
+    mounts: [
+      { source: '/safe/runtime', destination: '/opt/runtime', readOnly: true },
+      { source: '/safe/work', destination: '/work', readOnly: false },
+    ],
+  })
+  assert.equal(includesSequence(result.args, ['--dir', '/proc']), true)
+  assert.equal(includesSequence(result.args, [
+    '--dir', '/proc/self', '--symlink', executable, '/proc/self/exe',
+  ]), true)
+})
+
 function firewallOutput(uids) {
   return [
     '-P OUTPUT ACCEPT',

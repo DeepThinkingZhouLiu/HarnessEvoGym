@@ -154,7 +154,8 @@ test('Codex updater uses only the isolated local configuration and keeps DSH ava
     '--ro-bind',
   )
   assert.ok(invocation.args.includes('--unshare-net'))
-  assert.ok(invocation.args.includes('--proc'))
+  assert.equal(invocation.args.includes('--proc'), false)
+  assert.ok(invocation.args.includes('/proc/self/exe'))
 })
 
 test('extracts RSI_STOP from Codex JSONL final agent message', () => {

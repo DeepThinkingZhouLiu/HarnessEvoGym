@@ -6,7 +6,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { ProtocolError } from './protocol.mjs'
 
 const NETWORK_MODES = new Set(['shared', 'none'])
-const PROC_MODES = new Set(['mounted', 'empty'])
+const PROC_MODES = new Set(['mounted', 'empty', 'synthetic-self'])
 const ATTEST_OUTPUT_LIMIT = 64 * 1024
 const FIREWALL_COMMANDS = Object.freeze(['/usr/sbin/iptables', '/usr/sbin/ip6tables'])
 const IPV4_FIREWALL_COMMAND = FIREWALL_COMMANDS[0]
@@ -201,6 +201,7 @@ export function buildBubblewrapInvocation({
   setprivPath = '/usr/bin/setpriv',
   network = 'none',
   procMode = 'mounted',
+  procSelfExecutable,
   hostname = 'harness-rsi',
   maskedPaths = [],
 }) {
@@ -216,6 +217,16 @@ export function buildBubblewrapInvocation({
 
   const mounts = normalizeMounts(rawMounts)
   const masks = normalizeMasks(maskedPaths, mounts)
+  let syntheticExecutable = null
+  if (procMode === 'synthetic-self') {
+    syntheticExecutable = absolutePath(procSelfExecutable, 'procSelfExecutable')
+    if (!mounts.some((mount) => mount.readOnly
+        && within(mount.destination, syntheticExecutable))) {
+      throw new ProtocolError('synthetic /proc/self/exe 必须位于只读 mount 内')
+    }
+  } else if (procSelfExecutable !== undefined) {
+    throw new ProtocolError('procSelfExecutable 只能用于 synthetic-self proc 模式')
+  }
   const rewritten = rewriteInvocation(invocation, mounts)
   const bwrapArguments = [
     '--die-with-parent',
@@ -248,6 +259,9 @@ export function buildBubblewrapInvocation({
     ]),
     ...masks.flatMap((path) => ['--tmpfs', path]),
     ...(procMode === 'mounted' ? ['--proc', '/proc'] : ['--dir', '/proc']),
+    ...(syntheticExecutable === null ? [] : [
+      '--dir', '/proc/self', '--symlink', syntheticExecutable, '/proc/self/exe',
+    ]),
     '--dev', '/dev',
     '--dir', '/dev/shm',
     '--tmpfs', '/dev/shm',

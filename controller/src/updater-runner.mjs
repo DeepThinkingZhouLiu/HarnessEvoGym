@@ -15,6 +15,10 @@ const SOURCE_WRAPPER = 'process.chdir(process.env.TASK_CWD); await import(proces
 const SAFE_ENV_KEYS = new Set(['HOME', 'LANG', 'LC_ALL', 'PATH', 'TMPDIR', 'TZ'])
 const UPDATER_BACKENDS = new Set(['deepseek-harness', 'codex-cli'])
 const CODEX_PROVIDER_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u
+const CODEX_NATIVE_TARGETS = new Map([
+  ['linux:x64', ['codex-linux-x64', 'x86_64-unknown-linux-musl']],
+  ['linux:arm64', ['codex-linux-arm64', 'aarch64-unknown-linux-musl']],
+])
 
 // The Updater is frozen infrastructure. Only the evaluated Solver uses the
 // evolving minimal preset.
@@ -63,6 +67,16 @@ function safeBaseEnvironment(baseEnv) {
     if (SAFE_ENV_KEYS.has(key) && typeof value === 'string') env[key] = value
   }
   return env
+}
+
+function codexNativeSandboxExecutable() {
+  const target = CODEX_NATIVE_TARGETS.get(`${process.platform}:${process.arch}`)
+  if (target === undefined) throw new ProtocolError('Codex Updater 不支持当前平台')
+  const [packageName, triple] = target
+  return join(
+    UPDATER_SANDBOX_PATHS.runtime,
+    'node_modules', '@openai', packageName, 'vendor', triple, 'bin', 'codex',
+  )
 }
 
 export function buildUpdaterInvocation({
@@ -231,7 +245,12 @@ export function buildUpdaterInvocation({
     bwrapPath,
     setprivPath,
     network: isolatedGateway ? 'none' : 'shared',
-    procMode: backend === 'codex-cli' || !isolatedGateway ? 'mounted' : 'empty',
+    procMode: backend === 'codex-cli'
+      ? 'synthetic-self'
+      : (isolatedGateway ? 'empty' : 'mounted'),
+    ...(backend === 'codex-cli'
+      ? { procSelfExecutable: codexNativeSandboxExecutable() }
+      : {}),
     hostname: 'rsi-updater',
     mounts: [
       { source: runtime, destination: UPDATER_SANDBOX_PATHS.runtime, readOnly: true },

@@ -14,7 +14,7 @@ spec:
   materialization:
     strategy: source-plus-seed-overlay
     seedPath: targets/msa-minimal/cowork-v1
-    seedDigest: cabb7810dd993e0c6f74035f03da2bf3e28c5dd8ef7d29403d56f89acb1f7c9c
+    seedDigest: 2bd9027ac2db11f88805d09d0dd6243bb94131f3dc21c79f41054c31a56cd3cc
     overrides:
       - agent.py
       - model.py
@@ -32,6 +32,8 @@ spec:
       traceFile: agent.jsonl
       maximumAnswerBytes: 1048576
       maximumTraceBytes: 16777216
+      # 公开 Smoke 只验证真实 Solver 链路，每道题最多一次模型交互，避免把连通性测试跑成正式训练。
+      maximumSteps: 1
       secretEnvironment:
         - RSI_PROVIDER_API_KEY
         - RSI_PROVIDER_BASE_URL

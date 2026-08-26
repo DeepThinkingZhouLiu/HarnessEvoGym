@@ -14,6 +14,7 @@ export const MSA_COWORK_CONTAINER_PATHS = Object.freeze({
 })
 
 const MAXIMUM_ANSWER_BYTES = 1024 * 1024
+const MAXIMUM_SOLVER_STEPS = 32
 const MAXIMUM_TASK_TEXT_BYTES = 64 * 1024
 const MAXIMUM_TRACE_BYTES = 16 * 1024 * 1024
 const MAXIMUM_TRACE_LINES = 20_000
@@ -201,6 +202,14 @@ function runtimeMaximumBytes(runtime, field, fallback, label) {
   return value
 }
 
+function runtimeMaximumSteps(runtime) {
+  const value = runtime.maximumSteps ?? MAXIMUM_SOLVER_STEPS
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAXIMUM_SOLVER_STEPS) {
+    throw new ProtocolError(`MSA Solver maximumSteps 必须是 1..${MAXIMUM_SOLVER_STEPS} 的整数`)
+  }
+  return value
+}
+
 async function runtimeDefinitionDigest(repositoryRoot, dockerfile) {
   const pathValue = join(repositoryRoot, normalizeRelativePath(dockerfile, 'MSA Runtime Dockerfile'))
   let source
@@ -332,6 +341,7 @@ export async function runMsaMinimalCoworkSolver({
       RSI_MODEL_GATEWAY_BASE_URL: gateway.baseUrl,
       RSI_MODEL_GATEWAY_MODEL: model.model,
       RSI_MODEL_GATEWAY_MAX_TOKENS: String(model.maxTokens),
+      RSI_SOLVER_MAX_STEPS: String(runtimeMaximumSteps(runtime)),
       RSI_BENCHMARK_SKILLS_ROOT: MSA_COWORK_CONTAINER_PATHS.benchmarkSkills,
       HTTP_PROXY: '',
       HTTPS_PROXY: '',

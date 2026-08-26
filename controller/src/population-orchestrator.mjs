@@ -148,6 +148,10 @@ export class PopulationOrchestrator {
     if (!populationConfig || !SHA256_PATTERN.test(loadedCampaign?.fingerprint ?? '')) {
       throw new ProtocolError('PopulationOrchestrator 需要带 EvolutionRecipe 或 controller_config 的冻结配置')
     }
+    if (loadedCampaign.configDigest !== undefined
+        && !SHA256_PATTERN.test(loadedCampaign.configDigest)) {
+      throw new ProtocolError('PopulationOrchestrator configDigest 必须是 64 位小写 SHA-256')
+    }
     if (typeof createBranch !== 'function') {
       throw new ProtocolError('PopulationOrchestrator 需要 createBranch()')
     }
@@ -160,6 +164,7 @@ export class PopulationOrchestrator {
     this.clock = clock
     this.progress = progress
     this.frozenConfig = frozenConfig ?? this.config
+    this.configDigest = loadedCampaign.configDigest ?? null
     this.secretValues = secretValues
     this.store = new PopulationStore(campaignsRoot, campaignId)
     this.handles = new Map()
@@ -201,6 +206,7 @@ export class PopulationOrchestrator {
       kind: 'PopulationCampaignState',
       campaignId: this.campaignId,
       configFingerprint: this.loaded.fingerprint,
+      ...(this.configDigest === null ? {} : { configDigest: this.configDigest }),
       mode: this.controller.mode,
       status: 'CONFIG_FROZEN',
       createdAt: at,
@@ -222,6 +228,7 @@ export class PopulationOrchestrator {
         at,
         mode: this.controller.mode,
         totalBudget: this.plan.totalBudget,
+        ...(this.configDigest === null ? {} : { configDigest: this.configDigest }),
       }],
     }
   }
@@ -281,6 +288,9 @@ export class PopulationOrchestrator {
     const state = await this.store.readState()
     if (state.configFingerprint !== this.loaded.fingerprint) {
       throw new ProtocolError('Population 配置或 Runtime 指纹与冻结 state 不一致')
+    }
+    if (this.configDigest !== null && state.configDigest !== this.configDigest) {
+      throw new ProtocolError('Population Bundle 摘要与冻结 state 不一致')
     }
     return state
   }

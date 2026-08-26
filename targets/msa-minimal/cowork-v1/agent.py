@@ -64,6 +64,7 @@ class Agent:
         api_key: str,
         model: str,
         maximum_output_tokens: int,
+        maximum_steps: int,
         trace_path: Path,
     ):
         profile_root = root / "profiles"
@@ -83,6 +84,7 @@ class Agent:
             int(self.config["max_output_tokens"]),
             maximum_output_tokens,
         )
+        self.maximum_steps = min(int(self.config["max_steps"]), maximum_steps)
         self.trace_path = trace_path
 
     def trace(self, event: dict) -> None:
@@ -105,7 +107,7 @@ class Agent:
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": task},
         ]
-        for step in range(1, int(self.config["max_steps"]) + 1):
+        for step in range(1, self.maximum_steps + 1):
             reply = query(
                 self.gateway_url,
                 self.api_key,

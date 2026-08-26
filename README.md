@@ -77,6 +77,12 @@ The Model Gateway gives Controller, Solver, and Updater different tokens,
 overrides agent-supplied model/token-limit fields with the frozen Experiment
 values, and meters Solver and Updater usage separately.
 
+At Population startup, the Controller also computes one `configDigest` over the
+expanded Experiment, Recipe, adapters, benchmark, policy, and Updater-prompt
+digest. Every Branch must reproduce it before creating its run directory or
+calling a model, then uses a private read-only prompt copy. Host-side changes
+therefore fail closed instead of silently giving Branches different experiments.
+
 L1/L2/L3 are now Target-owned risk layers, not aliases for DSH directories.
 Every Target declares its own paths and semantic validator. The Controller
 deterministically rechecks path allowlists, extensions, executable bits, file
@@ -144,6 +150,7 @@ existing logs may still help peers in Combined mode.
 | Updater- or strategy-directed selection | EvolutionRecipe: `spec.moduleSearch.authority`        |
 | Region-combination search algorithm     | SearchStrategy Adapter                                |
 | Solver/Updater model and token limits   | Experiment: `spec.models`                             |
+| MSA per-task Solver step limit          | Target Adapter: `spec.solver.runtime.maximumSteps`    |
 
 Both smoke scenes reuse `recipes/population-smoke/*.yml` through:
 
@@ -153,6 +160,14 @@ Both smoke scenes reuse `recipes/population-smoke/*.yml` through:
 The Reasoning tasks are connectivity tests only. **They are not HLE and are not
 a model-capability score.** Existing HLE/PutnamBench production campaigns remain
 under `benchmarks/hle-text-math/` and `benchmarks/putnambench-lean/`.
+
+The current `msa-minimal` Cowork adapter pins `maximumSteps` to `1` only to keep
+real-model five-mode smoke tests inexpensive; raising Candidate `max_steps` does
+not override it. A quality experiment should use a separate Target adapter with
+an appropriate budget instead of interpreting smoke rewards as results. This is
+a trusted hard cap for the current L1-only runs. If L2/L3 can mutate
+`agent.py`/`run.py` and Candidates are treated as actively hostile, add a
+per-Solver-session request quota at the Model Gateway as an additional boundary.
 
 ### Mode and Budget
 

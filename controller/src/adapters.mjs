@@ -95,6 +95,11 @@ function validateMsaSolverRuntime(raw, label) {
       min: 1,
       max: 64 * 1024 * 1024,
     }),
+    maximumSteps: expectNumber(runtime.maximumSteps ?? 32, `${label}.maximumSteps`, {
+      integer: true,
+      min: 1,
+      max: 32,
+    }),
     secretEnvironment,
   }
 }

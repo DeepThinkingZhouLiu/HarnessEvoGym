@@ -442,7 +442,8 @@ async function runUpdaterGeneration({
   await mkdir(dshHome, { recursive: true })
   await context.updaterDriver.stageContext({
     destination: inputDirectory,
-    promptPath: resolveInside(context.repositoryRoot, context.bundle.updater.promptPath, 'Updater Prompt'),
+    promptPath: context.updaterPromptPath
+      ?? resolveInside(context.repositoryRoot, context.bundle.updater.promptPath, 'Updater Prompt'),
     promptVariables: {
       'target.name': context.bundle.target.id,
       'baseline.revision': parent.digest,
@@ -537,6 +538,83 @@ function publicBundleSnapshot(bundle) {
 
 function jsonDigest(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+function canonicalJsonValue(value, path = '$') {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new ProtocolError(`Population Bundle 包含非有限数字：${path}`)
+    return value
+  }
+  if (Array.isArray(value)) {
+    return value.map((item, index) => canonicalJsonValue(item, `${path}[${index}]`))
+  }
+  if (typeof value !== 'object' || value === undefined) {
+    throw new ProtocolError(`Population Bundle 包含不可序列化字段：${path}`)
+  }
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new ProtocolError(`Population Bundle 只能包含普通 JSON 对象：${path}`)
+  }
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [
+    key,
+    canonicalJsonValue(value[key], `${path}.${key}`),
+  ]))
+}
+
+function canonicalJsonDigest(value) {
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalJsonValue(value)))
+    .digest('hex')
+}
+
+/**
+ * 冻结 Population 真正会消费的公开 Bundle，以及不会泄露 Prompt 正文的可信输入摘要。
+ * Adapter/Policy 已经被 loadExperimentBundle 展开为规范对象；对象键排序保证相同语义
+ * 不受 YAML/JSON 属性顺序影响。凭据只保留环境变量名，绝不读取进摘要。
+ */
+export async function capturePopulationBundle(bundle, repositoryRoot) {
+  const promptPath = resolveInside(repositoryRoot, bundle.updater.promptPath, 'Updater Prompt')
+  await assertPathKind(promptPath, 'Updater Prompt', 'file')
+  let updaterPromptSource
+  try {
+    updaterPromptSource = await readFile(promptPath, 'utf8')
+  } catch (error) {
+    throw new ProtocolError('无法读取 Population Updater Prompt', [error.message])
+  }
+  const snapshot = {
+    ...publicBundleSnapshot(bundle),
+    trustedInputs: {
+      updaterPrompt: {
+        path: bundle.updater.promptPath,
+        bytes: Buffer.byteLength(updaterPromptSource, 'utf8'),
+        sha256: createHash('sha256').update(updaterPromptSource).digest('hex'),
+      },
+    },
+  }
+  return {
+    snapshot,
+    digest: canonicalJsonDigest(snapshot),
+    updaterPromptSource,
+  }
+}
+
+export async function assertPopulationBundleMatches({
+  bundle,
+  repositoryRoot,
+  expectedDigest,
+}) {
+  if (typeof expectedDigest !== 'string' || !/^[0-9a-f]{64}$/u.test(expectedDigest)) {
+    throw new ProtocolError('Population Bundle 冻结摘要必须是 64 位小写 SHA-256')
+  }
+  const captured = await capturePopulationBundle(bundle, repositoryRoot)
+  if (captured.digest !== expectedDigest) {
+    throw new ProtocolError('Population Branch 加载的 Bundle 与父层冻结快照不一致', [
+      `expected=${expectedDigest}`,
+      `actual=${captured.digest}`,
+    ])
+  }
+  return captured
 }
 
 export async function claimFinalAttempt(runRoot, { attemptId, startedAt }) {
@@ -724,6 +802,7 @@ export function createCoworkBranchEvolutionDriver({
   runId,
   branchId,
   runRootOverride = null,
+  expectedBundleDigest = null,
   onEvent = () => {},
 }) {
   safeRunId(runId)
@@ -748,6 +827,13 @@ export function createCoworkBranchEvolutionDriver({
     context = await createContext({ repositoryRoot, experimentPath, gatewayScope: runId })
     context.repositoryRoot = repositoryRoot
     context.runId = runId
+    const frozenBundle = expectedBundleDigest === null
+      ? null
+      : await assertPopulationBundleMatches({
+          bundle: context.bundle,
+          repositoryRoot,
+          expectedDigest: expectedBundleDigest,
+        })
     assertSecrets(requiredSecrets(context.bundle))
     validateModelGatewayEnvironment(context.bundle.environment.modelGateway)
     if (runRootOverride) {
@@ -764,6 +850,16 @@ export function createCoworkBranchEvolutionDriver({
     }
     if (await pathExists(runRoot)) throw new ProtocolError(`Run 已存在，拒绝覆盖：${runRoot}`)
     await mkdir(runRoot, { recursive: false })
+    if (frozenBundle) {
+      const trustedInputsRoot = join(runRoot, 'trusted-inputs')
+      await mkdir(trustedInputsRoot, { recursive: false, mode: 0o700 })
+      context.updaterPromptPath = join(trustedInputsRoot, 'updater-prompt.md')
+      await writeFile(context.updaterPromptPath, frozenBundle.updaterPromptSource, {
+        encoding: 'utf8',
+        flag: 'wx',
+        mode: 0o400,
+      })
+    }
     context.runRoot = runRoot
     startedAt = Date.now()
     environment = createEnvironmentRunner({
@@ -1520,11 +1616,13 @@ export async function runPopulationEvolution({
   assertInside(trustedRepositoryRoot, runtimeRoot, 'Target Runtime Root')
   const populationsRoot = join(runtimeRoot, 'populations')
   await mkdir(populationsRoot, { recursive: true })
-  const frozenConfig = publicBundleSnapshot(bundle)
+  const frozenBundle = await capturePopulationBundle(bundle, repositoryRoot)
+  const frozenConfig = frozenBundle.snapshot
   const loadedCampaign = {
     config: frozenConfig,
     recipe: bundle.recipe,
-    fingerprint: jsonDigest({ controllerRevision, frozenConfig }),
+    configDigest: frozenBundle.digest,
+    fingerprint: canonicalJsonDigest({ controllerRevision, configDigest: frozenBundle.digest }),
   }
   const orchestrator = new PopulationOrchestrator({
     loadedCampaign,
@@ -1540,6 +1638,7 @@ export async function runPopulationEvolution({
         runId: `${runId}-${branchId}`,
         branchId,
         runRootOverride: join(branchesRoot, branchId, 'run'),
+        expectedBundleDigest: frozenBundle.digest,
         onEvent,
       })
     },

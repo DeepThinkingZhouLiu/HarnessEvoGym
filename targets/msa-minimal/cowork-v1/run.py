@@ -32,6 +32,7 @@ def main() -> None:
         api_key=os.environ["RSI_MODEL_GATEWAY_DUMMY_KEY"],
         model=os.environ["RSI_MODEL_GATEWAY_MODEL"],
         maximum_output_tokens=_positive_integer_environment("RSI_MODEL_GATEWAY_MAX_TOKENS"),
+        maximum_steps=_positive_integer_environment("RSI_SOLVER_MAX_STEPS"),
         trace_path=args.trace,
     )
     answer = agent.run(args.task, Path.cwd())

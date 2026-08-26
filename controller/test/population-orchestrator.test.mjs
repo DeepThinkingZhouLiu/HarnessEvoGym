@@ -9,6 +9,7 @@ import { PopulationOrchestrator } from '../src/population-orchestrator.mjs'
 const FINGERPRINT = 'a'.repeat(64)
 const REVISION = 'b'.repeat(40)
 const DIGEST = 'c'.repeat(64)
+const CONFIG_DIGEST = 'd'.repeat(64)
 
 function controllerConfig(mode, {
   branches = mode === 'single' ? 1 : 2,
@@ -37,6 +38,7 @@ function controllerConfig(mode, {
 function loaded(mode, options) {
   return {
     fingerprint: FINGERPRINT,
+    configDigest: CONFIG_DIGEST,
     config: {
       apiVersion: 'harness-rsi/v1alpha1',
       kind: 'EvolutionCampaign',
@@ -189,7 +191,9 @@ test('single gives one branch the entire budget and reports the best harness', a
     total: 3,
     scores: { 'branch-001': [2, 3, 3] },
   })
-  await context.orchestrator.initialize()
+  const initialized = await context.orchestrator.initialize()
+  assert.equal(initialized.configDigest, CONFIG_DIGEST)
+  assert.equal(initialized.events[0].configDigest, CONFIG_DIGEST)
   const state = await context.orchestrator.run()
   assert.equal(state.status, 'CLOSED')
   assert.equal(state.budget.consumed, 3)

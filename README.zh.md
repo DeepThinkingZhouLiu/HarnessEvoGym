@@ -74,6 +74,11 @@ Model Gateway 给 Controller、Solver 和 Updater 分配不同令牌。Solver/Up
 请求体里伪造 `model` 或 `max_tokens`，网关也会用 Experiment 冻结值覆盖；
 两个角色的 Usage 也分开计量。
 
+Population 启动时还会对展开后的 Experiment、Recipe、Adapter、Benchmark、Policy 和
+Updater Prompt 摘要生成统一 `configDigest`。每个 Branch 在创建运行目录和调用模型前
+都必须重新得到相同摘要；校验后使用自己的只读 Prompt 副本。因此长实验中宿主侧配置
+被修改时会直接失败，不会让不同 Branch 静默运行不同版本。
+
 L1/L2/L3 现在是 Target 自己的风险分层，不再隐含“一定是 DSH 目录”。
 DSH 可以把 Preset/Skill 声明为 L1/L2，MSA Cowork 可以把 Profile/Skill/Agent Loop
 声明为自己的 L1/L2/L3。路径白名单、扩展名、可执行位、文件大小、符号链接和
@@ -147,6 +152,7 @@ branch 参考。
 | Updater 自选模块或外部策略选模块    | EvolutionRecipe：`spec.moduleSearch.authority`                |
 | 模块组合搜索算法                 | SearchStrategy Adapter                                       |
 | Solver / Updater 模型与 Token 上限 | Experiment：`spec.models`                                  |
+| MSA Solver 单题交互步数上限       | Target Adapter：`spec.solver.runtime.maximumSteps`          |
 
 当前通用示例使用同一组
 `recipes/population-smoke/*.yml`，分别组合为：
@@ -157,6 +163,13 @@ branch 参考。
 Reasoning 冒烟题只用来验证工程链路，**不是 HLE，不能当作模型能力成绩**。
 HZY 原有 HLE/PutnamBench 生产 Campaign 仍位于 `benchmarks/hle-text-math/` 和
 `benchmarks/putnambench-lean/`。
+
+当前 `msa-minimal` Cowork Adapter 把 `maximumSteps` 固定为 `1`，只用于低成本验证
+五种 Mode 的真实模型闭环；Candidate Profile 即使把 `max_steps` 调高也不会生效。
+正式质量实验应新建独立 Target Adapter 并设置更合理的预算，不要直接拿 Smoke 分数做结论。
+该限制对本轮只开放 L1 的实验是可信硬上限；若未来开放可修改 `agent.py/run.py` 的
+L2/L3 并把 Candidate 视为主动恶意代码，还应在 Model Gateway 增加每个 Solver Session
+的独立请求硬配额。
 
 ### 模式与 Budget
 

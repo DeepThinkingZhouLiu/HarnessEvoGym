@@ -57,3 +57,9 @@ npm run rsi -- evaluate compare \
 ## 小样本解释
 
 当前 selection 只有两题，Policy 仅要求至少一题 Reward 提升、均值不下降且无回退，没有要求 Bootstrap 下界大于零。这是工程 Smoke Gate，不是统计显著性声明。扩大正式 selection 后，应增加 Trial，并启用 `requirePositiveRewardCiLowerBound` 或预先注册更合适的统计准则。
+
+`evaluation/policies/strict-mean-reward-improvement.json` 是给渐进风险扩展示例使用的
+严格配对 Gate：要求至少一题 Reward 严格提升、均值不下降、Reward 和
+二值 resolved 状态都零回退。因此平分必定拒绝，只有真正变好的 Candidate
+才会让 SearchStrategy 清空连续未提升计数。它仍未启用置信区间下界，所以是
+确定性小样本的严格晋升规则，不是统计显著性声明。

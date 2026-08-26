@@ -96,6 +96,13 @@ Branch 先搜 L1，连续指定次数没有 Candidate 晋升时再扩大到 L2/L
 它是旧 `controller-sequential` 层级推进的通用 SearchStrategy 表达，不再使用
 `legacy-*` 命名。
 
+该策略是显式启用的，现有十个五 Mode 工程冒烟仍保留默认
+`linear-hill-climb`。完整可运行组合位于
+`experiments/reasoning-msa-progressive-strict-smoke.json`：它绑定 Single Population、
+L1 -> L2 -> L3 的 9 轮最大 Budget、`progressive-risk-expansion` 以及严格
+Reward 晋升 Policy。平分不会晋升，因此会正确累计未提升次数。
+该 Synthetic Reasoning 配置只用于验证完整接线和层级过渡，不是 HLE 成绩。
+
 ## MSA Minimal 怎么变成不同 Solver
 
 共享的最小 Agent Loop 已提交到
@@ -223,6 +230,8 @@ for scene in cowork reasoning; do
       --config "experiments/${scene}-msa-smoke-${mode}.json"
   done
 done
+npm run rsi -- experiment validate \
+  --config experiments/reasoning-msa-progressive-strict-smoke.json
 ```
 
 真实 Cowork 运行还需要配置 SkillsBench 根目录和 Provider 环境变量。下面只展示

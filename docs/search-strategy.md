@@ -50,6 +50,21 @@ non-promotions, and returns `exhausted=true` after the same threshold is reached
 at the Recipe risk ceiling. The Controller then stops that Branch and preserves
 unused Population budget.
 
+It remains opt-in and does not replace the default strategy of existing smoke
+experiments. The complete configuration chain is:
+
+```text
+experiments/reasoning-msa-progressive-strict-smoke.json
+  -> recipes/progressive-risk-expansion/single.yml
+  -> adapters/strategies/progressive-risk-expansion.yml
+  -> evaluation/policies/strict-mean-reward-improvement.json
+```
+
+The Single Branch receives at most nine rounds, covering the default
+`three L1 misses -> three L2 misses -> three L3 misses -> exhausted` path. The
+strict policy requires at least one Reward improvement and zero Reward
+regressions, so ties cannot reset the strategy's consecutive-miss counter.
+
 ## Contributor example
 
 See `strategies/examples/round-robin/` and

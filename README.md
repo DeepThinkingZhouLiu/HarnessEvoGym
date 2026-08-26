@@ -102,6 +102,14 @@ budget. This is the generic SearchStrategy form of the old
 `controller-sequential` level progression; it is intentionally not named
 `legacy-*`.
 
+This strategy is opt-in; the existing ten five-mode connectivity smokes keep
+the backward-compatible `linear-hill-climb` default. The complete runnable
+composition is `experiments/reasoning-msa-progressive-strict-smoke.json`. It
+binds Single Population, a nine-round L1 -> L2 -> L3 maximum budget,
+`progressive-risk-expansion`, and a strict Reward-promotion policy. Ties do not
+promote and therefore count toward risk expansion. This synthetic Reasoning
+composition proves wiring and level transitions only; it is not an HLE score.
+
 ## Turning MSA Minimal into different Solvers
 
 The shared minimal Agent loop is committed at
@@ -225,6 +233,8 @@ for scene in cowork reasoning; do
       --config "experiments/${scene}-msa-smoke-${mode}.json"
   done
 done
+npm run rsi -- experiment validate \
+  --config experiments/reasoning-msa-progressive-strict-smoke.json
 ```
 
 Real Cowork runs also require the SkillsBench checkout and runtime Provider

@@ -137,6 +137,56 @@ test('连续 Reward 使用配对均值和回退数量做晋升', async () => {
   assert.equal(report.decision.eligible, true)
 })
 
+test('严格 Reward Policy 拒绝平分，只接受至少一题提升且零回退', async () => {
+  const benchmark = validateBenchmark(
+    await readJsonFile(resolve(root, 'benchmarks/text-reasoning-smoke/benchmark.json')),
+  )
+  const policy = validateEvaluationPolicy(
+    await readJsonFile(resolve(root, 'evaluation/policies/strict-mean-reward-improvement.json')),
+  )
+  const instanceId = benchmark.partitions.selection.instanceIds[0]
+  const records = (status, reward, label) => validateResultRecords([{
+    instance_id: instanceId,
+    status,
+    reward,
+    policy_violations: [],
+  }], benchmark, label)
+  const baselineRecords = records('unresolved', 0, 'Baseline')
+  const tiedRecords = records('unresolved', 0, 'Tied Candidate')
+  const improvedRecords = records('resolved', 1, 'Improved Candidate')
+  const run = {
+    id: 'strict-policy-test',
+    baselineRevision: 'baseline-sha',
+    candidateRevision: 'candidate-sha',
+  }
+
+  const tied = evaluateBenchmark({
+    benchmark,
+    policy,
+    run,
+    baselineRecords,
+    candidateRecords: tiedRecords,
+    partitions: ['selection'],
+  })
+  assert.equal(tied.partitions.selection.paired.deltaMeanReward, 0)
+  assert.equal(tied.decision.eligible, false)
+  assert.equal(
+    tied.decision.gates.find((gate) => gate.id === 'minimum-reward-improved').passed,
+    false,
+  )
+
+  const improved = evaluateBenchmark({
+    benchmark,
+    policy,
+    run,
+    baselineRecords,
+    candidateRecords: improvedRecords,
+    partitions: ['selection'],
+  })
+  assert.equal(improved.partitions.selection.paired.deltaMeanReward, 1)
+  assert.equal(improved.decision.eligible, true)
+})
+
 test('Resolved Rate 区间使用 Policy 配置的置信度', async () => {
   const fixture = await loadFixture()
   fixture.policy.bootstrap.confidence = 0.9

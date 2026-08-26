@@ -87,6 +87,7 @@ npm run rsi -- adapter validate --config adapters/strategies/linear-hill-climb.y
 npm run rsi -- adapter validate --config adapters/strategies/progressive-risk-expansion.yml
 npm run rsi -- adapter validate --config environments/skillsbench-cowork.yml
 npm run rsi -- experiment validate --config experiments/cowork-skillsbench-dsh-l1.json
+npm run rsi -- experiment validate --config experiments/reasoning-msa-progressive-strict-smoke.json
 ```
 
 未知 Kind、移动数据版本、空白可写列表、非法路径、重复 Seed、不匹配的 Environment/Benchmark、`host` 网络或没有对应变异层级都会失败，不会静默采用默认值。

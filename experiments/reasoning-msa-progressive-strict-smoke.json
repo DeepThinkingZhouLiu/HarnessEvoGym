@@ -1,0 +1,22 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "EvolutionExperiment",
+  "metadata": { "id": "reasoning-msa-progressive-strict-smoke" },
+  "spec": {
+    "recipe": "recipes/progressive-risk-expansion/single.yml",
+    "adapters": {
+      "target": "adapters/targets/msa-minimal-reasoning.yml",
+      "updater": "adapters/updaters/deepseek-harness.yml",
+      "environment": "environments/text-reasoning-smoke.yml",
+      "provider": "adapters/providers/zcloud-openai.yml",
+      "strategy": "adapters/strategies/progressive-risk-expansion.yml"
+    },
+    "benchmark": "benchmarks/text-reasoning-smoke/benchmark.json",
+    "policy": "evaluation/policies/strict-mean-reward-improvement.json",
+    "models": {
+      "solver": { "provider": "zcloud-openai", "model": "gpt-5.6-terra", "maxTokens": 4096 },
+      "updater": { "provider": "zcloud-openai", "model": "gpt-5.6-terra", "maxTokens": 4096 }
+    },
+    "evolution": { "mutationLevel": "l3", "generations": 9, "trialsPerInstance": 1, "seeds": [20260827] }
+  }
+}

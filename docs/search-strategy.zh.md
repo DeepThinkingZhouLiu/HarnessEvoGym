@@ -84,6 +84,20 @@ Region：
 因此 `combined + progressive-risk-expansion` 表示：Branch 之间共享经验并竞争预算，
 每个 Branch 内部独立执行 L1 -> L2 -> L3 渐进扩展。
 
+它不会自动替换旧 Experiment 的默认策略。可直接加载的完整示例是：
+
+```text
+experiments/reasoning-msa-progressive-strict-smoke.json
+  -> recipes/progressive-risk-expansion/single.yml
+  -> adapters/strategies/progressive-risk-expansion.yml
+  -> evaluation/policies/strict-mean-reward-improvement.json
+```
+
+该 Recipe 给 Single Branch 最多 9 轮，正好覆盖默认的
+`L1 三次 miss -> L2 三次 miss -> L3 三次 miss -> exhausted`。严格 Policy
+要求至少一题 Reward 变好且没有任何 Reward 回退；因此 `0 -> 0`
+或 `1 -> 1` 都会被拒绝，不会错误清空 Strategy 的连续 miss 计数。
+
 ## 外部 Contributor Strategy
 
 外部算法使用 `docker-json-v1`，通过 stdin/stdout 交换一个 JSON，不 import 进 Controller。运行时固定为：

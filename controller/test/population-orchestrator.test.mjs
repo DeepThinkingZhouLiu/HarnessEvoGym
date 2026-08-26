@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { PopulationOrchestrator } from '../src/population-orchestrator.mjs'
+import {
+  formatPopulationStatus,
+  PopulationOrchestrator,
+} from '../src/population-orchestrator.mjs'
 
 const FINGERPRINT = 'a'.repeat(64)
 const REVISION = 'b'.repeat(40)
@@ -194,6 +197,7 @@ test('single gives one branch the entire budget and reports the best harness', a
   const initialized = await context.orchestrator.initialize()
   assert.equal(initialized.configDigest, CONFIG_DIGEST)
   assert.equal(initialized.events[0].configDigest, CONFIG_DIGEST)
+  assert.equal(initialized.final, null)
   const state = await context.orchestrator.run()
   assert.equal(state.status, 'CLOSED')
   assert.equal(state.budget.consumed, 3)
@@ -288,4 +292,34 @@ test('a capped invocation still closes and reports when its last wave exhausts t
   assert.equal(state.budget.consumed, 1)
   const report = await context.orchestrator.report()
   assert.equal(report.summary.budget.unused, 0)
+})
+
+test('Population Final 状态只输出允许字段，不反射 sealed 错误细节', async () => {
+  const context = await fixture('single', { total: 1 })
+  await context.orchestrator.initialize()
+  const state = await context.orchestrator.run()
+  const status = formatPopulationStatus({
+    ...state,
+    final: {
+      evaluated: false,
+      branchId: 'branch-001',
+      candidateId: 'baseline',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      failedAt: '2026-01-01T00:00:01.000Z',
+      failure: { message: 'sealed answer', details: ['hidden task'] },
+      injected: 'provider secret',
+    },
+  })
+  assert.deepEqual(status.final, {
+    status: 'failed',
+    evaluated: false,
+    branchId: 'branch-001',
+    baselineId: null,
+    candidateId: 'baseline',
+    startedAt: '2026-01-01T00:00:00.000Z',
+    completedAt: null,
+    failedAt: '2026-01-01T00:00:01.000Z',
+    report: null,
+  })
+  assert.doesNotMatch(JSON.stringify(status), /sealed answer|hidden task|provider secret/u)
 })

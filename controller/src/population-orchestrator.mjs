@@ -101,6 +101,33 @@ function markdownReport(summary) {
   return lines.join('\n')
 }
 
+function publicPopulationFinal(final) {
+  if (final === null || final === undefined || typeof final !== 'object' || Array.isArray(final)) {
+    return null
+  }
+  const safeId = (value, pattern) => (
+    typeof value === 'string' && pattern.test(value) ? value : null
+  )
+  const safeTime = (value) => (
+    typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null
+  )
+  const completed = final.evaluated === true
+  const failed = !completed && safeTime(final.failedAt) !== null
+  return {
+    status: completed ? 'completed' : failed ? 'failed' : 'running',
+    evaluated: completed,
+    branchId: safeId(final.branchId, /^branch-[0-9]{3}$/u),
+    baselineId: safeId(final.baselineId, /^[a-z0-9][a-z0-9._-]{1,119}$/u),
+    candidateId: safeId(final.candidateId, /^[a-z0-9][a-z0-9._-]{1,119}$/u),
+    startedAt: safeTime(final.startedAt),
+    completedAt: safeTime(final.completedAt),
+    failedAt: safeTime(final.failedAt),
+    report: final.report === 'report/final-evaluation.json'
+      ? 'report/final-evaluation.json'
+      : null,
+  }
+}
+
 export function formatPopulationStatus(state) {
   if (!state || state.kind !== 'PopulationCampaignState') {
     throw new ProtocolError('Population status source 格式错误')
@@ -115,6 +142,8 @@ export function formatPopulationStatus(state) {
     updatedAt: state.updatedAt,
     closedAt: state.closedAt ?? null,
     reportAvailable: ['CLOSED', 'REPORTED'].includes(state.status),
+    // Status 是公开投影：不反射 failure.details、Final 指标或未知字段。
+    final: publicPopulationFinal(state.final),
     epoch: state.epoch,
     budget: structuredClone(state.budget),
     best: state.best === null ? null : structuredClone(state.best),
@@ -222,6 +251,7 @@ export class PopulationOrchestrator {
       },
       branches,
       best: null,
+      final: null,
       events: [{
         sequence: 1,
         type: 'POPULATION_CONFIG_FROZEN',

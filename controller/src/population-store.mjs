@@ -129,6 +129,12 @@ export class PopulationStore {
     return { directory: this.reportRoot, paths }
   }
 
+  async writeFinalReport(report) {
+    const path = join(this.reportRoot, 'final-evaluation.json')
+    await atomicJson(path, report)
+    return path
+  }
+
   async readReport() {
     try {
       const [summary, bestHarness] = await Promise.all([

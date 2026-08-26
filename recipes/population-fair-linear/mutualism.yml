@@ -1,0 +1,14 @@
+apiVersion: harness-rsi/v1alpha1
+kind: EvolutionRecipe
+spec:
+  population:
+    mode: mutualism
+    concurrency: { n_branches: 2 }
+    # 每个 Branch 两轮；第二个 Wave 会读取对方第一轮的进化证据。
+    budget: { total_budget: 4, beta: 0 }
+    peer_sharing: { enabled: true }
+    competition: { enabled: false }
+  moduleSearch:
+    authority: strategy-directed
+    riskCeiling: l1
+    strategy: linear-hill-climb

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { appendFile, mkdir, open, readFile, realpath, stat, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
   copyRegularTree,
   diffSnapshots,
@@ -1692,10 +1692,7 @@ export async function runConfiguredEvolution(options) {
     : await runPopulationEvolution(options)
 }
 
-export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent = () => {} }) {
-  const runRoot = await realpath(resolve(runDirectory))
-  assertInside(resolve(repositoryRoot, '.rsi/runs'), runRoot, 'Evolution Run')
-  const state = await readJsonFile(join(runRoot, 'state.json'))
+function assertEvolutionRunState(state) {
   if (
     state?.apiVersion !== 'harness-rsi/v1alpha1' ||
     state?.kind !== 'EvolutionRunState' ||
@@ -1705,7 +1702,128 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
   ) {
     throw new ProtocolError('指定目录不是合法的 Evolution Run')
   }
-  if (state.metadata.status !== 'completed') throw new ProtocolError('只有 completed Run 可以执行 Final Evaluation')
+  return state
+}
+
+function populationFinalEvent(state, type, at, details = {}) {
+  return {
+    sequence: state.events.length + 1,
+    type,
+    at,
+    ...details,
+  }
+}
+
+async function savePopulationFinalState(authorization, final, type, details = {}) {
+  const at = new Date().toISOString()
+  const previousUpdatedAt = authorization.state.updatedAt
+  const next = {
+    ...authorization.state,
+    updatedAt: at,
+    final,
+    events: [
+      ...authorization.state.events,
+      populationFinalEvent(authorization.state, type, at, details),
+    ],
+  }
+  await authorization.store.saveState(next, { expectedUpdatedAt: previousUpdatedAt })
+  authorization.state = next
+  return next
+}
+
+async function loadPopulationFinalAuthorization({ repositoryRoot, populationRoot }) {
+  const state = await readJsonFile(join(populationRoot, 'public', 'state.json'))
+  if (
+    state?.apiVersion !== 'harness-rsi/v1alpha1' ||
+    state?.kind !== 'PopulationCampaignState' ||
+    !Array.isArray(state.branches) ||
+    !Array.isArray(state.events)
+  ) {
+    throw new ProtocolError('指定目录不是合法的 Population Campaign')
+  }
+  if (!['CLOSED', 'REPORTED'].includes(state.status)) {
+    throw new ProtocolError('只有已关闭的 Population 可以执行 Final Evaluation')
+  }
+  if (state.final !== null && state.final !== undefined) {
+    throw new ProtocolError('Population Final Partition 已经解封过；禁止重复访问')
+  }
+  safeRunId(state.campaignId)
+  if (typeof state.configDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(state.configDigest)
+      || typeof state.configFingerprint !== 'string'
+      || !/^[a-f0-9]{64}$/u.test(state.configFingerprint)) {
+    throw new ProtocolError('Population 缺少可验证的冻结配置摘要')
+  }
+  const currentControllerRevision = await trustedControllerRevision(repositoryRoot)
+  const expectedFingerprint = canonicalJsonDigest({
+    controllerRevision: currentControllerRevision,
+    configDigest: state.configDigest,
+  })
+  if (expectedFingerprint !== state.configFingerprint) {
+    throw new ProtocolError('当前 Controller Revision 或 Population Bundle 与冻结指纹不一致')
+  }
+  const branchId = state.best?.branchId
+  if (typeof branchId !== 'string' || !/^branch-[0-9]{3}$/u.test(branchId)) {
+    throw new ProtocolError('Population 缺少合法的 Best Branch')
+  }
+  const matchingBranches = state.branches.filter((branch) => branch.branchId === branchId)
+  if (matchingBranches.length !== 1) throw new ProtocolError('Population Best Branch 无法唯一定位')
+  const bestBranch = matchingBranches[0]
+  for (const field of ['candidateId', 'digest', 'revision']) {
+    if (typeof state.best?.[field] !== 'string'
+        || state.best[field] !== bestBranch.incumbent?.[field]) {
+      throw new ProtocolError(`Population Best ${field} 与 Branch Incumbent 不一致`)
+    }
+  }
+
+  const store = new PopulationStore(dirname(populationRoot), basename(populationRoot))
+  if (store.root !== populationRoot) throw new ProtocolError('Population Root 解析结果不一致')
+  const report = await store.readReport()
+  if (
+    report.bestHarness?.kind !== 'BestHarnessImplementation' ||
+    report.bestHarness.branchId !== branchId ||
+    report.bestHarness.candidateId !== state.best.candidateId ||
+    report.bestHarness.digest !== state.best.digest ||
+    report.bestHarness.revision !== state.best.revision
+  ) {
+    throw new ProtocolError('Population Best Harness 报告与关闭状态不一致')
+  }
+
+  const branchesRoot = await realpath(store.branchesRoot)
+  const runRoot = await realpath(join(branchesRoot, branchId, 'run'))
+  assertInside(branchesRoot, runRoot, 'Population Best Branch Run')
+  const branchState = assertEvolutionRunState(await readJsonFile(join(runRoot, 'state.json')))
+  if (branchState.spec.branchId !== branchId) {
+    throw new ProtocolError('Population Best Branch 与子 Run 身份不一致')
+  }
+  if (!['running', 'stopped', 'completed'].includes(branchState.metadata.status)) {
+    throw new ProtocolError(`Population Best Branch 不能执行 Final：${branchState.metadata.status}`)
+  }
+  if (branchState.spec.final !== null) {
+    throw new ProtocolError('Population Best Branch Final 已经解封过')
+  }
+  if (branchState.spec.championId !== state.best.candidateId) {
+    throw new ProtocolError('Population Best Candidate 与子 Run Champion 不一致')
+  }
+  const champion = branchState.spec.candidates.find((candidate) => (
+    candidate.id === branchState.spec.championId
+  ))
+  if (!champion || champion.digest !== state.best.digest) {
+    throw new ProtocolError('Population Best Candidate Digest 与子 Run 不一致')
+  }
+  return { root: populationRoot, store, state, branchId, runRoot, branchState }
+}
+
+async function finalizeCoworkRun({
+  repositoryRoot,
+  runRoot,
+  state,
+  population = null,
+  onEvent = () => {},
+}) {
+  assertEvolutionRunState(state)
+  if (population === null && state.metadata.status !== 'completed') {
+    throw new ProtocolError('只有 completed Run 可以执行 Final Evaluation')
+  }
   if (state.spec.final !== null) throw new ProtocolError('Final Partition 已经解封过；禁止重复访问')
   safeRunId(state.metadata.id)
   const baselineId = safeCandidateId(state.spec.baselineId)
@@ -1740,6 +1858,13 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
   }
   if (jsonDigest(publicBundleSnapshot(context.bundle)) !== state.spec.configDigest) {
     throw new ProtocolError('当前 Experiment/Adapter/Benchmark/Policy 已在进化后变更')
+  }
+  if (population !== null) {
+    await assertPopulationBundleMatches({
+      bundle: context.bundle,
+      repositoryRoot,
+      expectedDigest: population.state.configDigest,
+    })
   }
   const environment = createEnvironmentRunner({
     environment: context.bundle.environment,
@@ -1801,7 +1926,22 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
 
   const finalAttemptId = randomUUID()
   const finalStartedAt = new Date().toISOString()
-  await claimFinalAttempt(runRoot, { attemptId: finalAttemptId, startedAt: finalStartedAt })
+  await claimFinalAttempt(population?.root ?? runRoot, {
+    attemptId: finalAttemptId,
+    startedAt: finalStartedAt,
+  })
+  if (population !== null) {
+    await savePopulationFinalState(population, {
+      evaluated: false,
+      attemptId: finalAttemptId,
+      startedAt: finalStartedAt,
+      branchId: population.branchId,
+      candidateId: championId,
+    }, 'POPULATION_FINAL_STARTED', {
+      branchId: population.branchId,
+      candidateId: championId,
+    })
+  }
   state.metadata.status = 'finalizing'
   state.spec.final = { evaluated: false, attemptId: finalAttemptId, startedAt: finalStartedAt }
 
@@ -1850,7 +1990,7 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
       benchmark: context.bundle.benchmark,
       policy: context.bundle.policy,
       run: {
-        id: state.metadata.id,
+        id: population?.state.campaignId ?? state.metadata.id,
         baselineRevision: h0Manifest.spec.treeDigest,
         candidateRevision: championManifest.spec.treeDigest,
       },
@@ -1860,8 +2000,9 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
       evolutionLedger: state.spec.ledger ?? null,
       allowSealed: true,
     })
-    const reportPath = join(runRoot, 'final-evaluation.json')
-    await writeJsonFile(reportPath, report)
+    const reportPath = population === null
+      ? join(runRoot, 'final-evaluation.json')
+      : await population.store.writeFinalReport(report)
     state.spec.final = {
       evaluated: true,
       attemptId: finalAttemptId,
@@ -1869,12 +2010,32 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
       completedAt: new Date().toISOString(),
       baselineId,
       candidateId: championId,
-      report: relative(runRoot, reportPath).replaceAll('\\', '/'),
+      report: population === null
+        ? relative(runRoot, reportPath).replaceAll('\\', '/')
+        : `population://${population.state.campaignId}/report/final-evaluation.json`,
     }
     state.metadata.status = 'finalized'
     await writeJsonFile(join(runRoot, 'state.json'), state)
+    if (population !== null) {
+      await savePopulationFinalState(population, {
+        evaluated: true,
+        attemptId: finalAttemptId,
+        startedAt: finalStartedAt,
+        completedAt: state.spec.final.completedAt,
+        branchId: population.branchId,
+        baselineId,
+        candidateId: championId,
+        report: 'report/final-evaluation.json',
+        metrics: report.rsiMetrics,
+      }, 'POPULATION_FINAL_COMPLETED', {
+        branchId: population.branchId,
+        baselineId,
+        candidateId: championId,
+        report: 'report/final-evaluation.json',
+      })
+    }
     onEvent({ stage: 'finalized', message: `Final 报告已写入 ${reportPath}` })
-    return { runId: state.metadata.id, reportPath, report }
+    return { runId: population?.state.campaignId ?? state.metadata.id, reportPath, report }
   } catch (error) {
     state.metadata.status = 'final-failed'
     state.spec.final = {
@@ -1883,6 +2044,23 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
       failure: { message: error.message, details: error.details ?? [] },
     }
     await writeJsonFile(join(runRoot, 'state.json'), state)
+    if (population !== null) {
+      // Population public state/event 不回显 Final 任务、Verifier 或上游错误细节。
+      const failure = {
+        name: 'FinalEvaluationError',
+        message: 'Final Evaluation failed; inspect trusted Controller logs',
+      }
+      await savePopulationFinalState(population, {
+        ...(population.state.final ?? {}),
+        evaluated: false,
+        failedAt: state.spec.final.failedAt,
+        failure,
+      }, 'POPULATION_FINAL_FAILED', {
+        branchId: population.branchId,
+        candidateId: championId,
+        failure,
+      })
+    }
     throw error
   } finally {
     const cleanupErrors = await context.modelGateway.stop()
@@ -1890,4 +2068,21 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
       onEvent({ stage: 'cleanup-warning', message: `Model Gateway 清理失败：${cleanupErrors.join('；')}` })
     }
   }
+}
+
+export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent = () => {} }) {
+  const runRoot = await realpath(resolve(runDirectory))
+  assertInside(resolve(repositoryRoot, '.rsi/runs'), runRoot, 'Evolution Run')
+  if (await pathExists(join(runRoot, 'public', 'state.json'))) {
+    const population = await loadPopulationFinalAuthorization({ repositoryRoot, populationRoot: runRoot })
+    return await finalizeCoworkRun({
+      repositoryRoot,
+      runRoot: population.runRoot,
+      state: population.branchState,
+      population,
+      onEvent,
+    })
+  }
+  const state = await readJsonFile(join(runRoot, 'state.json'))
+  return await finalizeCoworkRun({ repositoryRoot, runRoot, state, onEvent })
 }

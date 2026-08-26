@@ -117,6 +117,7 @@ Controller 先复制这份固定 Source，再叠加 Target 自己的 CandidateSe
 | Target                     | CandidateSeed                         | H0 起点                                      |
 |----------------------------|---------------------------------------|----------------------------------------------|
 | `msa-minimal`              | `targets/msa-minimal/cowork-v1/`      | Cowork Prompt、4 类 Office Skill、Chat Completions |
+| `msa-minimal-cowork-rsi`   | `targets/msa-minimal/cowork-v1/`      | 同一 H0，但开放完整 12 步 Cowork 工具循环 |
 | `msa-minimal-reasoning`    | `targets/msa-minimal/reasoning-v1/`   | Math Profile、Chat Completions 和 Reasoning CLI     |
 
 两个 Target 共用同一份 Agent Loop Source，但各自声明自己的 Catalog：
@@ -181,10 +182,28 @@ HZY 原有 HLE/PutnamBench 生产 Campaign 仍位于 `benchmarks/hle-text-math/`
 
 当前 `msa-minimal` Cowork Adapter 把 `maximumSteps` 固定为 `1`，只用于低成本验证
 五种 Mode 的真实模型闭环；Candidate Profile 即使把 `max_steps` 调高也不会生效。
-正式质量实验应新建独立 Target Adapter 并设置更合理的预算，不要直接拿 Smoke 分数做结论。
+已提供的 `msa-minimal-cowork-rsi` 则开放与 Profile 一致的 12 步上限，用于
+3/2/3 SkillsBench 受控 RSI 实验；不要直接拿 Smoke 分数做能力结论。
 该限制对本轮只开放 L1 的实验是可信硬上限；若未来开放可修改 `agent.py/run.py` 的
 L2/L3 并把 Candidate 视为主动恶意代码，还应在 Model Gateway 增加每个 Solver Session
 的独立请求硬配额。
+
+### 五种 Mode 公平线性 RSI 配置
+
+`recipes/population-fair-linear/*.yml` 把五种 Mode 的可变异 Candidate 总预算统一为
+4，搜索策略统一为 `linear-hill-climb`，只开放 MSA Cowork L1。对应实验是：
+
+- `experiments/cowork-msa-rsi-linear-single.json`
+- `experiments/cowork-msa-rsi-linear-independent.json`
+- `experiments/cowork-msa-rsi-linear-mutualism.json`
+- `experiments/cowork-msa-rsi-linear-competition.json`
+- `experiments/cowork-msa-rsi-linear-combined.json`
+
+五份配置共用同一 H0、Terra Solver/Updater、3 道 feedback、2 道 selection、
+3 道 sealed final 与严格 Reward Gate。这是一套“流程完整、可变异预算对齐”的受控
+RSI 实验，但目前每题只有 1 个 Trial，题集也很小，**不等于统计意义上的正式
+Benchmark 结论**。多 Branch Mode 还会多做一次 H0 基线评测，所以最终比较时必须同时
+报告 Solver/Updater Token 和墙钟时间，不能只看最终分数。
 
 ### 模式与 Budget
 
@@ -195,7 +214,7 @@ spec:
   population:
     mode: combined
     concurrency: { n_branches: 2 }
-    budget: { total_budget: 3, beta: 0.67 }
+    budget: { total_budget: 4, beta: 0.5 }
     peer_sharing: { enabled: true }
     competition: { enabled: true, bonus_grant_unit: 1 }
   moduleSearch:
@@ -284,12 +303,29 @@ npm run rsi -- experiment run \
   --config experiments/cowork-msa-smoke-single.json \
   --run-id cowork-single-smoke-001
 
+# 受控 RSI：五种 Mode 的可变异总预算都是 4。
+for mode in single independent mutualism competition combined; do
+  npm run rsi -- experiment run \
+    --config "experiments/cowork-msa-rsi-linear-${mode}.json" \
+    --run-id "cowork-rsi-linear-${mode}-001"
+
+  # Population 关闭并锁定全局最优 Branch 后，只解封一次 final。
+  npm run rsi -- experiment finalize \
+    --run ".rsi/runs/populations/cowork-rsi-linear-${mode}-001"
+done
+
 unset RSI_PROVIDER_API_KEY
 ```
 
-`experiment run` 进化期只读 feedback/selection。当前通用 Population smoke 不解封 final；
-旧单 Champion Cowork Run 仍使用 `experiment finalize` 做一次性 final 评测。
-这些小题集只用于跑通工程闭环，不代表统计显著性结论。
+`experiment run` 进化期只读 feedback/selection。单 Champion 与通用 Population 都使用
+`experiment finalize` 做一次性 final 评测；Population 入口会核对父状态、
+`best-harness.json`、Best Branch Champion 和 Candidate Digest，然后仅比较该最优
+Champion 与冻结 H0。父目录中的 `final-attempt.json` 使并发或失败重试无法反复查看
+sealed final，报告写入 `report/final-evaluation.json`。
+
+Reasoning 的 Synthetic Text 五 Mode 仍只是工程冒烟。HLE 正式实验必须先准备门控
+`cais/hle` 数据、sealed split、固定 MSA Source 与专用 Runtime；这些条件缺失时，
+不能把 Synthetic 结果替代为正式 Reasoning 成绩。
 
 当前通用 Population 的边界也需要明确：基础设施异常会被标成
 `PAUSED_INFRASTRUCTURE` 并让命令失败，绝不会冒充 0 分成功结束；但跨进程恢复尚未接入
@@ -303,7 +339,8 @@ runtime、campaign ID、campaigns root、source root 和 credential FD。
 
 每个 branch 写入 `public/state.json` 和 `public/evolution-log.jsonl`。种群关闭后
 输出所有 branch incumbent，以及 `best-harness.json` 和
-`best-harness.patch`。
+`best-harness.patch`；一次性 Final 成功后还会写入
+`report/final-evaluation.json`，并在父 `public/state.json` 中记录可审计的 Final 状态。
 
 详细说明：
 

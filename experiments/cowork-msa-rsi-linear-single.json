@@ -1,0 +1,22 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "EvolutionExperiment",
+  "metadata": { "id": "cowork-msa-rsi-linear-single" },
+  "spec": {
+    "recipe": "recipes/population-fair-linear/single.yml",
+    "adapters": {
+      "target": "adapters/targets/msa-minimal-cowork-rsi.yml",
+      "updater": "adapters/updaters/deepseek-harness.yml",
+      "environment": "environments/skillsbench-cowork.yml",
+      "provider": "adapters/providers/zcloud-openai.yml",
+      "strategy": "adapters/strategies/linear-hill-climb.yml"
+    },
+    "benchmark": "benchmarks/cowork-skillsbench-poc/benchmark.json",
+    "policy": "evaluation/policies/cowork-rsi-poc.json",
+    "models": {
+      "solver": { "provider": "zcloud-openai", "model": "gpt-5.6-terra", "maxTokens": 8192 },
+      "updater": { "provider": "zcloud-openai", "model": "gpt-5.6-terra", "maxTokens": 8192 }
+    },
+    "evolution": { "mutationLevel": "l1", "generations": 4, "trialsPerInstance": 1, "seeds": [20260827] }
+  }
+}

@@ -234,14 +234,50 @@ npm run rsi -- experiment validate \
   --config experiments/reasoning-msa-progressive-strict-smoke.json
 ```
 
-真实 Cowork 运行还需要配置 SkillsBench 根目录和 Provider 环境变量。下面只展示
-变量名，不要把真实 Key 写入 shell 历史或仓库：
+### Progressive 严格晋升示例
+
+`reasoning-msa-progressive-strict-smoke` 不是只能通过单元测试调用的策略，
+而是一套可以直接交给 `experiment run` 的完整组合：
+
+```text
+MSA Minimal Reasoning Target
+  + Synthetic Text Reasoning Environment
+  + Single Population / 9 轮最大 Budget
+  + progressive-risk-expansion
+  + strict-mean-reward-improvement-v1
+```
+
+严格 Policy 同时检查“至少一题 Reward 提升”、“平均 Reward 不下降”和
+“Reward/resolved 零回退”。因此平分只能保留旧 Champion，不会被写成一次虚假晋升：
+
+| Candidate 对比 | 是否晋升 | 原因                           |
+|----------------|----------|--------------------------------|
+| `0 -> 0`       | 否       | 没有任务真正提升               |
+| `1 -> 1`       | 否       | 只是平分，不是进化               |
+| `0 -> 1`       | 是       | Reward 提升且没有任务回退   |
+
+仅执行前面的 `experiment validate` 不会请求模型。真实运行可能消耗最多
+9 轮 Solver/Updater 预算；它用于验证严格拒绝和 L1 -> L2 -> L3 扩层，
+不能宣传成 HLE 或正式 Benchmark 成绩。
+
+### 真实运行
+
+真实运行需要在运行时注入 Provider 环境变量。下面只展示变量名，
+不要把真实 Key 写入 shell 历史或仓库：
 
 ```bash
-export RSI_SKILLSBENCH_ROOT=/absolute/path/to/skillsbench
 export RSI_PROVIDER_BASE_URL=https://provider.example/v1
 read -rsp 'Provider API Key: ' RSI_PROVIDER_API_KEY && export RSI_PROVIDER_API_KEY
 
+# Progressive Synthetic Reasoning：不需要 SkillsBench。
+npm run rsi -- runtime build \
+  --experiment experiments/reasoning-msa-progressive-strict-smoke.json
+npm run rsi -- experiment run \
+  --config experiments/reasoning-msa-progressive-strict-smoke.json \
+  --run-id reasoning-progressive-strict-001
+
+# Cowork 额外需要本地 SkillsBench 根目录。
+export RSI_SKILLSBENCH_ROOT=/absolute/path/to/skillsbench
 npm run rsi -- runtime build \
   --experiment experiments/cowork-msa-smoke-single.json
 npm run rsi -- experiment run \

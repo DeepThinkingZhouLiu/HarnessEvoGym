@@ -4,7 +4,8 @@ spec:
   population:
     mode: mutualism
     concurrency: { n_branches: 2 }
-    budget: { total_budget: 4, beta: 0.5 }
+    # 2 Branch 先各跑一轮，再让 branch-001 在第二轮读取 peer history。
+    budget: { total_budget: 3, beta: 0.5 }
     peer_sharing: { enabled: true }
     competition: { enabled: false }
   moduleSearch:

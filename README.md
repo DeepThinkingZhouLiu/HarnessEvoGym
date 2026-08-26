@@ -163,7 +163,7 @@ spec:
   population:
     mode: combined
     concurrency: { n_branches: 2 }
-    budget: { total_budget: 4, beta: 0.5 }
+    budget: { total_budget: 3, beta: 0.67 }
     peer_sharing: { enabled: true }
     competition: { enabled: true, bonus_grant_unit: 1 }
   moduleSearch:

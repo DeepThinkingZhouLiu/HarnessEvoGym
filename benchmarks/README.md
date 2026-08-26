@@ -4,6 +4,10 @@
 
 Benchmark 固定“评哪些任务”，不负责让 Solver 解题，也不负责修改 Candidate。每份配置必须记录不可变数据版本、Evaluator Adapter、精确 Instance ID，以及 `feedback/selection/final` 三个互斥 Partition。
 
+`cowork-skillsbench-poc/benchmark.json` 是已接入可执行 Cowork 链路的 3/2/3 工程
+Smoke 集：3 道 feedback 给 Updater 详细证据，2 道 selection 只用聚合 Reward 做晋升，
+3 道 final 在 Champion 锁定后才一次性解封。它用于验证闭环，不是 SkillsBench 完整榜单。
+
 ## 三种 Partition
 
 | Partition   | Updater 可见性  | 用途                                                        |

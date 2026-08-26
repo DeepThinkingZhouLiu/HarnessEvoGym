@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Adapter-based recursive self-improvement control plane for coding agents.",
+  "description": "Recursive self-improvement platform for Reasoning and Cowork agent harnesses.",
   "engines": {
     "node": ">=20"
   },
@@ -12,7 +12,10 @@
   },
   "scripts": {
     "rsi": "node ./controller/src/cli.mjs",
-    "check": "for file in ./controller/src/*.mjs ./benchmarks/hle-text-math/*.mjs ./scripts/*.mjs; do node --check \"$file\"; done && python3 -c \"compile(open('scripts/download-hle-text-math.py', encoding='utf-8').read(), 'scripts/download-hle-text-math.py', 'exec')\" && bash -n ./scripts/setup-putnambench-runtime.sh ./scripts/setup-hle-runtime.sh",
+    "check": "find controller/src controller/test docker benchmarks/hle-text-math scripts -name '*.mjs' -print0 | xargs -0 -n1 node --check && python3 -c \"compile(open('scripts/download-hle-text-math.py', encoding='utf-8').read(), 'scripts/download-hle-text-math.py', 'exec')\" && bash -n ./scripts/setup-putnambench-runtime.sh ./scripts/setup-hle-runtime.sh",
     "test": "node --test ./controller/test/*.test.mjs"
+  },
+  "dependencies": {
+    "yaml": "2.9.0"
   }
 }

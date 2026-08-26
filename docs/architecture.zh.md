@@ -4,9 +4,23 @@
 
 ## 决策
 
-DeepSeek Harness RSI 使用独立 GitHub 仓库作为可信控制平面，不再以 DeepSeek Harness Fork 作为主仓。官方 DeepSeek Harness 的历史只通过固定的 `sources/deepseek-harness/` 集成子模块进入系统，Updater 永远不直接修改该目录。在 `hzy_dev` 上，子模块指向开发 fork，使 headless preset 集成提交可被拉取，同时保留官方历史。
+DeepSeek Harness RSI 使用独立 GitHub 仓库作为可信控制平面，不再以 DeepSeek Harness Fork 作为主仓。官方 DeepSeek Harness 的历史只通过固定的 `sources/deepseek-harness/` 集成子模块进入系统，子模块远端保持官方 `deepseek-ai/deepseek-harness`，Updater 永远不直接修改该目录。
 
 这个决策解决两个问题：一是把可变 Solver 与不可变评测根分开；二是让 DeepSeek Harness、pi-agent 等项目都能通过 Adapter 成为 Target 或 Updater，而不需要改变 Controller 的核心流程。
+
+## 双场景架构
+
+Future 分支的 Reasoning Controller 是当前基座；Cowork 作为增量执行面接入。两者共用
+Benchmark、Evaluation Policy、Solver Result 和 Evaluator 协议，但不强行共用不同的环境隔离实现。
+
+| 执行面 | 编排器 | 环境与隔离 | 当前搜索形式 |
+|---|---|---|---|
+| Reasoning | `controller/src/orchestrator.mjs` + `population-orchestrator.mjs` | 宿主独立 UID、bubblewrap、Unix gateway、sealed broker | 五种种群模式 |
+| Cowork | `controller/src/cowork-orchestrator.mjs` | SkillsBench 任务镜像、独立 Verifier、Docker internal network | 线性 Champion/Proposal |
+
+Cowork 专用的网关生命周期在 `cowork-model-gateway.mjs`；Reasoning 的 Responses/Unix-socket
+网关仍在 `model-gateway.mjs`。这两个文件分别对应 OpenAI Chat Completions Docker 隔离和
+OpenAI Responses 宿主隔离，不是同一协议的重复实现。
 
 ## 五类对象
 

@@ -6,24 +6,29 @@ metadata:
   name: DeepSeek Harness Updater
 
 spec:
+  protocol: dsh-headless-docker
+
+  source:
+    kind: git-submodule
+    path: sources/deepseek-harness
+    revision: 3289531e06e924abb790685f44baf67311f26ec9
+
   runtime:
-    sourceRef: deepseek-harness
-    isolation: dedicated-read-only-instance
-    protocol: dsh-headless
+    image: harness-rsi/dsh-updater:3289531e06
+    dockerfile: docker/dsh-runtime/Dockerfile
+    package: "@deepseek-ai/dsh"
+    version: 0.1.1-rc.1
     profile: headless
     preset: standard
+    secretEnvironment:
+      - RSI_PROVIDER_API_KEY
+      - RSI_PROVIDER_BASE_URL
 
   prompt:
     path: prompts/updater.md
 
-  inputs:
-    targetSource: read-only
-    candidateSource: active-level-write
-    feedbackPacket: read-only
-    mutationPolicy: read-only
-
   output:
-    candidate: working-tree-diff
+    candidate: filesystem-diff
     mutationReport:
       kind: controller-artifact
       name: mutation-report.json

@@ -4,9 +4,26 @@ English | [中文](architecture.zh.md)
 
 ## Decision
 
-DeepSeek Harness RSI uses an independent GitHub repository as its trusted control plane. It is no longer a DeepSeek Harness fork. The official project history enters only through the pinned `sources/deepseek-harness/` integration submodule, and an Updater never edits that directory directly. On `hzy_dev`, the submodule points to a development fork so the headless preset integration commit remains fetchable while retaining the official history.
+DeepSeek Harness RSI uses an independent GitHub repository as its trusted control plane. It is no longer a DeepSeek Harness fork. Official history enters only through the pinned `sources/deepseek-harness/` submodule, whose remote remains `deepseek-ai/deepseek-harness`; an Updater never edits that directory directly.
 
 This separates the mutable Solver from the immutable evaluation root and allows projects such as DeepSeek Harness and pi-agent to become Targets or Updaters through adapters without changing the Controller loop.
+
+## Two scenario planes
+
+The Future Reasoning Controller is the current base; Cowork is integrated as an
+incremental execution plane. Both share Benchmark, Evaluation Policy, Solver
+Result, and Evaluator protocols without forcing unlike environment sandboxes
+into one implementation.
+
+| Plane | Orchestrator | Environment isolation | Current search |
+|---|---|---|---|
+| Reasoning | `orchestrator.mjs` + `population-orchestrator.mjs` | Distinct host UIDs, bubblewrap, Unix gateway, sealed broker | Five population modes |
+| Cowork | `cowork-orchestrator.mjs` | SkillsBench task images, separate Verifier, Docker internal network | Linear Champion/Proposal |
+
+Cowork gateway lifecycle is implemented by `cowork-model-gateway.mjs`; the
+Reasoning Responses/Unix-socket gateway remains in `model-gateway.mjs`. They
+serve different provider and isolation contracts rather than duplicating one
+protocol.
 
 ## Five objects
 

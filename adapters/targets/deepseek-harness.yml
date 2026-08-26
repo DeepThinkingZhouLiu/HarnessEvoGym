@@ -3,82 +3,114 @@ kind: TargetAdapter
 
 metadata:
   id: deepseek-harness
-  name: DeepSeek Harness
+  name: DeepSeek Harness Cowork Solver
 
 spec:
   source:
     kind: git-submodule
     path: sources/deepseek-harness
-    revision: pinned
-    updateBranch: hzy_dev
+    revision: 3289531e06e924abb790685f44baf67311f26ec9
 
   materialization:
-    strategy: controller-owned-git-archive
-    runtimeRoot: /mnt/data/hzy/dsh-rsi-runtime/campaigns
-    hideGitMetadataFromUpdater: true
+    strategy: controller-owned-overlay
+    baselinePath: targets/deepseek-harness/cowork-rsi
+    runtimeRoot: .rsi/runs
+    presetRelativePath: apps/cli/config/agent-presets/cowork-rsi
 
   solver:
-    protocol: dsh-headless
-    profile: headless
-    preset: standard
-    trajectory: dsh-session-log
+    protocol: dsh-headless-docker
+    runtime:
+      image: harness-rsi/dsh-runtime:3289531e06
+      dockerfile: docker/dsh-runtime/Dockerfile
+      package: "@deepseek-ai/dsh"
+      version: 0.1.1-rc.1
+      profile: headless
+      preset: cowork-rsi
+      secretEnvironment:
+        - RSI_PROVIDER_API_KEY
+        - RSI_PROVIDER_BASE_URL
 
   mutation:
-    # 永久只读优先于任一层级的 writable 配置。
+    # 只靠 Prompt 不算隔离；此名单由 Controller 在 Updater 退出后重新验 Diff。
     alwaysReadOnly:
+      - .rsi-context/**
+      - .rsi-output/**
       - .git
       - .git/**
-      - .github/**
-      - vendor/**
-      - packages/credentials/**
-      - packages/interaction/permission-presets/**
-      - packages/interaction/user-approval/**
-      - packages/llm/token-meter/**
-      # 模型、协议与 effort 由 Controller gateway 冻结，不属于可进化 Harness 行为。
-      - packages/llm/llm-pi-ai/**
-      - packages/core/agent-default-model/**
-      - packages/sandbox/**
-      - '**/.env'
-      - '**/.env.*'
-      - '**/*credentials*.yml'
-      - '**/*credentials*.yaml'
+      - "**/.env"
+      - "**/.env.*"
+      - "**/*credential*"
+      - "**/*secret*"
+
+    limits:
+      maximumTreeEntries: 1000
+      maximumChangedFiles: 20
+      maximumChangedBytes: 524288
+      maximumFileBytes: 131072
+
+    semanticChecks:
+      skills:
+        root: apps/cli/config/agent-presets/cowork-rsi/skills
+        requiredNamePrefix: cowork-
+      cordis:
+        path: apps/cli/config/agent-presets/cowork-rsi/agent.cordis.yml
+        allowedPluginNames:
+          - "@deepseek-ai/dsh-persona"
+          - "@deepseek-ai/dsh-agent-instructions"
+          - "@deepseek-ai/dsh-tool-bash"
+          - "@deepseek-ai/dsh-tool-pwsh"
+          - "@deepseek-ai/dsh-tool-fs"
+          - "@deepseek-ai/dsh-tool-fs-search"
+          - "@deepseek-ai/dsh-skill-filesystem"
+          - "@deepseek-ai/dsh-tool-skill"
+          - "@deepseek-ai/dsh-compaction-basic"
+          - "@deepseek-ai/dsh-compaction-tool-result-pruner"
+          - "@deepseek-ai/dsh-tool-todo"
+          - cordis:group
+        allowedJsLines:
+          - "disabled: !!js process.platform === 'win32'"
+          - "disabled: !!js process.platform !== 'win32'"
+          - "- !!js \"process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))\""
 
     levels:
       l1:
-        description: 只修改声明式解题策略，不修改 TypeScript、JavaScript 或 Python 实现。
+        description: 只允许修改 Cowork Preset、Prompt 与 Skill 文档；禁止添加可执行代码。
         writable:
-          - apps/cli/config/agent-presets/**
+          - apps/cli/config/agent-presets/cowork-rsi/agent.cordis.yml
+          - apps/cli/config/agent-presets/cowork-rsi/preset.yml
+          - apps/cli/config/agent-presets/cowork-rsi/skills/**/*.md
+          - apps/cli/config/agent-presets/cowork-rsi/skills/**/*.json
+          - apps/cli/config/agent-presets/cowork-rsi/skills/**/*.yml
+          - apps/cli/config/agent-presets/cowork-rsi/skills/**/*.yaml
+          - apps/cli/config/agent-presets/cowork-rsi/skills/**/*.txt
+        extensions:
+          - .md
+          - .json
+          - .yml
+          - .yaml
+          - .txt
 
       l2:
-        description: 修改扩展点行为、工具与策略，不修改 Agent Loop 或 Session Core。
+        description: 在 L1 基础上允许修改 Skill 自带脚本；仍不允许修改 DSH Core、Adapter 或评测根。
         writable:
-          - apps/cli/config/agent-presets/**
-          - packages/compaction/**
-          - packages/context/**
-          - packages/extensions/**
-          - packages/guard/**
-          - packages/hooks/**
-          - packages/llm/llm-retry/**
-          - packages/plan/**
-          - packages/preset/**
-          - packages/skill/**
-          - packages/subagent/**
-          - packages/todo/**
-          - packages/workflow/**
-          - packages/web/**
-          - packages/fs/tool-*/**
-          - packages/interaction/tool-*/**
-          - packages/shell/tool-*/**
-
-      l3:
-        description: 允许修改 Solver Core；模型路由、外部 Controller、Evaluator、安全根和上游 Source 仍冻结。
-        writable:
-          - apps/**
-          - examples/**
-          - native/**
-          - packages/**
-          - python/**
-          - package.json
-          - pnpm-lock.yaml
-          - pnpm-workspace.yaml
-          - tsconfig*.json
+          - apps/cli/config/agent-presets/cowork-rsi/agent.cordis.yml
+          - apps/cli/config/agent-presets/cowork-rsi/preset.yml
+          - apps/cli/config/agent-presets/cowork-rsi/skills/**/*.md
+          - apps/cli/config/agent-presets/cowork-rsi/skills/**/*.json
+          - apps/cli/config/agent-presets/cowork-rsi/skills/**/*.yml
+          - apps/cli/config/agent-presets/cowork-rsi/skills/**/*.yaml
+          - apps/cli/config/agent-presets/cowork-rsi/skills/**/*.txt
+          - apps/cli/config/agent-presets/cowork-rsi/skills/**/scripts/**/*.py
+          - apps/cli/config/agent-presets/cowork-rsi/skills/**/scripts/**/*.js
+          - apps/cli/config/agent-presets/cowork-rsi/skills/**/scripts/**/*.mjs
+          - apps/cli/config/agent-presets/cowork-rsi/skills/**/scripts/**/*.sh
+        extensions:
+          - .md
+          - .json
+          - .yml
+          - .yaml
+          - .txt
+          - .py
+          - .js
+          - .mjs
+          - .sh

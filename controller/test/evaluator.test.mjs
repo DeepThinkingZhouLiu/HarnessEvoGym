@@ -115,3 +115,41 @@ test('同时评测 feedback 与 final 时计算泛化差距和进化效率', asy
   assert.equal(report.rsiMetrics.evolution.costUsd, 12)
   assert.equal(report.rsiMetrics.finalNetResolvedPer100Usd, 8.333333)
 })
+
+test('连续 Reward 使用配对均值和回退数量做晋升', async () => {
+  const fixture = await loadFixture()
+  fixture.policy.primaryMetric = 'mean-reward'
+  fixture.policy.gates.quality.minimumNetResolved = 0
+  fixture.policy.gates.quality.minimumMeanRewardDelta = 0.1
+  fixture.policy.gates.quality.minimumRewardImproved = 1
+  fixture.policy.gates.quality.maximumRewardRegressions = 0
+  const ids = fixture.benchmark.partitions.selection.instanceIds
+  fixture.baselineRecords.get(ids[0]).reward = 0.25
+  fixture.baselineRecords.get(ids[1]).reward = 0.5
+  fixture.candidateRecords.get(ids[0]).reward = 0.75
+  fixture.candidateRecords.get(ids[1]).reward = 0.5
+  const report = evaluateBenchmark({ ...fixture, partitions: ['selection'] })
+  assert.equal(report.partitions.selection.baseline.meanReward, 0.375)
+  assert.equal(report.partitions.selection.candidate.meanReward, 0.625)
+  assert.equal(report.partitions.selection.paired.deltaMeanReward, 0.25)
+  assert.equal(report.partitions.selection.paired.rewardImproved, 1)
+  assert.equal(report.partitions.selection.paired.rewardRegressed, 0)
+  assert.equal(report.decision.eligible, true)
+})
+
+test('Resolved Rate 区间使用 Policy 配置的置信度', async () => {
+  const fixture = await loadFixture()
+  fixture.policy.bootstrap.confidence = 0.9
+  const report = evaluateBenchmark({ ...fixture, partitions: ['selection'] })
+  assert.equal(report.partitions.selection.baseline.resolvedRateCi.confidence, 0.9)
+})
+
+test('Token 涨幅 Gate 使用已采集的配对 Partition Usage', async () => {
+  const fixture = await loadFixture()
+  fixture.policy.gates.performance.maximumRelativeTokenIncrease = 0.04
+  const report = evaluateBenchmark({ ...fixture, partitions: ['selection'] })
+  const tokenGate = report.decision.gates.find((item) => item.id === 'maximum-relative-token-increase')
+  assert.equal(report.partitions.selection.deltas.tokens.relative, 0.05)
+  assert.equal(tokenGate.passed, false)
+  assert.equal(report.decision.eligible, false)
+})

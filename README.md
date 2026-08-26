@@ -2,10 +2,11 @@
 
 English | [中文](README.zh.md)
 
-An adapter-driven control plane for evolving an agent Harness on frozen
-validation tasks. The current lightweight Target supports both mathematics and
-coding: it can reason, execute local Bash/Python, read observations, and submit
-a final answer.
+An executable platform for evolving agent Harnesses on frozen validation tasks.
+The same trusted Controller repository now supports both **Reasoning** and
+**Cowork**: the Future branch population Controller is the base, while the
+SkillsBench, DSH overlay, reward evaluation, and Docker isolation from `lz-dev`
+are integrated as the Cowork increment.
 
 ## System design
 
@@ -41,6 +42,23 @@ incumbent
 The Controller does not design mutation directions. Each branch reuses one Git
 worktree; there is no per-round full-project copy or separate proposal/apply
 session.
+
+## Two scenario execution planes
+
+| Scenario | CLI | Target / environment | Current algorithm |
+|---|---|---|---|
+| Reasoning | `campaign ...` / `evolve ...` | Minimal Harness + HLE, or DSH + PutnamBench | Future `single/independent/mutualism/competition/combined` population modes |
+| Cowork | `experiment ...` | DSH `cowork-rsi` overlay + SkillsBench | Linear Champion evolution: `feedback -> update -> selection` |
+
+Both planes share Benchmark, Policy, Solver Result, and Evaluator protocols,
+but preserve their proven environment isolation. Reasoning uses host identities,
+bubblewrap, and a sealed broker. Cowork uses task Docker images, a separate
+Verifier, and a Model Gateway that gives agents only one-time tokens.
+
+Cowork currently exposes L1 and L2. L1 changes declarative presets, prompts,
+and Skill documents; L2 also allows Skill scripts. L3 remains disabled. The
+Controller deterministically rechecks path allowlists, extensions, executable
+bits, file limits, symlinks, and Cordis plugins after every Updater session.
 
 ## Minimal math/coding Harness
 
@@ -163,6 +181,20 @@ npm test
 node scripts/run-hle-population50-sequence.mjs
 ```
 
+Cowork L1/L2:
+
+```bash
+npm run rsi -- experiment validate --config experiments/cowork-skillsbench-dsh-l1.json
+npm run rsi -- experiment preflight --config experiments/cowork-skillsbench-dsh-l1.json
+npm run rsi -- runtime build --experiment experiments/cowork-skillsbench-dsh-l1.json
+npm run rsi -- experiment run --config experiments/cowork-skillsbench-dsh-l1.json --run-id <id>
+npm run rsi -- experiment finalize --run .rsi/runs/<id>
+```
+
+`experiment run` reads only feedback/selection. `experiment finalize` unlocks
+final once, after the Champion is frozen. The current 3/2/3 split is an
+engineering end-to-end smoke set, not a statistical-significance claim.
+
 For one campaign, call
 `scripts/resume-hle-short-updater-root.mjs evolve start` with explicit config,
 runtime, campaign ID, campaigns root, source root, and credential FD.
@@ -176,6 +208,7 @@ More detail:
 - [Controller modes](docs/controller-modes.md)
 - [Architecture](docs/architecture.md)
 - [HLE mutation workflow](docs/hle-mutation-workflow.zh.md)
+- [Cowork L1/L2 workflow](docs/cowork-mvp.md)
 
 Controller code is [MIT licensed](LICENSE). Vendored and submodule sources keep
 their own licenses and notices.

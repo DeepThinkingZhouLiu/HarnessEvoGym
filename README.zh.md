@@ -2,9 +2,10 @@
 
 [English](README.md) | 中文
 
-一个用冻结 validation 任务持续进化 Agent Harness 的 Adapter 化控制平面。当前轻量
-Target 同时面向数学和 Coding，可以推理、执行本地 Bash/Python、读取 observation
-并提交最终答案。
+一个用冻结 validation 任务持续进化 Agent Harness 的可执行实验平台。当前同一个
+Controller 仓库同时支持 **Reasoning** 和 **Cowork** 两条链路：Future 分支的种群
+Controller 作为新基座，`lz-dev` 的 SkillsBench、DSH Overlay、Reward 评测和 Docker 隔离
+作为 Cowork 增量接入。
 
 ## 系统设计
 
@@ -39,6 +40,22 @@ incumbent
 
 Controller 不替 Updater 设计 mutation direction。每个 branch 复用一个 Git
 worktree，不逐轮复制完整工程，也不拆成 Proposal/Apply 两次会话。
+
+## 双场景执行面
+
+| 场景 | 命令入口 | Target / Environment | 当前算法 |
+|---|---|---|---|
+| Reasoning | `campaign ...` / `evolve ...` | MSA 轻量 Harness + HLE，或 DSH + PutnamBench | Future 基座的 `single/independent/mutualism/competition/combined` |
+| Cowork | `experiment ...` | DSH `cowork-rsi` Overlay + SkillsBench | 单 Champion 线性迭代，每代 `feedback -> update -> selection` |
+
+两条链路共用 Benchmark/Policy/Solver Result/Evaluator 协议，但保留各自的环境执行器和
+安全隔离：Reasoning 使用宿主 UID + bubblewrap + sealed broker；Cowork 使用 Docker 任务镜像、
+独立 Verifier 和只持有一次性令牌的 Model Gateway。这样不会为了“表面统一”而削弱
+Future 已验证的 Reasoning 信任边界。
+
+Cowork 当前开放 L1/L2：L1 只改 Preset/Prompt/Skill 文档，L2 额外允许 Skill
+Script；L3 未开放。路径白名单、扩展名、可执行位、文件大小、符号链接和 Cordis
+插件都由 Controller 在 Updater 结束后重算并强制检查，不依赖提示词自觉。
 
 ## 最小 Math/Coding Harness
 
@@ -159,6 +176,19 @@ npm test
 node scripts/run-hle-population50-sequence.mjs
 ```
 
+Cowork L1/L2 入口：
+
+```bash
+npm run rsi -- experiment validate --config experiments/cowork-skillsbench-dsh-l1.json
+npm run rsi -- experiment preflight --config experiments/cowork-skillsbench-dsh-l1.json
+npm run rsi -- runtime build --experiment experiments/cowork-skillsbench-dsh-l1.json
+npm run rsi -- experiment run --config experiments/cowork-skillsbench-dsh-l1.json --run-id <id>
+npm run rsi -- experiment finalize --run .rsi/runs/<id>
+```
+
+`experiment run` 只读 feedback/selection，`experiment finalize` 在 Champion 锁定后才一次性解封
+final。当前 3/2/3 题集用于跑通工程闭环，不代表统计显著性结论。
+
 单个 Campaign 使用
 `scripts/resume-hle-short-updater-root.mjs evolve start`，显式传入 config、
 runtime、campaign ID、campaigns root、source root 和 credential FD。
@@ -172,6 +202,7 @@ runtime、campaign ID、campaigns root、source root 和 credential FD。
 - [Controller 五种模式](docs/controller-modes.zh.md)
 - [架构与信任边界](docs/architecture.zh.md)
 - [HLE 变异工作流](docs/hle-mutation-workflow.zh.md)
+- [Cowork L1/L2 运行与扩展](docs/cowork-mvp.zh.md)
 
 本仓 Controller 使用 [MIT License](LICENSE)，Vendored Source 与 Submodule 保留
 各自许可证和 NOTICE。

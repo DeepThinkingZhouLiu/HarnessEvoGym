@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 const API_VERSION = 'harness-rsi/v1alpha1'
@@ -56,7 +56,20 @@ function throwIfErrors(message, errors) {
   if (errors.length > 0) throw new ProtocolError(message, errors)
 }
 
+async function assertRegularInputFile(filePath, label) {
+  let info
+  try {
+    info = await lstat(filePath)
+  } catch (error) {
+    throw new ProtocolError(`无法访问${label}：${filePath}`, [error.message])
+  }
+  if (info.isSymbolicLink() || !info.isFile()) {
+    throw new ProtocolError(`${label}必须是普通文件：${filePath}`)
+  }
+}
+
 export async function readJsonFile(filePath) {
+  await assertRegularInputFile(filePath, 'JSON 文件')
   let text
   try {
     text = await readFile(filePath, 'utf8')
@@ -72,6 +85,7 @@ export async function readJsonFile(filePath) {
 }
 
 export async function readResultFile(filePath) {
+  await assertRegularInputFile(filePath, '结果文件')
   let text
   try {
     text = await readFile(filePath, 'utf8')
@@ -132,8 +146,8 @@ export function validateBenchmark(input) {
 
   const evaluator = isObject(spec.evaluator) ? spec.evaluator : {}
   pushRequiredText(errors, evaluator.adapter, 'spec.evaluator.adapter')
-  if (evaluator.resultFormat !== 'harness-rsi/solver-result-jsonl-v1') {
-    errors.push('spec.evaluator.resultFormat 必须是 harness-rsi/solver-result-jsonl-v1')
+  if (!['harness-rsi/solver-result-jsonl-v1', 'harness-rsi/solver-result-jsonl-v2'].includes(evaluator.resultFormat)) {
+    errors.push('spec.evaluator.resultFormat 必须是 harness-rsi/solver-result-jsonl-v1 或 v2')
   }
 
   const partitionsInput = isObject(spec.partitions) ? spec.partitions : {}
@@ -211,6 +225,11 @@ export function validateBenchmark(input) {
     expectedTotal: spec.expectedTotal,
     partitions,
     allInstanceIds,
+    partitionByInstance: new Map(
+      Object.entries(partitions).flatMap(([name, partition]) =>
+        partition.instanceIds.map((instanceId) => [instanceId, name]),
+      ),
+    ),
   }
 }
 
@@ -227,6 +246,10 @@ export function validateEvaluationPolicy(input) {
   const spec = isObject(input.spec) ? input.spec : {}
   if (spec.decisionPartition !== 'selection') {
     errors.push('spec.decisionPartition 在 v1alpha1 中必须是 selection；final 只能用于最终报告')
+  }
+  const primaryMetric = spec.primaryMetric ?? 'resolved-rate'
+  if (!['resolved-rate', 'mean-reward'].includes(primaryMetric)) {
+    errors.push('spec.primaryMetric 必须是 resolved-rate 或 mean-reward')
   }
 
   const bootstrap = isObject(spec.bootstrap) ? spec.bootstrap : {}
@@ -258,6 +281,25 @@ export function validateEvaluationPolicy(input) {
     nullable: true,
   })
   pushBoolean(errors, quality.requirePositivePairedCiLowerBound, 'spec.gates.quality.requirePositivePairedCiLowerBound')
+  const minimumMeanRewardDelta = quality.minimumMeanRewardDelta ?? null
+  const minimumRewardImproved = quality.minimumRewardImproved ?? 0
+  const maximumRewardRegressions = quality.maximumRewardRegressions ?? null
+  const requirePositiveRewardCiLowerBound = quality.requirePositiveRewardCiLowerBound ?? false
+  pushNumber(errors, minimumMeanRewardDelta, 'spec.gates.quality.minimumMeanRewardDelta', {
+    min: -1,
+    max: 1,
+    nullable: true,
+  })
+  pushNumber(errors, minimumRewardImproved, 'spec.gates.quality.minimumRewardImproved', {
+    integer: true,
+    min: 0,
+  })
+  pushNumber(errors, maximumRewardRegressions, 'spec.gates.quality.maximumRewardRegressions', {
+    integer: true,
+    min: 0,
+    nullable: true,
+  })
+  pushBoolean(errors, requirePositiveRewardCiLowerBound, 'spec.gates.quality.requirePositiveRewardCiLowerBound')
 
   const cost = isObject(gates.cost) ? gates.cost : {}
   pushNumber(errors, cost.maximumRelativeInferenceCostIncrease, 'spec.gates.cost.maximumRelativeInferenceCostIncrease', {
@@ -269,6 +311,22 @@ export function validateEvaluationPolicy(input) {
     nullable: true,
   })
 
+  const performance = isObject(gates.performance) ? gates.performance : {}
+  const maximumRelativeLatencyIncrease = performance.maximumRelativeLatencyIncrease ?? null
+  const maximumRelativeTokenIncrease = performance.maximumRelativeTokenIncrease ?? null
+  pushNumber(
+    errors,
+    maximumRelativeLatencyIncrease,
+    'spec.gates.performance.maximumRelativeLatencyIncrease',
+    { min: 0, nullable: true },
+  )
+  pushNumber(
+    errors,
+    maximumRelativeTokenIncrease,
+    'spec.gates.performance.maximumRelativeTokenIncrease',
+    { min: 0, nullable: true },
+  )
+
   const safety = isObject(gates.safety) ? gates.safety : {}
   pushNumber(errors, safety.maximumPolicyViolations, 'spec.gates.safety.maximumPolicyViolations', {
     integer: true,
@@ -279,6 +337,7 @@ export function validateEvaluationPolicy(input) {
   return {
     id: metadata.id,
     decisionPartition: spec.decisionPartition,
+    primaryMetric,
     bootstrap: {
       samples: bootstrap.samples,
       confidence: bootstrap.confidence,
@@ -294,11 +353,16 @@ export function validateEvaluationPolicy(input) {
         minimumDeltaResolvedRate: quality.minimumDeltaResolvedRate,
         maximumRegressions: quality.maximumRegressions,
         requirePositivePairedCiLowerBound: quality.requirePositivePairedCiLowerBound,
+        minimumMeanRewardDelta,
+        minimumRewardImproved,
+        maximumRewardRegressions,
+        requirePositiveRewardCiLowerBound,
       },
       cost: {
         maximumRelativeInferenceCostIncrease: cost.maximumRelativeInferenceCostIncrease,
         maximumEvolutionCostUsd: cost.maximumEvolutionCostUsd,
       },
+      performance: { maximumRelativeLatencyIncrease, maximumRelativeTokenIncrease },
       safety: { maximumPolicyViolations: safety.maximumPolicyViolations },
     },
   }
@@ -327,6 +391,51 @@ export function validateResultRecords(input, benchmark, label) {
       errors.push(`${path}.instance_id 在结果文件中重复`)
     }
 
+    const defaultReward = rawRecord.status === 'resolved' ? 1 : 0
+    const reward = rawRecord.reward ?? defaultReward
+    pushNumber(errors, reward, `${path}.reward`, { min: 0, max: 1 })
+
+    let trialRewards = rawRecord.trial_rewards
+    if (trialRewards === undefined) trialRewards = [reward]
+    if (!Array.isArray(trialRewards) || trialRewards.length === 0) {
+      errors.push(`${path}.trial_rewards 必须是非空数字数组`)
+      trialRewards = []
+    } else {
+      trialRewards.forEach((value, trialIndex) =>
+        pushNumber(errors, value, `${path}.trial_rewards[${trialIndex}]`, { min: 0, max: 1 }),
+      )
+      if (typeof reward === 'number' && trialRewards.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+        const mean = trialRewards.reduce((sum, value) => sum + value, 0) / trialRewards.length
+        if (Math.abs(mean - reward) > 1e-9) errors.push(`${path}.reward 必须等于 trial_rewards 的平均值`)
+      }
+    }
+
+    let trialSeeds = rawRecord.trial_seeds
+    if (trialSeeds === undefined) trialSeeds = []
+    if (!Array.isArray(trialSeeds) || trialSeeds.some((value) => !Number.isInteger(value) || value < 0)) {
+      errors.push(`${path}.trial_seeds 必须是非负整数数组`)
+      trialSeeds = []
+    }
+    if (trialSeeds.length > 0 && trialSeeds.length !== trialRewards.length) {
+      errors.push(`${path}.trial_seeds 与 trial_rewards 长度必须一致`)
+    }
+    if (rawRecord.seed_controlled !== undefined && typeof rawRecord.seed_controlled !== 'boolean') {
+      errors.push(`${path}.seed_controlled 必须是布尔值`)
+    }
+
+    const partition = hasText(rawRecord.instance_id)
+      ? benchmark.partitionByInstance?.get(rawRecord.instance_id)
+      : undefined
+    if (rawRecord.feedback !== undefined && partition !== 'feedback') {
+      errors.push(`${path}.feedback 只能出现在 feedback Partition`)
+    }
+    if (rawRecord.feedback !== undefined && !isObject(rawRecord.feedback)) {
+      errors.push(`${path}.feedback 必须是对象`)
+    }
+    if (rawRecord.artifacts !== undefined && !Array.isArray(rawRecord.artifacts)) {
+      errors.push(`${path}.artifacts 必须是数组`)
+    }
+
     for (const metricName of ['cost_usd', 'input_tokens', 'output_tokens', 'latency_ms']) {
       if (rawRecord[metricName] !== undefined) {
         pushNumber(errors, rawRecord[metricName], `${path}.${metricName}`, {
@@ -346,11 +455,17 @@ export function validateResultRecords(input, benchmark, label) {
       records.set(rawRecord.instance_id, {
         instanceId: rawRecord.instance_id,
         status: rawRecord.status,
+        reward,
+        trialRewards,
+        trialSeeds,
+        seedControlled: rawRecord.seed_controlled ?? null,
         costUsd: rawRecord.cost_usd,
         inputTokens: rawRecord.input_tokens,
         outputTokens: rawRecord.output_tokens,
         latencyMs: rawRecord.latency_ms,
         policyViolations: rawRecord.policy_violations ?? [],
+        artifacts: rawRecord.artifacts ?? [],
+        feedback: rawRecord.feedback,
       })
     }
   }
@@ -370,9 +485,9 @@ export function validateEvolutionLedger(input) {
   const spec = isObject(input.spec) ? input.spec : {}
   pushNumber(errors, spec.generations, 'spec.generations', { integer: true, min: 0 })
   pushNumber(errors, spec.candidatesEvaluated, 'spec.candidatesEvaluated', { integer: true, min: 0 })
-  pushNumber(errors, spec.updaterTokens, 'spec.updaterTokens', { integer: true, min: 0 })
-  pushNumber(errors, spec.solverTokens, 'spec.solverTokens', { integer: true, min: 0 })
-  pushNumber(errors, spec.costUsd, 'spec.costUsd', { min: 0 })
+  pushNumber(errors, spec.updaterTokens, 'spec.updaterTokens', { integer: true, min: 0, nullable: true })
+  pushNumber(errors, spec.solverTokens, 'spec.solverTokens', { integer: true, min: 0, nullable: true })
+  pushNumber(errors, spec.costUsd, 'spec.costUsd', { min: 0, nullable: true })
   pushNumber(errors, spec.wallTimeMs, 'spec.wallTimeMs', { integer: true, min: 0 })
 
   throwIfErrors('Evolution Ledger 校验失败', errors)
@@ -381,7 +496,10 @@ export function validateEvolutionLedger(input) {
     candidatesEvaluated: spec.candidatesEvaluated,
     updaterTokens: spec.updaterTokens,
     solverTokens: spec.solverTokens,
-    totalTokens: spec.updaterTokens + spec.solverTokens,
+    totalTokens:
+      typeof spec.updaterTokens === 'number' && typeof spec.solverTokens === 'number'
+        ? spec.updaterTokens + spec.solverTokens
+        : null,
     costUsd: spec.costUsd,
     wallTimeMs: spec.wallTimeMs,
   }

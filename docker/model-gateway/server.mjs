@@ -1,6 +1,8 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import http from 'node:http'
 import https from 'node:https'
+import { pipeline, Transform } from 'node:stream'
+import { StringDecoder } from 'node:string_decoder'
 
 const listenPort = Number(process.env.GATEWAY_PORT ?? '8080')
 const legacyToken = process.env.GATEWAY_TOKEN ?? ''
@@ -162,7 +164,8 @@ function usageSnapshot(counters = globalUsage) {
   return { ...counters }
 }
 
-function observeSseUsage(upstreamResponse, counters) {
+function createSseUsageMeter(counters) {
+  const decoder = new StringDecoder('utf8')
   let buffer = ''
   let latestUsage = null
   let completed = false
@@ -184,6 +187,7 @@ function observeSseUsage(upstreamResponse, counters) {
   function finish() {
     if (completed) return
     completed = true
+    buffer += decoder.end()
     if (buffer) inspectLine(buffer)
     if (!latestUsage) {
       for (const counter of counters) counter.unknownUsageResponses += 1
@@ -198,8 +202,8 @@ function observeSseUsage(upstreamResponse, counters) {
     }
   }
 
-  upstreamResponse.on('data', (chunk) => {
-    buffer += chunk.toString('utf8')
+  function inspectChunk(chunk) {
+    buffer += decoder.write(chunk)
     let newline = buffer.indexOf('\n')
     while (newline >= 0) {
       inspectLine(buffer.slice(0, newline))
@@ -207,11 +211,22 @@ function observeSseUsage(upstreamResponse, counters) {
       newline = buffer.indexOf('\n')
     }
     if (buffer.length > 4 * 1024 * 1024) buffer = ''
+  }
+
+  const meter = new Transform({
+    transform(chunk, _encoding, callback) {
+      inspectChunk(chunk)
+      // 计量和转发共用唯一数据链；原始字节不做任何改写。
+      callback(null, chunk)
+    },
+    flush(callback) {
+      finish()
+      callback()
+    },
   })
-  upstreamResponse.once('end', finish)
-  upstreamResponse.once('error', finish)
-  upstreamResponse.once('aborted', finish)
-  upstreamResponse.once('close', finish)
+  meter.once('error', finish)
+  meter.once('close', finish)
+  return meter
 }
 
 function validatedRolePolicy(value) {
@@ -503,12 +518,14 @@ const server = http.createServer((request, response) => {
     }
     const upstream = transport.request(target, { method: 'POST', headers }, (upstreamResponse) => {
       usageDelegated = true
-      observeSseUsage(upstreamResponse, counters)
       response.writeHead(
         upstreamResponse.statusCode ?? 502,
         filteredHeaders(upstreamResponse.headers, responseHeaderAllowlist),
       )
-      upstreamResponse.pipe(response)
+      const usageMeter = createSseUsageMeter(counters)
+      pipeline(upstreamResponse, usageMeter, response, (error) => {
+        if (error && !response.destroyed) response.destroy(error)
+      })
     })
     upstream.setTimeout(20 * 60 * 1000, () => upstream.destroy(new Error('upstream timeout')))
     upstream.on('error', (error) => {

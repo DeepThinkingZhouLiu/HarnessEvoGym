@@ -159,6 +159,8 @@ branch 参考。
 
 - `experiments/cowork-msa-smoke-<mode>.json`
 - `experiments/reasoning-msa-smoke-<mode>.json`
+- `experiments/cowork-msa-smoke-l2-single.json` 与
+  `experiments/reasoning-msa-smoke-l2-single.json`：只用一代验证 L1+L2 Lease 与语义校验
 
 Reasoning 冒烟题只用来验证工程链路，**不是 HLE，不能当作模型能力成绩**。
 HZY 原有 HLE/PutnamBench 生产 Campaign 仍位于 `benchmarks/hle-text-math/` 和

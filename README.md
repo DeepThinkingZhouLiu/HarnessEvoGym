@@ -156,6 +156,9 @@ Both smoke scenes reuse `recipes/population-smoke/*.yml` through:
 
 - `experiments/cowork-msa-smoke-<mode>.json`
 - `experiments/reasoning-msa-smoke-<mode>.json`
+- `experiments/cowork-msa-smoke-l2-single.json` and
+  `experiments/reasoning-msa-smoke-l2-single.json` exercise the L1+L2 lease and
+  semantic-validation path for one generation only.
 
 The Reasoning tasks are connectivity tests only. **They are not HLE and are not
 a model-capability score.** Existing HLE/PutnamBench production campaigns remain

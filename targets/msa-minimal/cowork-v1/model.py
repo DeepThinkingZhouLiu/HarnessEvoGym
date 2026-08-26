@@ -19,15 +19,47 @@ def _content(value: object) -> str:
     return ""
 
 
-def _read_response(response: http.client.HTTPResponse) -> str:
+def _response_result(
+    text: str,
+    finish_reason: str | None,
+    saw_reasoning: bool,
+    refused: bool,
+) -> dict:
+    return {
+        "text": text,
+        "finish_reason": finish_reason,
+        "saw_reasoning": saw_reasoning,
+        "refused": refused,
+    }
+
+
+def _read_response(response: http.client.HTTPResponse) -> dict:
     raw = response.read().decode("utf-8", errors="replace")
     content_type = response.headers.get("content-type", "").lower()
     if "text/event-stream" not in content_type:
         payload = json.loads(raw)
         choices = payload.get("choices", [])
-        return _content(choices[0].get("message", {}).get("content")) if choices else ""
+        if not choices or not isinstance(choices[0], dict):
+            return _response_result("", None, False, False)
+        choice = choices[0]
+        message = choice.get("message", {})
+        if not isinstance(message, dict):
+            message = {}
+        finish_reason = choice.get("finish_reason")
+        if not isinstance(finish_reason, str):
+            finish_reason = None
+        return _response_result(
+            _content(message.get("content")),
+            finish_reason,
+            bool(_content(message.get("reasoning_content")).strip()),
+            bool(_content(message.get("refusal")).strip()),
+        )
 
     parts: list[str] = []
+    final_message = ""
+    finish_reason: str | None = None
+    saw_reasoning = False
+    refused = False
     for line in raw.splitlines():
         if not line.startswith("data:"):
             continue
@@ -35,10 +67,52 @@ def _read_response(response: http.client.HTTPResponse) -> str:
         if not data or data == "[DONE]":
             continue
         event = json.loads(data)
+        if event.get("error") is not None:
+            raise RuntimeError("model gateway streamed an upstream error")
         choices = event.get("choices", [])
-        if choices:
-            parts.append(_content(choices[0].get("delta", {}).get("content")))
-    return "".join(parts)
+        if not choices or not isinstance(choices[0], dict):
+            continue
+        choice = choices[0]
+        delta = choice.get("delta", {})
+        if not isinstance(delta, dict):
+            delta = {}
+        message = choice.get("message", {})
+        if not isinstance(message, dict):
+            message = {}
+        parts.append(_content(delta.get("content")))
+        # 少数兼容网关会在流的最终事件中返回完整 message，而不是 delta。
+        # 只有在没有任何 delta content 时才使用它，避免重复拼接。
+        message_content = _content(message.get("content"))
+        if message_content:
+            final_message = message_content
+        saw_reasoning = saw_reasoning or bool(
+            _content(delta.get("reasoning_content")).strip()
+            or _content(message.get("reasoning_content")).strip()
+        )
+        refused = refused or bool(
+            _content(delta.get("refusal")).strip()
+            or _content(message.get("refusal")).strip()
+        )
+        current_finish = choice.get("finish_reason")
+        if isinstance(current_finish, str):
+            finish_reason = current_finish
+    text = "".join(parts)
+    return _response_result(
+        text if text else final_message,
+        finish_reason,
+        saw_reasoning,
+        refused,
+    )
+
+
+def _empty_response_error(result: dict, attempts: int) -> RuntimeError:
+    finish_reason = result["finish_reason"] or "missing"
+    reasoning_discarded = "true" if result["saw_reasoning"] else "false"
+    return RuntimeError(
+        "model gateway returned no final content "
+        f"after {attempts} attempt(s) "
+        f"(finish_reason={finish_reason}, reasoning_content_discarded={reasoning_discarded})"
+    )
 
 
 def query(
@@ -60,25 +134,37 @@ def query(
         "stream": True,
         "stream_options": {"include_usage": True},
     }).encode("utf-8")
-    connection = http.client.HTTPConnection(parsed.hostname, parsed.port or 80, timeout=1200)
-    connection.request(
-        "POST",
-        endpoint,
-        body=body,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "Content-Length": str(len(body)),
-        },
-    )
-    response = connection.getresponse()
-    try:
-        if response.status != 200:
-            error = response.read(4096).decode("utf-8", errors="replace")
-            raise RuntimeError(f"model gateway HTTP {response.status}: {error}")
-        text = _read_response(response).strip()
-    finally:
-        connection.close()
-    if not text:
-        raise RuntimeError("model gateway returned no text")
-    return text
+    for attempt in (1, 2):
+        connection = http.client.HTTPConnection(parsed.hostname, parsed.port or 80, timeout=1200)
+        connection.request(
+            "POST",
+            endpoint,
+            body=body,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Content-Length": str(len(body)),
+            },
+        )
+        response = connection.getresponse()
+        try:
+            if response.status != 200:
+                error = response.read(4096).decode("utf-8", errors="replace")
+                raise RuntimeError(f"model gateway HTTP {response.status}: {error}")
+            result = _read_response(response)
+        finally:
+            connection.close()
+
+        if result["refused"] or result["finish_reason"] == "content_filter":
+            raise RuntimeError("model gateway refused or filtered the completion")
+        text = result["text"].strip()
+        if text:
+            return text
+
+        # 只把“正常结束但正文为空”或“空流”视为一次性上游故障。
+        # length、tool_calls 等状态不会靠相同请求自动恢复，因此直接失败。
+        if attempt == 1 and result["finish_reason"] in {None, "stop"}:
+            continue
+        raise _empty_response_error(result, attempt)
+
+    raise RuntimeError("unreachable model gateway retry state")

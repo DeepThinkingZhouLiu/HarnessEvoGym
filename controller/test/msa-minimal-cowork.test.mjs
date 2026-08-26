@@ -336,3 +336,164 @@ test('MSA Cowork CandidateSeed Python 可解析，Chat Client 可读取 SSE', as
   assert.equal(requests[0].body.max_tokens, 77)
   assert.equal(requests[0].body.stream, true)
 })
+
+test('MSA Cowork Chat Client 只对首次正常结束的空流重试一次', async (context) => {
+  const seedRoot = resolve(repositoryRoot, 'targets/msa-minimal/cowork-v1')
+  let requests = 0
+  const server = http.createServer((_request, response) => {
+    requests += 1
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    if (requests === 1) {
+      response.end([
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}`,
+        '',
+        'data: [DONE]',
+        '',
+      ].join('\n'))
+      return
+    }
+    response.end([
+      `data: ${JSON.stringify({ choices: [{ message: { content: '<bash>echo safe</bash>' }, delta: {}, finish_reason: 'stop' }] })}`,
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n'))
+  })
+  await new Promise((accept, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', accept)
+  })
+  context.after(() => new Promise((accept) => server.close(accept)))
+  const port = server.address().port
+  const script = [
+    'import sys',
+    `sys.path.insert(0, ${JSON.stringify(seedRoot)})`,
+    'from model import query',
+    `print(query("http://127.0.0.1:${port}", "dummy-token", "fixture-terra", [{"role":"user","content":"hi"}], 77))`,
+  ].join('\n')
+  const { stdout } = await executeFile('python3', ['-c', script], {
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+  })
+
+  assert.equal(stdout.trim(), '<bash>echo safe</bash>')
+  assert.equal(requests, 2)
+})
+
+test('MSA Cowork Chat Client 丢弃 reasoning_content 且两次空流后关闭失败', async (context) => {
+  const seedRoot = resolve(repositoryRoot, 'targets/msa-minimal/cowork-v1')
+  const hiddenCommand = '<bash>touch /tmp/must-not-run</bash>'
+  let requests = 0
+  const server = http.createServer((_request, response) => {
+    requests += 1
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    response.end([
+      `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: hiddenCommand } }] })}`,
+      '',
+      `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}`,
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n'))
+  })
+  await new Promise((accept, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', accept)
+  })
+  context.after(() => new Promise((accept) => server.close(accept)))
+  const port = server.address().port
+  const script = [
+    'import sys',
+    `sys.path.insert(0, ${JSON.stringify(seedRoot)})`,
+    'from model import query',
+    `query("http://127.0.0.1:${port}", "dummy-token", "fixture-terra", [{"role":"user","content":"hi"}], 77)`,
+  ].join('\n')
+
+  await assert.rejects(
+    executeFile('python3', ['-c', script], {
+      env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+    }),
+    (error) => {
+      assert.match(error.stderr, /reasoning_content_discarded=true/u)
+      assert.doesNotMatch(error.stderr, /must-not-run/u)
+      return true
+    },
+  )
+  assert.equal(requests, 2)
+})
+
+test('MSA Cowork Chat Client 遇到 content_filter 不重试', async (context) => {
+  const seedRoot = resolve(repositoryRoot, 'targets/msa-minimal/cowork-v1')
+  let requests = 0
+  const server = http.createServer((_request, response) => {
+    requests += 1
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    response.end([
+      `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'content_filter' }] })}`,
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n'))
+  })
+  await new Promise((accept, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', accept)
+  })
+  context.after(() => new Promise((accept) => server.close(accept)))
+  const port = server.address().port
+  const script = [
+    'import sys',
+    `sys.path.insert(0, ${JSON.stringify(seedRoot)})`,
+    'from model import query',
+    `query("http://127.0.0.1:${port}", "dummy-token", "fixture-terra", [{"role":"user","content":"hi"}], 77)`,
+  ].join('\n')
+
+  await assert.rejects(
+    executeFile('python3', ['-c', script], {
+      env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+    }),
+    /refused or filtered/u,
+  )
+  assert.equal(requests, 1)
+})
+
+test('MSA Cowork Chat Client 遇到 length 截断不重试且不暴露隐藏推理', async (context) => {
+  const seedRoot = resolve(repositoryRoot, 'targets/msa-minimal/cowork-v1')
+  const hiddenCommand = '<bash>touch /tmp/truncated-reasoning</bash>'
+  let requests = 0
+  const server = http.createServer((_request, response) => {
+    requests += 1
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    response.end([
+      `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: hiddenCommand } }] })}`,
+      '',
+      `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'length' }] })}`,
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n'))
+  })
+  await new Promise((accept, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', accept)
+  })
+  context.after(() => new Promise((accept) => server.close(accept)))
+  const port = server.address().port
+  const script = [
+    'import sys',
+    `sys.path.insert(0, ${JSON.stringify(seedRoot)})`,
+    'from model import query',
+    `query("http://127.0.0.1:${port}", "dummy-token", "fixture-terra", [{"role":"user","content":"hi"}], 77)`,
+  ].join('\n')
+
+  await assert.rejects(
+    executeFile('python3', ['-c', script], {
+      env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+    }),
+    (error) => {
+      assert.match(error.stderr, /after 1 attempt\(s\).*finish_reason=length.*reasoning_content_discarded=true/su)
+      assert.doesNotMatch(error.stderr, /truncated-reasoning/u)
+      return true
+    },
+  )
+  assert.equal(requests, 1)
+})

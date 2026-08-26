@@ -40,13 +40,24 @@ The default `linear-hill-climb` strategy chooses the Champion and every region
 under the current risk ceiling. Experiments without `spec.adapters.strategy`
 receive this default automatically, preserving legacy Cowork behavior.
 
+## Progressive risk expansion
+
+`adapters/strategies/progressive-risk-expansion.yml` generalizes HZY's level
+progression without knowing any Harness path. Each Branch starts at the
+configured risk level, keeps the same level after a promotion, expands to the
+next Target-defined level after `missesBeforeExpansion` consecutive
+non-promotions, and returns `exhausted=true` after the same threshold is reached
+at the Recipe risk ceiling. The Controller then stops that Branch and preserves
+unused Population budget.
+
 ## Contributor example
 
 See `strategies/examples/round-robin/` and
 `adapters/strategies/docker-round-robin.example.yml`. The process reads one
 `SearchStrategyRequest` JSON object from stdin and writes one strict
 `SearchStrategyResponse` object to stdout. `propose` returns state plus a
-MutationPlan; `observe` returns only updated state.
+MutationPlan; `observe` returns updated state and may return `exhausted=true`
+to stop the current Branch.
 
 Solver, Updater, and Environment implementation creation uses the versioned
 trusted Driver Registry. The main evolution loop no longer branches on those

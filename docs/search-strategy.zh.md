@@ -64,6 +64,26 @@ DSH Cowork 的当前 Catalog 是：
 旧 `EvolutionExperiment` 没有 `spec.adapters.strategy` 时，Loader 自动注入这个策略。因为 Catalog
 在启动时已做权限等价性检查，所以旧 L1/L2 Experiment 的实际可写集合不变。
 
+## 渐进风险扩展策略
+
+`adapters/strategies/progressive-risk-expansion.yml` 是 HZY 层级推进逻辑的通用化实现。
+它不认识 DSH、MSA 或 PI Agent 路径，只使用当前 Target Catalog 声明的风险层和
+Region：
+
+- 每个 Branch 从 `startRiskLevel` 开始，默认是 L1。
+
+- 本轮选择不高于当前活跃风险层的全部 Region。
+
+- Candidate 晋升时清空连续未晋升计数，并留在当前层。
+
+- 连续 `missesBeforeExpansion` 次未晋升后扩大到 Target 的下一个已定义层级。
+
+- 在 Recipe `riskCeiling` 内已无更高层且再次达到阈值时，返回
+  `exhausted=true`。Controller 将该 Branch 标记为 stopped，Population 不再向它分配预算。
+
+因此 `combined + progressive-risk-expansion` 表示：Branch 之间共享经验并竞争预算，
+每个 Branch 内部独立执行 L1 -> L2 -> L3 渐进扩展。
+
 ## 外部 Contributor Strategy
 
 外部算法使用 `docker-json-v1`，通过 stdin/stdout 交换一个 JSON，不 import 进 Controller。运行时固定为：
@@ -121,6 +141,9 @@ DSH Cowork 的当前 Catalog 是：
   }
 }
 ```
+
+`observe` 响应除了更新后的 `state`，还可返回 `exhausted: true`，请求 Controller
+将当前 Branch 标记为搜索耗尽。该信号只能停止当前 Branch，不能扩大权限或修改评分。
 
 可直接参考 `strategies/examples/round-robin/`。其 Adapter 模板在
 `adapters/strategies/docker-round-robin.example.yml`：

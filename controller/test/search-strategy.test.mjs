@@ -30,6 +30,41 @@ async function context() {
   }
 }
 
+async function progressiveContext(generation = 1) {
+  const bundle = await loadExperimentBundle(
+    resolve(repositoryRoot, 'experiments/reasoning-msa-smoke-l2-single.json'),
+    repositoryRoot,
+  )
+  return {
+    runId: 'progressive-run-test',
+    generation,
+    riskCeiling: 'l3',
+    catalog: mutationCatalogFor(bundle.target),
+    championId: 'h0',
+    allowedParentIds: ['h0'],
+    candidates: [{ id: 'h0', parentId: null, digest: 'digest', status: 'baseline' }],
+    searchHistory: [],
+  }
+}
+
+function progressiveAdapter(configuration = {}) {
+  return validateSearchStrategyAdapter({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'SearchStrategyAdapter',
+    metadata: { id: 'progressive-risk-expansion' },
+    spec: {
+      protocol: 'builtin-v1',
+      implementation: 'progressive-risk-expansion',
+      configuration: {
+        startRiskLevel: 'l1',
+        missesBeforeExpansion: 3,
+        regionSelection: 'all-under-active-risk-level',
+        ...configuration,
+      },
+    },
+  })
+}
+
 test('内置线性 Strategy 保持旧行为并持久化最小状态', async () => {
   const driver = createSearchStrategyDriver({ adapter: defaultSearchStrategyAdapter() })
   const proposed = await driver.propose(await context())
@@ -48,6 +83,103 @@ test('内置线性 Strategy 保持旧行为并持久化最小状态', async () =
   }, proposed.state)
   assert.equal(observed.state.roundsObserved, 1)
   assert.equal(observed.state.lastObservation.status, 'promoted')
+})
+
+test('渐进风险扩展在连续三次未晋升后从 L1 扩大到 L2 和 L3', async () => {
+  const driver = createSearchStrategyDriver({ adapter: progressiveAdapter() })
+  let state = null
+  let lastPlan = null
+  for (let generation = 1; generation <= 9; generation += 1) {
+    const proposed = await driver.propose(await progressiveContext(generation), state)
+    state = proposed.state
+    lastPlan = proposed.plan
+    if (generation <= 3) {
+      assert.deepEqual(lastPlan.spec.regionIds, ['reasoning-profile'])
+    } else if (generation <= 6) {
+      assert.deepEqual(lastPlan.spec.regionIds, [
+        'reasoning-profile', 'reasoning-agent-loop', 'reasoning-tool-runtime',
+      ])
+    } else {
+      assert.deepEqual(lastPlan.spec.regionIds, [
+        'reasoning-profile',
+        'reasoning-agent-loop',
+        'reasoning-tool-runtime',
+        'reasoning-model-transport',
+        'reasoning-runtime-wiring',
+      ])
+    }
+    const observed = await driver.observe({
+      runId: 'progressive-run-test',
+      generation,
+      parentId: 'h0',
+      proposalId: `g${String(generation).padStart(3, '0')}`,
+      status: 'rejected',
+      championId: 'h0',
+      regionIds: lastPlan.spec.regionIds,
+    }, state)
+    state = observed.state
+    assert.equal(observed.exhausted, generation === 9)
+  }
+  assert.equal(state.activeRiskLevel, 'l3')
+  assert.equal(state.expansions, 2)
+  assert.equal(state.exhausted, true)
+  await assert.rejects(
+    driver.propose(await progressiveContext(10), state),
+    /已耗尽/u,
+  )
+})
+
+test('渐进风险扩展在 Candidate 晋升后清空连续失败计数', async () => {
+  const driver = createSearchStrategyDriver({ adapter: progressiveAdapter() })
+  let proposed = await driver.propose(await progressiveContext(1))
+  let observed = await driver.observe({
+    runId: 'progressive-run-test', generation: 1, parentId: 'h0', proposalId: 'g001',
+    status: 'rejected', championId: 'h0', regionIds: proposed.plan.spec.regionIds,
+  }, proposed.state)
+  proposed = await driver.propose(await progressiveContext(2), observed.state)
+  observed = await driver.observe({
+    runId: 'progressive-run-test', generation: 2, parentId: 'h0', proposalId: 'g002',
+    status: 'promoted', championId: 'g002', regionIds: proposed.plan.spec.regionIds,
+  }, proposed.state)
+  assert.equal(observed.state.activeRiskLevel, 'l1')
+  assert.equal(observed.state.consecutiveMisses, 0)
+  assert.equal(observed.exhausted, false)
+})
+
+test('渐进风险扩展只遍历当前 Target 真正定义的风险层', async () => {
+  const driver = createSearchStrategyDriver({
+    adapter: progressiveAdapter({ missesBeforeExpansion: 1 }),
+  })
+  const dshContext = { ...await context(), riskCeiling: 'l2' }
+  const first = await driver.propose(dshContext)
+  assert.deepEqual(first.plan.spec.regionIds, ['preset-composition', 'skill-guidance'])
+  const firstObservation = await driver.observe({
+    runId: 'run-test', generation: 1, parentId: 'h0', proposalId: 'g001',
+    status: 'rejected', championId: 'h0', regionIds: first.plan.spec.regionIds,
+  }, first.state)
+  assert.equal(firstObservation.state.activeRiskLevel, 'l2')
+
+  const second = await driver.propose({ ...dshContext, generation: 2 }, firstObservation.state)
+  assert.deepEqual(second.plan.spec.regionIds, [
+    'preset-composition', 'skill-guidance', 'skill-scripts',
+  ])
+  const secondObservation = await driver.observe({
+    runId: 'run-test', generation: 2, parentId: 'h0', proposalId: 'g002',
+    status: 'rejected', championId: 'h0', regionIds: second.plan.spec.regionIds,
+  }, second.state)
+  assert.equal(secondObservation.exhausted, true)
+  assert.deepEqual(secondObservation.state.riskLevels, ['l1', 'l2'])
+})
+
+test('渐进风险扩展严格拒绝未知配置和非法耐心阈值', () => {
+  assert.throws(
+    () => createSearchStrategyDriver({ adapter: progressiveAdapter({ missesBeforeExpansion: 0 }) }),
+    /1\.\.10000/u,
+  )
+  assert.throws(
+    () => createSearchStrategyDriver({ adapter: progressiveAdapter({ arbitrary: true }) }),
+    /未知配置/u,
+  )
 })
 
 test('外部 Docker Strategy 无网络、无挂载、无宿主环境泄漏，只交换 JSON', async () => {
@@ -75,6 +207,7 @@ test('外部 Docker Strategy 无网络、无挂载、无宿主环境泄漏，只
             kind: 'SearchStrategyResponse',
             operation: 'observe',
             state: { cursor: 2 },
+            exhausted: true,
           }
       return { stdout: JSON.stringify(response), stderr: '' }
     },
@@ -101,11 +234,16 @@ test('外部 Docker Strategy 无网络、无挂载、无宿主环境泄漏，只
   const originalProxyEnvironment = Object.fromEntries(proxyNames.map((name) => [name, process.env[name]]))
   const hostProxySecret = 'http://host-proxy-credential.invalid:7890'
   let proposed
+  let observed
   try {
     for (const name of proxyNames) process.env[name] = hostProxySecret
     const driver = createSearchStrategyDriver({ adapter, docker: fakeDocker })
     await driver.preflight()
     proposed = await driver.propose(await context())
+    observed = await driver.observe({
+      runId: 'run-test', generation: 1, parentId: 'h0', proposalId: 'g001-l1',
+      status: 'rejected', championId: 'h0', regionIds: proposed.plan.spec.regionIds,
+    }, proposed.state)
   } finally {
     for (const name of proxyNames) {
       if (originalProxyEnvironment[name] === undefined) delete process.env[name]
@@ -113,6 +251,7 @@ test('外部 Docker Strategy 无网络、无挂载、无宿主环境泄漏，只
     }
   }
   assert.deepEqual(proposed.plan.spec.regionIds, ['skill-guidance'])
+  assert.equal(observed.exhausted, true)
   const publicRegion = JSON.parse(requests[0].input).context.catalog.spec.regions[0]
   assert.equal(Object.hasOwn(publicRegion, 'writable'), false)
   assert.equal(Object.hasOwn(publicRegion, 'extensions'), false)

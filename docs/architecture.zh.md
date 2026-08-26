@@ -111,6 +111,10 @@ L1、L2、L3 是软搜索分类，其说明和路径属于 Target Runtime 配置
 
 该模式下 Controller 不替 Updater 选层，不累计三次 miss，也不自动升层。Validation 严格提升才保留 commit，否则同一 worktree reset 到 incumbent；若没有证据支持的新方向，Updater 可以显式结束无限轮次 Campaign。旧冻结实验仍可使用兼容的 `controller-sequential` 模式。
 
+通用 Experiment 已将 `controller-sequential` 的层级推进语义抽成
+`progressive-risk-expansion` SearchStrategy。它在每个 Branch 内独立统计连续未晋升，
+扩大 Target 自己声明的风险层，并在风险上限停滞后标记 Branch 耗尽。
+
 L1、L2、L3 是 Target Adapter 的语义，不应假设所有 Agent 目录相同。DeepSeek Harness Preset 与 MSA-derived math Harness 位于不同路径；Controller 只理解规范化后的配置白名单。
 
 ## 反馈与泛化

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import { MUTATION_RISK_LEVELS, validateMutationPlan } from './mutation-catalog.mjs'
 import { ProtocolError } from './protocol.mjs'
+import { createProgressiveRiskExpansionStrategy } from './strategies/progressive-risk-expansion.mjs'
 
 const BUILTIN_STRATEGIES = new Map()
 const MAXIMUM_PROTOCOL_BYTES = 256 * 1024
@@ -205,12 +206,16 @@ function strategyResponse(value, operation) {
   }
   const allowed = operation === 'propose'
     ? new Set(['apiVersion', 'kind', 'operation', 'state', 'plan'])
-    : new Set(['apiVersion', 'kind', 'operation', 'state'])
+    : new Set(['apiVersion', 'kind', 'operation', 'state', 'exhausted'])
   const unknown = Object.keys(value).filter((key) => !allowed.has(key))
   if (unknown.length > 0) throw new ProtocolError('Search Strategy Response 含有未知字段', unknown)
+  if (value.exhausted !== undefined && typeof value.exhausted !== 'boolean') {
+    throw new ProtocolError('Search Strategy Response.exhausted 必须是布尔值')
+  }
   return {
     state: jsonClone(value.state, 'Search Strategy State'),
     ...(operation === 'propose' ? { plan: value.plan } : {}),
+    ...(operation === 'observe' ? { exhausted: value.exhausted ?? false } : {}),
   }
 }
 
@@ -253,6 +258,7 @@ function linearHillClimb(configuration) {
     },
     async observe(context, previousState) {
       return {
+        exhausted: false,
         state: {
           roundsProposed: previousState?.roundsProposed ?? 0,
           roundsObserved: (previousState?.roundsObserved ?? 0) + 1,
@@ -268,6 +274,8 @@ function linearHillClimb(configuration) {
 }
 
 registerBuiltinSearchStrategy('linear-hill-climb', linearHillClimb)
+
+registerBuiltinSearchStrategy('progressive-risk-expansion', createProgressiveRiskExpansionStrategy)
 
 async function runDockerStrategy({ adapter, docker, operation, context, state }) {
   if (!docker || typeof docker.run !== 'function') {
@@ -382,8 +390,12 @@ export function createSearchStrategyDriver({ adapter, docker = null }) {
         ? await implementation.observe(context, state)
         : await runDockerStrategy({ adapter, docker, operation: 'observe', context, state })
       const nextState = jsonClone(output?.state, 'Search Strategy State')
+      const exhausted = output?.exhausted ?? false
+      if (typeof exhausted !== 'boolean') {
+        throw new ProtocolError('Search Strategy observe.exhausted 必须是布尔值')
+      }
       rejectSensitiveContextKeys(nextState, '$.strategy.state')
-      return { state: nextState }
+      return { state: nextState, exhausted }
     },
   }
 }

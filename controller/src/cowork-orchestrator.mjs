@@ -966,6 +966,15 @@ export function createCoworkBranchEvolutionDriver({
 
   async function advanceOne({ stepId, coordination }) {
     if (!state) throw new ProtocolError(`Cowork Branch ${branchId} 尚未初始化`)
+    if (state.metadata.status === 'stopped') {
+      return validateBranchStepResult({
+        apiVersion: 'harness-rsi/v1alpha1',
+        kind: 'BranchStepResult',
+        stepId,
+        budgetConsumed: 0,
+        projection: coworkBranchProjection({ branchId, state }),
+      })
+    }
     const generation = state.spec.generationsCompleted + 1
     const generationRoot = join(runRoot, 'generations', `generation-${generation}`)
     await mkdir(generationRoot, { recursive: true })
@@ -1199,6 +1208,14 @@ export function createCoworkBranchEvolutionDriver({
         ...(historyEntry.rejection ? { rejection: historyEntry.rejection } : {}),
       }, state.spec.searchStrategyState)
       state.spec.searchStrategyState = observed.state
+      if (observed.exhausted) {
+        state.metadata.status = 'stopped'
+        state.spec.searchExhaustion = {
+          generation,
+          strategy: context.searchStrategy.id,
+          reason: 'risk-ceiling-stagnated',
+        }
+      }
     }
     await persist()
     return validateBranchStepResult({
@@ -1560,6 +1577,13 @@ export async function runEvolution({
         ...(historyEntry.rejection ? { rejection: historyEntry.rejection } : {}),
       }, state.spec.searchStrategyState)
       state.spec.searchStrategyState = observed.state
+      if (observed.exhausted) {
+        state.spec.searchExhaustion = {
+          generation,
+          strategy: context.searchStrategy.id,
+          reason: 'risk-ceiling-stagnated',
+        }
+      }
 
       onEvent({
         stage: 'decision',
@@ -1568,6 +1592,7 @@ export async function runEvolution({
       })
 
       await writeJsonFile(join(runRoot, 'state.json'), state)
+      if (observed.exhausted) break
     }
   } catch (error) {
     state.metadata.status = 'failed'

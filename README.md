@@ -94,6 +94,14 @@ describe the modules that can be searched. An old experiment without a
 `strategy` field automatically uses `linear-hill-climb`, which selects every
 region under the ceiling and therefore preserves the old writable set exactly.
 
+The built-in `progressive-risk-expansion` strategy is Target-independent. Each
+Branch starts at L1 and expands to L2/L3 after a configured number of consecutive
+non-promotions. Reaching the risk ceiling and stagnating again marks that Branch
+as search-exhausted, allowing Population to close it without spending unused
+budget. This is the generic SearchStrategy form of the old
+`controller-sequential` level progression; it is intentionally not named
+`legacy-*`.
+
 ## Turning MSA Minimal into different Solvers
 
 The shared minimal Agent loop is committed at

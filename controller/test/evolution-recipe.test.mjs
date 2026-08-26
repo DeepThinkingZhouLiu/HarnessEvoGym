@@ -40,12 +40,12 @@ test('Reasoning 五种 Mode 规范化后保持名称与 Budget 语义', () => {
   }
 })
 
-test('Reasoning controller-sequential 映射为内置兼容 Strategy', () => {
+test('Reasoning controller-sequential 映射为渐进风险扩展 Strategy', () => {
   const recipe = normalizeReasoningEvolutionRecipe({
     controllerConfig: controllerConfig('single'),
   })
   assert.equal(recipe.spec.moduleSearch.authority, 'strategy-directed')
-  assert.equal(recipe.spec.moduleSearch.strategy, 'legacy-layer-sequential')
+  assert.equal(recipe.spec.moduleSearch.strategy, 'progressive-risk-expansion')
   assert.equal(recipe.spec.moduleSearch.riskCeiling, 'l3')
 })
 

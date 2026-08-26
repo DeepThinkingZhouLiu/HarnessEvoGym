@@ -121,6 +121,12 @@ L1, L2, and L3 are soft search categories whose descriptions and paths belong to
 
 The Controller does not select a layer, count three misses, or automatically advance levels in this mode. It retains a commit only for a strict validation improvement and otherwise resets the same worktree to the incumbent. An Updater may explicitly stop an unbounded campaign when no evidence-backed mutation remains. The legacy `controller-sequential` mode remains available for frozen historical campaign definitions.
 
+Generic Experiments map the level-progression semantics of
+`controller-sequential` to the Target-independent
+`progressive-risk-expansion` SearchStrategy. It tracks consecutive
+non-promotions per Branch, expands across Target-owned risk levels, and marks a
+Branch exhausted after stagnation at the Recipe risk ceiling.
+
 L1, L2, and L3 are Target Adapter semantics rather than universal directories. A DeepSeek Harness preset and an MSA-derived math Harness live at different paths; the Controller understands only the normalized configured allowlist.
 
 ## Feedback and generalization

@@ -90,6 +90,12 @@ Target 的搜索空间现在从粗粒度层级中独立出来：`mutationLevel` 
 其中一个，但无法绕过 L1/L2 上限。旧 Experiment 不写 `strategy` 时会自动使用
 `linear-hill-climb`，它选择风险上限内全部 Region，所以权限和旧版完全一致。
 
+内置 `progressive-risk-expansion` 是与 Target 无关的渐进风险扩展策略：每个
+Branch 先搜 L1，连续指定次数没有 Candidate 晋升时再扩大到 L2/L3；在风险
+上限仍连续无晋升时，Strategy 标记该 Branch 搜索耗尽，Population 保留未用预算。
+它是旧 `controller-sequential` 层级推进的通用 SearchStrategy 表达，不再使用
+`legacy-*` 命名。
+
 ## MSA Minimal 怎么变成不同 Solver
 
 共享的最小 Agent Loop 已提交到

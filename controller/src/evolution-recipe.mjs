@@ -105,7 +105,7 @@ export function normalizeReasoningEvolutionRecipe({
     : {
         authority: 'strategy-directed',
         riskCeiling,
-        strategy: 'legacy-layer-sequential',
+        strategy: 'progressive-risk-expansion',
       })
 }
 

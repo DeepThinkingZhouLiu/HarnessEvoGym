@@ -58,7 +58,7 @@ function projection(branchId, state, lastStep = null) {
     apiVersion: 'harness-rsi/v1alpha1',
     kind: 'BranchProjection',
     branchId,
-    status: 'active',
+    status: state.status ?? 'active',
     completedSteps: state.steps,
     incumbent: {
       candidateId: state.candidateId,
@@ -70,7 +70,7 @@ function projection(branchId, state, lastStep = null) {
   }
 }
 
-async function runMode(mode, { failAdvance = false } = {}) {
+async function runMode(mode, { failAdvance = false, stopAfter = null } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'population-generic-'))
   const campaignsRoot = join(root, 'campaigns')
   await mkdir(campaignsRoot)
@@ -90,6 +90,7 @@ async function runMode(mode, { failAdvance = false } = {}) {
         async initialize() {
           const candidateId = `${branchId}-h0`
           state = {
+            status: 'active',
             steps: 0,
             candidateId,
             revision: digest(`${branchId}-h0-revision`),
@@ -113,6 +114,7 @@ async function runMode(mode, { failAdvance = false } = {}) {
           const candidateId = `${branchId}-c${next}`
           const value = next + (branchId === 'branch-002' ? 0.5 : 0)
           state = {
+            status: stopAfter === next ? 'stopped' : 'active',
             steps: next,
             candidateId,
             revision: digest(`${candidateId}-revision`),
@@ -166,6 +168,14 @@ async function runMode(mode, { failAdvance = false } = {}) {
   const state = await orchestrator.run()
   return { state, contexts, calls }
 }
+
+test('SearchStrategy 耗尽后 Branch 可提前停止并保留未用 Population 预算', async () => {
+  const result = await runMode('independent', { stopAfter: 1 })
+  assert.equal(result.state.status, 'CLOSED')
+  assert.equal(result.state.budget.consumed, 2)
+  assert.equal(result.state.budget.totalBudget, 4)
+  assert.ok(result.state.branches.every((branch) => branch.status === 'stopped'))
+})
 
 test('Branch 基础设施异常会暂停 Population，不能伪装成 0 分后关闭', async () => {
   const result = await runMode('single', { failAdvance: true })

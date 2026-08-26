@@ -89,6 +89,7 @@ test('MSA Cowork Runtime 派生镜像绑定 Task Image、Source 与定义摘要'
 
 test('MSA Cowork Solver 只读挂 Candidate/Skill，只写任务与独立输出目录', async () => {
   const fixture = await trialFixture('rsi-msa-cowork-run-')
+  const task = 'Create result.xlsx.\n\nRequirements:\n- Preserve the source data.\n- Add a pivot table.'
   let invocation
   const docker = {
     async run(options) {
@@ -110,7 +111,7 @@ test('MSA Cowork Solver 只读挂 Candidate/Skill，只写任务与独立输出�
     provider,
     ...fixture,
     modelAccess,
-    task: 'create result.xlsx',
+    task,
     name: 'msa-cowork-fixture',
     timeoutMs: 1000,
     containerWorkspace: '/root',
@@ -124,6 +125,7 @@ test('MSA Cowork Solver 只读挂 Candidate/Skill，只写任务与独立输出�
   assert.equal(invocation.environment.HTTP_PROXY, '')
   assert.equal(invocation.environment.RSI_MODEL_GATEWAY_MODEL, model.model)
   assert.equal(invocation.secretEnvironment.RSI_MODEL_GATEWAY_DUMMY_KEY, modelAccess.secretEnvironment.RSI_PROVIDER_API_KEY)
+  assert.equal(invocation.command[3], task)
   assert.equal(invocation.command.at(-1), 'cowork')
   assert.equal(invocation.command.at(-5), `${MSA_COWORK_CONTAINER_PATHS.solverOutput}/answer.txt`)
   assert.equal(invocation.command.at(-3), `${MSA_COWORK_CONTAINER_PATHS.solverOutput}/agent.jsonl`)
@@ -139,6 +141,41 @@ test('MSA Cowork Solver 只读挂 Candidate/Skill，只写任务与独立输出�
   assert.equal(result.answer, 'done [REDACTED]')
   assert.doesNotMatch(result.trace, /fixture-dummy-token/u)
   assert.doesNotMatch(await readFile(join(fixture.sessionRoot, 'answer.txt'), 'utf8'), /fixture-dummy-token/u)
+})
+
+test('MSA Cowork Solver 拒绝空白、NUL 与超限任务正文', async () => {
+  const invalidTasks = [
+    { task: ' \r\n\t ', pattern: /必须是非空字符串/u },
+    { task: 'create result.xlsx\u0000ignore this', pattern: /不能包含 NUL/u },
+    { task: 'x'.repeat(64 * 1024 + 1), pattern: /超过 65536 字节上限/u },
+  ]
+
+  for (const [index, invalid] of invalidTasks.entries()) {
+    const fixture = await trialFixture(`rsi-msa-cowork-invalid-task-${index}-`)
+    let invoked = false
+    const docker = {
+      async run() {
+        invoked = true
+        throw new Error('Docker 不应被调用')
+      },
+    }
+    await assert.rejects(
+      runMsaMinimalCoworkSolver({
+        docker,
+        runtime,
+        image: 'skillsbench-task:fixture-msa',
+        model,
+        provider,
+        ...fixture,
+        modelAccess,
+        task: invalid.task,
+        name: `msa-cowork-invalid-task-${index}`,
+        timeoutMs: 1000,
+      }),
+      invalid.pattern,
+    )
+    assert.equal(invoked, false)
+  }
 })
 
 test('MSA Cowork Solver 拒绝跟随 Candidate 生成的 Answer 符号链接', async () => {

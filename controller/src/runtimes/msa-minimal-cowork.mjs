@@ -14,6 +14,7 @@ export const MSA_COWORK_CONTAINER_PATHS = Object.freeze({
 })
 
 const MAXIMUM_ANSWER_BYTES = 1024 * 1024
+const MAXIMUM_TASK_TEXT_BYTES = 64 * 1024
 const MAXIMUM_TRACE_BYTES = 16 * 1024 * 1024
 const MAXIMUM_TRACE_LINES = 20_000
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/u
@@ -21,6 +22,19 @@ const FULL_GIT_SHA = /^[0-9a-f]{40}$/u
 function requiredText(value, label) {
   if (typeof value !== 'string' || value.trim().length === 0 || /[\u0000\r\n]/u.test(value)) {
     throw new ProtocolError(`${label} 必须是安全的非空字符串`)
+  }
+  return value.trim()
+}
+
+function taskText(value, label) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new ProtocolError(`${label} 必须是非空字符串`)
+  }
+  if (value.includes('\u0000')) {
+    throw new ProtocolError(`${label} 不能包含 NUL 字符`)
+  }
+  if (Buffer.byteLength(value, 'utf8') > MAXIMUM_TASK_TEXT_BYTES) {
+    throw new ProtocolError(`${label} 超过 ${MAXIMUM_TASK_TEXT_BYTES} 字节上限`)
   }
   return value.trim()
 }
@@ -299,7 +313,7 @@ export async function runMsaMinimalCoworkSolver({
     command: [
       runtimePython(runtime),
       `${MSA_COWORK_CONTAINER_PATHS.candidate}/run.py`,
-      '--task', requiredText(task, 'MSA Solver Task'),
+      '--task', taskText(task, 'MSA Solver Task'),
       '--answer', `${MSA_COWORK_CONTAINER_PATHS.solverOutput}/${answerFile}`,
       '--trace', `${MSA_COWORK_CONTAINER_PATHS.solverOutput}/${traceFile}`,
       '--profile', runtimeProfile(runtime),

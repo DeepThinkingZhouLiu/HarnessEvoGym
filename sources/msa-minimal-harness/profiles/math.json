@@ -1,0 +1,6 @@
+{
+  "max_steps": 6,
+  "command_timeout_seconds": 60,
+  "max_observation_chars": 12000,
+  "max_output_tokens": 8192
+}

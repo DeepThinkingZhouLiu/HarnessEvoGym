@@ -162,6 +162,8 @@ function buildLedger({ generations, candidatesEvaluated, startedAt, solverUsage,
     candidatesEvaluated,
     updaterTokens: updaterUsage.totalTokens,
     solverTokens: solverUsage.totalTokens,
+    updaterUsage: structuredClone(updaterUsage),
+    solverUsage: structuredClone(solverUsage),
     costUsd: null,
     wallTimeMs: Date.now() - startedAt,
   }
@@ -844,6 +846,13 @@ export function createCoworkBranchEvolutionDriver({
         searchHistory: [],
         lastCandidateId: null,
         lastStepId: null,
+        ledger: buildLedger({
+          generations: 0,
+          candidatesEvaluated: 0,
+          startedAt,
+          solverUsage: context.solverDriver.usage(),
+          updaterUsage: context.updaterDriver.usage(),
+        }),
         final: null,
       },
     }
@@ -1070,6 +1079,13 @@ export function createCoworkBranchEvolutionDriver({
     state.spec.generationsCompleted = generation
     state.spec.lastCandidateId = historyEntry.proposalId
     state.spec.lastStepId = stepId
+    state.spec.ledger = buildLedger({
+      generations: generation,
+      candidatesEvaluated,
+      startedAt,
+      solverUsage: context.solverDriver.usage(),
+      updaterUsage: context.updaterDriver.usage(),
+    })
     await appendFile(peerEvidencePath, `${JSON.stringify({
       branchId,
       ...historyEntry,
@@ -1107,7 +1123,11 @@ export function createCoworkBranchEvolutionDriver({
     advanceOne,
     async exportPeerEvidence() {
       if (!state) throw new ProtocolError(`Cowork Branch ${branchId} 尚未初始化`)
-      return { sourcePath: peerEvidencePath, entries: structuredClone(state.spec.searchHistory) }
+      return {
+        sourcePath: peerEvidencePath,
+        entries: structuredClone(state.spec.searchHistory),
+        evolution: structuredClone(state.spec.ledger),
+      }
     },
     async exportBest() {
       if (!state) throw new ProtocolError(`Cowork Branch ${branchId} 尚未初始化`)
@@ -1134,6 +1154,7 @@ export function createCoworkBranchEvolutionDriver({
         changedFiles: cumulative.changes.map((change) => change.path),
         diffStat: cumulative.diffStat,
         patch: cumulative.patch,
+        evolution: structuredClone(state.spec.ledger),
         workspace: champion.workspace,
         implementationRoot: champion.root,
       }

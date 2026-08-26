@@ -643,6 +643,7 @@ export class PopulationOrchestrator {
         remaining: branchRemaining(branch),
         evolutionLog: relative(this.store.root, evidence.sourcePath),
         mutations: evidence.entries,
+        ...(evidence.evolution ? { evolution: evidence.evolution } : {}),
       }
     }))
     const summary = redactSecrets({
@@ -660,6 +661,7 @@ export class PopulationOrchestrator {
         ...bestBranch.incumbent,
         changedFiles: implementation.changedFiles,
         diffStat: implementation.diffStat,
+        ...(implementation.evolution ? { evolution: implementation.evolution } : {}),
       },
       branches: branchDetails,
     }, this.secretValues)
@@ -684,6 +686,7 @@ export class PopulationOrchestrator {
           }),
       changedFiles: implementation.changedFiles,
       diffStat: implementation.diffStat,
+      ...(implementation.evolution ? { evolution: implementation.evolution } : {}),
       patchArtifact: 'best-harness.patch',
       workspace: implementation.workspace,
       implementationRoot: implementation.implementationRoot,

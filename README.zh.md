@@ -10,43 +10,45 @@ Controller 作为新基座，`lz-dev` 的 SkillsBench、DSH Overlay、Reward 评
 ## 系统设计
 
 ```text
-冻结题目 -> Candidate Solver -> validation 分数 + trace
-                  ^                         |
-                  |                         v
-              Git commit <- Updater <- evolution log
-                  |
-                  v
-            Controller 保留/回退
+Target MutationCatalog -> SearchStrategy -> MutationPlan
+          |                                    |
+          |                                    v
+冻结题目 -> Candidate Solver <- Controller MutationLease <- Updater
+                  |              |
+                  v              v
+           validation 证据 -> 冻结 Gate -> 晋升/回退
 ```
 
-| 组件 | 职责 | 边界 |
-|---|---|---|
-| Source | 固定 Harness 基线 | 只读 |
-| Solver | 使用 Candidate Harness 解题 | 看不到 gold/test/凭据 |
-| Updater | 读取 validation 反馈，修改一个 Candidate，创建一个 commit | 只能写配置允许的路径 |
-| Controller | 调度、Budget、Git 审核、评测、保留/回退、报告 | 永远不可写 |
-| Evaluator/Gateway | 冻结分数与模型身份，隔离真实凭据 | 位于 Candidate 外部 |
+| 组件              | 职责                                                             | 边界                                  |
+|-------------------|------------------------------------------------------------------|---------------------------------------|
+| Target            | 声明 Harness 基线、可进化 Region 与 L1/L2/L3 风险上限     | 不参与打分                            |
+| SearchStrategy    | 选父 Candidate 和 Region，决定“这轮搜哪里”                 | 只返回 ID，不能返回路径或修改代码       |
+| Updater           | 读取 feedback，分析原因并在授权范围内真正改 Candidate         | 只能写本轮 MutationLease 允许的路径  |
+| Solver            | 使用 Candidate Harness 解题                                     | 看不到 gold/final/真实凭据           |
+| Controller        | 实例化、发权、调度、Diff 审核、评测、谱系、晋升/回退         | 不可被 Candidate 修改                  |
+| Evaluator/Gateway | 冻结分数与模型身份，隔离真实凭据                         | 位于 Candidate 外部                     |
 
 一轮进化是：
 
 ```text
 incumbent
-  -> Updater 读取源码 + validation 反馈 + 历史
-  -> 选择 L1/L2/L3，完成一个单变量方向并 commit
-  -> Controller 检查一个子 commit 及其改动路径
+  -> SearchStrategy 从 Target Catalog 选父 Candidate + Region ID
+  -> Controller 验证风险上限、依赖与冲突，生成一轮 MutationLease
+  -> Updater 读取源码 + validation 反馈 + 历史，完成一个可证伪修改
+  -> Controller 重新计算完整 Diff，不信任 Updater 自报
   -> Candidate 跑 validation
-  -> 分数上涨：保留；否则：git reset 回 incumbent
+  -> 通过冻结 Gate：晋升；否则：保留 incumbent
 ```
 
-Controller 不替 Updater 设计 mutation direction。每个 branch 复用一个 Git
-worktree，不逐轮复制完整工程，也不拆成 Proposal/Apply 两次会话。
+SearchStrategy 只管“搜哪里”，Updater 仍是完整 Coding Agent，自己做失败归因、
+提出假设、改代码和自检。Controller 不把归因写成固定规则，只强制权限与客观 Gate。
 
 ## 双场景执行面
 
-| 场景 | 命令入口 | Target / Environment | 当前算法 |
-|---|---|---|---|
-| Reasoning | `campaign ...` / `evolve ...` | MSA 轻量 Harness + HLE，或 DSH + PutnamBench | Future 基座的 `single/independent/mutualism/competition/combined` |
-| Cowork | `experiment ...` | DSH `cowork-rsi` Overlay + SkillsBench | 单 Champion 线性迭代，每代 `feedback -> update -> selection` |
+| 场景       | 命令入口                         | Target / Environment                              | 当前算法                                                            |
+|------------|----------------------------------|---------------------------------------------------|-----------------------------------------------------------------|
+| Reasoning  | `campaign ...` / `evolve ...`    | MSA 轻量 Harness + HLE，或 DSH + PutnamBench | Future 的 `single/independent/mutualism/competition/combined` |
+| Cowork     | `experiment ...`                 | DSH `cowork-rsi` Overlay + SkillsBench             | 可插拔 SearchStrategy；默认策略保持单 Champion 线性迭代          |
 
 两条链路共用 Benchmark/Policy/Solver Result/Evaluator 协议，但保留各自的环境执行器和
 安全隔离：Reasoning 使用宿主 UID + bubblewrap + sealed broker；Cowork 使用 Docker 任务镜像、
@@ -56,6 +58,12 @@ Future 已验证的 Reasoning 信任边界。
 Cowork 当前开放 L1/L2：L1 只改 Preset/Prompt/Skill 文档，L2 额外允许 Skill
 Script；L3 未开放。路径白名单、扩展名、可执行位、文件大小、符号链接和 Cordis
 插件都由 Controller 在 Updater 结束后重算并强制检查，不依赖提示词自觉。
+
+Cowork 的搜索空间现在从粗粒度层级中独立出来：`mutationLevel` 只是本次实验的
+风险上限，`MutationCatalog.regions` 是 Target 自己的可搜索模块。例如 DSH L1 可以分成
+`preset-composition` 和 `skill-guidance`，L2 再加 `skill-scripts`。搜索算法可以只选
+其中一个，但无法绕过 L1/L2 上限。旧 Experiment 不写 `strategy` 时会自动使用
+`linear-hill-climb`，它选择风险上限内全部 Region，所以权限和旧版完全一致。
 
 ## 最小 Math/Coding Harness
 
@@ -107,6 +115,8 @@ branch 参考。
 | Updater backend/model/effort | Runtime：`updater` |
 | Provider URL 和请求超时 | Runtime：`gateway` |
 | L1/L2/L3 说明与路径 | Runtime：`mutation.layers` |
+| Cowork 搜索算法 | Experiment：`spec.adapters.strategy` |
+| Cowork 可搜索模块 | Target Adapter：`spec.mutation.catalog.regions` |
 | Harness 实现 | `sources/msa-minimal-harness/` 或其他固定 Target |
 
 当前示例：
@@ -201,6 +211,7 @@ runtime、campaign ID、campaigns root、source root 和 credential FD。
 
 - [Controller 五种模式](docs/controller-modes.zh.md)
 - [架构与信任边界](docs/architecture.zh.md)
+- [搜索空间、搜索策略与兼容边界](docs/search-strategy.zh.md)
 - [HLE 变异工作流](docs/hle-mutation-workflow.zh.md)
 - [Cowork L1/L2 运行与扩展](docs/cowork-mvp.zh.md)
 

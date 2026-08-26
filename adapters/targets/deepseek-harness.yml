@@ -72,6 +72,57 @@ spec:
           - "disabled: !!js process.platform !== 'win32'"
           - "- !!js \"process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))\""
 
+    # Catalog 描述 Target 的真实搜索空间。Strategy 只能选择 Region ID，不能直接提交路径。
+    # 所有 Region 合并后与旧 L1/L2 白名单完全一致，因此旧 Experiment 行为保持不变。
+    catalog:
+      maximumRegionsPerPlan: 3
+      regions:
+        - id: preset-composition
+          description: 调整 Cowork Preset、Persona、工具组合与 Cordis 静态配置。
+          riskLevel: l1
+          writable:
+            - apps/cli/config/agent-presets/cowork-rsi/agent.cordis.yml
+            - apps/cli/config/agent-presets/cowork-rsi/preset.yml
+          extensions:
+            - .yml
+            - .yaml
+          requires: []
+          conflicts: []
+
+        - id: skill-guidance
+          description: 调整 Cowork Skill 的说明、Playbook 与声明式资源。
+          riskLevel: l1
+          writable:
+            - apps/cli/config/agent-presets/cowork-rsi/skills/**/*.md
+            - apps/cli/config/agent-presets/cowork-rsi/skills/**/*.json
+            - apps/cli/config/agent-presets/cowork-rsi/skills/**/*.yml
+            - apps/cli/config/agent-presets/cowork-rsi/skills/**/*.yaml
+            - apps/cli/config/agent-presets/cowork-rsi/skills/**/*.txt
+          extensions:
+            - .md
+            - .json
+            - .yml
+            - .yaml
+            - .txt
+          requires: []
+          conflicts: []
+
+        - id: skill-scripts
+          description: 调整 Skill 自带的受控脚本实现，不触碰 DSH Core。
+          riskLevel: l2
+          writable:
+            - apps/cli/config/agent-presets/cowork-rsi/skills/**/scripts/**/*.py
+            - apps/cli/config/agent-presets/cowork-rsi/skills/**/scripts/**/*.js
+            - apps/cli/config/agent-presets/cowork-rsi/skills/**/scripts/**/*.mjs
+            - apps/cli/config/agent-presets/cowork-rsi/skills/**/scripts/**/*.sh
+          extensions:
+            - .py
+            - .js
+            - .mjs
+            - .sh
+          requires: []
+          conflicts: []
+
     levels:
       l1:
         description: 只允许修改 Cowork Preset、Prompt 与 Skill 文档；禁止添加可执行代码。

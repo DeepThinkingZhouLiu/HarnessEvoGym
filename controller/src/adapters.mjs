@@ -13,12 +13,15 @@ import {
   resolveInside,
 } from './config.mjs'
 import { posix } from 'node:path'
+import { normalizeMutationCatalogConfiguration } from './mutation-catalog.mjs'
 import { normalizeRelativePath } from './path-policy.mjs'
 import { ProtocolError, readJsonFile, validateBenchmark, validateEvaluationPolicy } from './protocol.mjs'
 
 const MUTATION_LEVELS = ['l1', 'l2', 'l3']
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/u
 const ENVIRONMENT_NAME = /^[A-Z_][A-Z0-9_]*$/u
+const ADAPTER_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
+const STRATEGY_IMAGE = /^[a-z0-9][a-z0-9._:-]*(?:\/[a-z0-9][a-z0-9._-]*)*@sha256:[0-9a-f]{64}$/u
 const VERIFIER_PROXY_ENVIRONMENT = new Set([
   'HTTP_PROXY',
   'HTTPS_PROXY',
@@ -149,7 +152,9 @@ export function validateTargetAdapter(input) {
     throw new ProtocolError('当前安全实现只支持 controller-owned-overlay Materialization')
   }
   const solverProtocol = expectText(solver.protocol, 'TargetAdapter.spec.solver.protocol')
-  if (solverProtocol !== 'dsh-headless-docker') throw new ProtocolError('当前只实现 dsh-headless-docker Solver Protocol')
+  if (!['dsh-headless-docker', 'dsh-headless-docker-v1'].includes(solverProtocol)) {
+    throw new ProtocolError('当前只实现 dsh-headless-docker-v1 Solver Protocol')
+  }
   const resolvedMutationLimits = {
     maximumTreeEntries: expectNumber(limits.maximumTreeEntries, 'mutation.limits.maximumTreeEntries', {
       integer: true,
@@ -171,6 +176,7 @@ export function validateTargetAdapter(input) {
   if (resolvedMutationLimits.maximumChangedFiles > resolvedMutationLimits.maximumTreeEntries) {
     throw new ProtocolError('mutation.limits.maximumChangedFiles 不能大于 maximumTreeEntries')
   }
+  const catalog = normalizeMutationCatalogConfiguration(mutation.catalog, levels)
   return {
     apiVersion: API_VERSION,
     kind: 'TargetAdapter',
@@ -196,10 +202,105 @@ export function validateTargetAdapter(input) {
     mutation: {
       alwaysReadOnly,
       levels,
+      catalog,
       semanticChecks,
       limits: resolvedMutationLimits,
     },
   }
+}
+
+function jsonConfiguration(value, label) {
+  const configuration = value === undefined ? {} : expectObject(value, label)
+  let serialized
+  try {
+    serialized = JSON.stringify(configuration)
+  } catch (error) {
+    throw new ProtocolError(`${label} 必须是可序列化 JSON`, [error.message])
+  }
+  if (serialized === undefined || Buffer.byteLength(serialized, 'utf8') > 64 * 1024) {
+    throw new ProtocolError(`${label} 不能超过 64 KiB`)
+  }
+  return JSON.parse(serialized)
+}
+
+export function validateSearchStrategyAdapter(input) {
+  assertApiObject(input, 'SearchStrategyAdapter')
+  const id = metadataId(input, 'SearchStrategyAdapter')
+  if (!ADAPTER_ID.test(id)) throw new ProtocolError('SearchStrategyAdapter.metadata.id 必须是 kebab-case')
+  const spec = expectObject(input.spec, 'SearchStrategyAdapter.spec')
+  const protocol = expectText(spec.protocol, 'SearchStrategyAdapter.spec.protocol')
+  const configuration = jsonConfiguration(spec.configuration, 'SearchStrategyAdapter.spec.configuration')
+
+  if (protocol === 'builtin-v1') {
+    return {
+      apiVersion: API_VERSION,
+      kind: 'SearchStrategyAdapter',
+      id,
+      protocol,
+      implementation: expectText(spec.implementation, 'SearchStrategyAdapter.spec.implementation'),
+      configuration,
+      runtime: null,
+    }
+  }
+  if (protocol !== 'docker-json-v1') {
+    throw new ProtocolError(`当前未实现 Search Strategy Protocol：${protocol}`)
+  }
+  const runtime = expectObject(spec.runtime, 'SearchStrategyAdapter.spec.runtime')
+  const image = expectText(runtime.image, 'SearchStrategyAdapter.spec.runtime.image')
+  if (!STRATEGY_IMAGE.test(image)) {
+    throw new ProtocolError('外部 Search Strategy Image 必须固定到 sha256 Digest')
+  }
+  const command = expectStringArray(runtime.command, 'SearchStrategyAdapter.spec.runtime.command')
+  if (command.some((part) => /[\u0000-\u001f\u007f]/u.test(part))) {
+    throw new ProtocolError('SearchStrategyAdapter runtime.command 包含控制字符')
+  }
+  const resources = expectObject(runtime.resources, 'SearchStrategyAdapter.spec.runtime.resources')
+  const memory = expectText(resources.memory, 'SearchStrategyAdapter.spec.runtime.resources.memory')
+  if (!/^[1-9][0-9]*(?:[kKmMgG])?$/u.test(memory)) {
+    throw new ProtocolError('SearchStrategyAdapter runtime.resources.memory 格式无效')
+  }
+  return {
+    apiVersion: API_VERSION,
+    kind: 'SearchStrategyAdapter',
+    id,
+    protocol,
+    implementation: null,
+    configuration,
+    runtime: {
+      image,
+      command,
+      timeoutSeconds: expectNumber(runtime.timeoutSeconds, 'SearchStrategyAdapter.spec.runtime.timeoutSeconds', {
+        integer: true,
+        min: 1,
+        max: 300,
+      }),
+      resources: {
+        cpus: expectNumber(resources.cpus, 'SearchStrategyAdapter.spec.runtime.resources.cpus', {
+          min: 0.1,
+          max: 8,
+        }),
+        memory,
+        pids: expectNumber(resources.pids, 'SearchStrategyAdapter.spec.runtime.resources.pids', {
+          integer: true,
+          min: 16,
+          max: 512,
+        }),
+      },
+    },
+  }
+}
+
+export function defaultSearchStrategyAdapter() {
+  return validateSearchStrategyAdapter({
+    apiVersion: API_VERSION,
+    kind: 'SearchStrategyAdapter',
+    metadata: { id: 'linear-hill-climb' },
+    spec: {
+      protocol: 'builtin-v1',
+      implementation: 'linear-hill-climb',
+      configuration: { regionSelection: 'all-under-risk-ceiling' },
+    },
+  })
 }
 
 export function validateUpdaterAdapter(input) {
@@ -207,7 +308,7 @@ export function validateUpdaterAdapter(input) {
   const id = metadataId(input, 'UpdaterAdapter')
   const spec = expectObject(input.spec, 'UpdaterAdapter.spec')
   const protocol = expectText(spec.protocol, 'UpdaterAdapter.spec.protocol')
-  if (protocol !== 'dsh-headless-docker') {
+  if (!['dsh-headless-docker', 'dsh-headless-docker-v1'].includes(protocol)) {
     throw new ProtocolError(`当前未实现 Updater Protocol：${protocol}`)
   }
   const prompt = expectObject(spec.prompt, 'UpdaterAdapter.spec.prompt')
@@ -631,6 +732,9 @@ export function validateExperiment(input) {
       updater: relativePath(adapters.updater, 'EvolutionExperiment.spec.adapters.updater'),
       environment: relativePath(adapters.environment, 'EvolutionExperiment.spec.adapters.environment'),
       provider: relativePath(adapters.provider, 'EvolutionExperiment.spec.adapters.provider'),
+      strategy: adapters.strategy === undefined
+        ? null
+        : relativePath(adapters.strategy, 'EvolutionExperiment.spec.adapters.strategy'),
     },
     benchmarkPath: relativePath(spec.benchmark, 'EvolutionExperiment.spec.benchmark'),
     policyPath: relativePath(spec.policy, 'EvolutionExperiment.spec.policy'),
@@ -670,6 +774,11 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
   const provider = validateModelProviderAdapter(
     await readConfigFile(resolveInside(repositoryRoot, experiment.adapters.provider, 'Model Provider Adapter 路径')),
   )
+  const strategy = experiment.adapters.strategy === null
+    ? defaultSearchStrategyAdapter()
+    : validateSearchStrategyAdapter(
+        await readConfigFile(resolveInside(repositoryRoot, experiment.adapters.strategy, 'Search Strategy Adapter 路径')),
+      )
   const benchmark = validateBenchmark(
     await readJsonFile(benchmarkPath),
   )
@@ -728,7 +837,7 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
       upstreamBaseUrlEnvironment: provider.credentials.baseUrlEnvironment,
     },
   }
-  return { experiment, target, updater, environment: resolvedEnvironment, provider, benchmark, policy }
+  return { experiment, target, updater, environment: resolvedEnvironment, provider, strategy, benchmark, policy }
 }
 
 export async function validateAnyAdapter(input) {
@@ -737,6 +846,7 @@ export async function validateAnyAdapter(input) {
   if (input.kind === 'UpdaterAdapter') return validateUpdaterAdapter(input)
   if (input.kind === 'ModelProviderAdapter') return validateModelProviderAdapter(input)
   if (input.kind === 'EnvironmentAdapter') return validateEnvironmentAdapter(input)
+  if (input.kind === 'SearchStrategyAdapter') return validateSearchStrategyAdapter(input)
   if (input.kind === 'EvolutionExperiment') return validateExperiment(input)
   throw new ProtocolError(`不支持校验 kind=${input.kind}`)
 }

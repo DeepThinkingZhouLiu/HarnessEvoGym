@@ -18,37 +18,43 @@ into one implementation.
 | Plane | Orchestrator | Environment isolation | Current search |
 |---|---|---|---|
 | Reasoning | `orchestrator.mjs` + `population-orchestrator.mjs` | Distinct host UIDs, bubblewrap, Unix gateway, sealed broker | Five population modes |
-| Cowork | `cowork-orchestrator.mjs` | SkillsBench task images, separate Verifier, Docker internal network | Linear Champion/Proposal |
+| Cowork | `cowork-orchestrator.mjs` | SkillsBench task images, separate Verifier, Docker internal network | Pluggable SearchStrategy; compatible linear default |
 
 Cowork gateway lifecycle is implemented by `cowork-model-gateway.mjs`; the
 Reasoning Responses/Unix-socket gateway remains in `model-gateway.mjs`. They
 serve different provider and isolation contracts rather than duplicating one
 protocol.
 
-## Five objects
+## Core objects
 
-| Object     | Responsibility                                                  | Updater-writable |
-|------------|-----------------------------------------------------------------|------------------|
-| Source     | Trusted, pinned upstream source revision                        | No               |
-| Solver     | Performs tasks in an environment                               | Candidate only   |
-| Updater    | Reads evidence and code, then analyzes and edits in one session | Not its runtime  |
-| Controller | Materialization, permissions, scheduling, diff validation, lineage, promotion, rollback | No |
-| Evaluator  | Frozen tasks, rubrics, cost, and safety gates                   | No               |
+| Object          | Responsibility                                                        | Updater-writable             |
+|-----------------|-----------------------------------------------------------------------|------------------------------|
+| Source          | Trusted, pinned upstream source revision                              | No                           |
+| Target          | Harness Driver, Candidate materialization, and Mutation Catalog       | No                           |
+| SearchStrategy  | Selects parent Candidate and region IDs                               | No; cannot edit a Candidate  |
+| Solver          | Performs tasks with the Candidate Harness                             | Indirectly through Candidate |
+| Updater         | Reads evidence and code, then analyzes and edits in one session       | Current lease paths only     |
+| Controller      | Permissions, scheduling, diff validation, lineage, promotion/rollback | No                           |
+| Evaluator       | Frozen tasks, rubrics, cost, and safety gates                         | No                           |
 
-The Updater does not require fixed failure-analyzer, proposal, builder, or search-policy services. It reasons, edits, checks, and commits in one context; the Controller consumes the resulting Git commit and objective validation result.
+The Updater does not require fixed failure-analyzer, proposal, or builder
+services. It reasons, edits, and checks in one context. SearchStrategy is a
+separate Controller-side algorithm that chooses where to search; it neither
+performs natural-language diagnosis nor edits Candidate code.
 
 ## One evolution round
 
 ```text
 pin Source Revision
 -> materialize Baseline and Candidate instances
--> run Baseline training tasks and produce an objective Feedback Packet
--> give the Updater the Target's configured L1/L2/L3 catalogue
+-> SearchStrategy selects a parent and Target-owned region IDs
+-> Controller validates the plan and issues a one-round MutationLease
+-> run the parent on feedback tasks and produce an objective Feedback Packet
 -> launch one isolated Updater session
--> Updater analyzes evidence, chooses the smallest sufficient layer, edits, and commits
--> Controller checks commit shape and configured path scope, then builds Candidate
--> run paired training, replay, and hidden evaluation
--> frozen gates choose Reject, Revise, or Promote
+-> Updater analyzes evidence and applies a coherent edit inside the lease
+-> Controller recomputes and validates the full Candidate diff
+-> run paired Champion/Candidate selection
+-> frozen gates choose Reject or Promote
 -> persist immutable Candidate, parent, results, and decision rationale
 ```
 
@@ -93,6 +99,15 @@ The lightweight linear path creates one campaign-owned Git worktree and a separa
 
 ## Mutation boundary
 
+Cowork uses `MutationCatalog -> MutationPlan -> MutationLease -> full Diff
+Guard`. L1/L2/L3 are risk ceilings; regions are Target-specific searchable
+modules. A strategy returns only region IDs. The trusted Controller maps them
+to paths, while external strategies run through a no-network, no-mount,
+no-host-environment Docker JSON protocol. See [Search space, strategy, and
+compatibility](search-strategy.md).
+
+Reasoning/Future retains the following proven soft-layer Git workflow:
+
 L1, L2, and L3 are soft search categories whose descriptions and paths belong to the Target runtime configuration. In `updater-soft` mode the complete catalogue is inserted into every Updater prompt. The Updater is guided to start with the smallest plausible L1 change and expand to L2/L3 only when validation evidence indicates diminishing returns or a deeper mechanism.
 
 - Semantic guidance: the prompt explains all three layers, cumulative writable paths, and prohibited changes.
@@ -123,4 +138,13 @@ The superproject pins a DeepSeek Harness SHA, making every experiment reproducib
 
 ## Implemented production path
 
-The control plane now includes frozen manifests, exact source materialization, configurable L1/L2/L3 diff enforcement, one-session Git mutations, Candidate builds, per-task checkpoints, validation feedback, child-only sealed-test execution, strict promotion and rollback, crash-safe campaign state, single-writer locking, implementation/runtime attestation, FD-only credentials, and post-closure JSON/CSV/Markdown/SVG reports. The MSA-derived minimal Target provides the lightweight math/reasoning path; the existing SWE-bench files remain a contract stub rather than a completed production adapter.
+The control plane now includes frozen manifests, exact source materialization,
+configurable L1/L2/L3 diff enforcement, Cowork Mutation Catalog/Plan/Lease,
+builtin and sandboxed SearchStrategy, one-session mutations, Candidate builds,
+per-task checkpoints, validation feedback, child-only sealed-test execution,
+strict promotion and rollback, crash-safe campaign state, single-writer locking,
+implementation/runtime attestation, FD-only credentials, and post-closure
+reports. The five Reasoning modes are not yet external SearchStrategy adapters;
+they remain compatible trusted builtin algorithms. The MSA-derived minimal
+Target provides the lightweight math/reasoning path; SWE-bench remains a
+contract stub rather than a completed production adapter.

@@ -11,44 +11,46 @@ are integrated as the Cowork increment.
 ## System design
 
 ```text
-Frozen tasks -> Candidate Solver -> validation score + traces
-                    ^                         |
-                    |                         v
-                Git commit <- Updater <- evolution log
-                    |
-                    v
-              Controller keep/reset
+Target MutationCatalog -> SearchStrategy -> MutationPlan
+          |                                    |
+          |                                    v
+Frozen tasks -> Candidate Solver <- Controller MutationLease <- Updater
+                    |              |
+                    v              v
+            validation evidence -> frozen gates -> promote/reset
 ```
 
 | Component | Responsibility | Boundary |
 |---|---|---|
-| Source | Pinned Harness baseline | Read-only |
-| Solver | Solves tasks with the Candidate Harness | Cannot read gold/test/credentials |
-| Updater | Reads validation feedback, edits one Candidate, creates one commit | Only configured paths are writable |
-| Controller | Scheduling, Budget, Git audit, evaluation, keep/reset, reports | Never writable |
+| Target | Declares the Harness baseline, evolvable regions, and L1/L2/L3 risk ceiling | Does not score |
+| SearchStrategy | Selects a parent and region IDs | Cannot return paths or edit code |
+| Updater | Diagnoses feedback and edits one Candidate inside its lease | Only lease paths are writable |
+| Solver | Solves tasks with the Candidate Harness | Cannot read gold/final/credentials |
+| Controller | Materialization, leases, scheduling, diff validation, evaluation, lineage, promotion/reset | Never Candidate-writable |
 | Evaluator/Gateway | Frozen score and model identity; credential isolation | Outside the Candidate |
 
 One evolution round is:
 
 ```text
 incumbent
-  -> Updater reads source + validation feedback + history
-  -> chooses L1/L2/L3, applies one coherent change, commits
-  -> Controller checks one child commit and its changed paths
+  -> SearchStrategy selects a parent and region IDs from the Target catalog
+  -> Controller validates risk/dependencies/conflicts and issues a one-round lease
+  -> Updater reads source + validation feedback + history and applies one falsifiable change
+  -> Controller recomputes the complete diff instead of trusting self-reporting
   -> Candidate runs validation
-  -> score improves: keep; otherwise: git reset to incumbent
+  -> frozen gates pass: promote; otherwise: retain the incumbent
 ```
 
-The Controller does not design mutation directions. Each branch reuses one Git
-worktree; there is no per-round full-project copy or separate proposal/apply
-session.
+SearchStrategy controls where to search. The Updater remains a complete coding
+agent that diagnoses, proposes, edits, and checks in one session. The Controller
+does not hard-code causal analysis; it enforces permissions and objective gates.
 
 ## Two scenario execution planes
 
 | Scenario | CLI | Target / environment | Current algorithm |
 |---|---|---|---|
 | Reasoning | `campaign ...` / `evolve ...` | Minimal Harness + HLE, or DSH + PutnamBench | Future `single/independent/mutualism/competition/combined` population modes |
-| Cowork | `experiment ...` | DSH `cowork-rsi` overlay + SkillsBench | Linear Champion evolution: `feedback -> update -> selection` |
+| Cowork | `experiment ...` | DSH `cowork-rsi` overlay + SkillsBench | Pluggable SearchStrategy; the default preserves linear Champion evolution |
 
 Both planes share Benchmark, Policy, Solver Result, and Evaluator protocols,
 but preserve their proven environment isolation. Reasoning uses host identities,
@@ -59,6 +61,12 @@ Cowork currently exposes L1 and L2. L1 changes declarative presets, prompts,
 and Skill documents; L2 also allows Skill scripts. L3 remains disabled. The
 Controller deterministically rechecks path allowlists, extensions, executable
 bits, file limits, symlinks, and Cordis plugins after every Updater session.
+
+Cowork now separates the search space from the search algorithm. `mutationLevel`
+is only the experiment's risk ceiling; Target-owned `MutationCatalog.regions`
+describe the modules that can be searched. An old experiment without a
+`strategy` field automatically uses `linear-hill-climb`, which selects every
+region under the ceiling and therefore preserves the old writable set exactly.
 
 ## Minimal math/coding Harness
 
@@ -111,6 +119,8 @@ existing logs may still help peers in Combined mode.
 | Updater backend/model/effort | Runtime: `updater` |
 | Provider URL and request timeout | Runtime: `gateway` |
 | L1/L2/L3 descriptions and paths | Runtime: `mutation.layers` |
+| Cowork search algorithm | Experiment: `spec.adapters.strategy` |
+| Cowork searchable modules | Target Adapter: `spec.mutation.catalog.regions` |
 | Harness implementation | `sources/msa-minimal-harness/` or another pinned Target |
 
 Current examples:
@@ -207,6 +217,7 @@ More detail:
 
 - [Controller modes](docs/controller-modes.md)
 - [Architecture](docs/architecture.md)
+- [Search space, strategy, and compatibility](docs/search-strategy.md)
 - [HLE mutation workflow](docs/hle-mutation-workflow.zh.md)
 - [Cowork L1/L2 workflow](docs/cowork-mvp.md)
 

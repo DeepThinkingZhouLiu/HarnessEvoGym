@@ -1,0 +1,25 @@
+apiVersion: harness-rsi/v1alpha1
+kind: SearchStrategyAdapter
+
+metadata:
+  id: docker-round-robin-example
+  name: Sandboxed Round Robin Example
+
+spec:
+  protocol: docker-json-v1
+  # 这是占位 Digest。构建并发布示例镜像后，必须换成真实 RepoDigest。
+  runtime:
+    image: example.invalid/harness-rsi/round-robin@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    command:
+      - node
+      - /app/strategy.mjs
+    timeoutSeconds: 10
+    resources:
+      cpus: 0.5
+      memory: 64m
+      pids: 32
+  configuration:
+    regionOrder:
+      - skill-guidance
+      - preset-composition
+      - skill-scripts

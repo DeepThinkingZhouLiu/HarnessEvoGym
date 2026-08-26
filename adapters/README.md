@@ -2,7 +2,7 @@
 
 Adapter 把“通用进化算法”与“某个 Agent/Benchmark 的目录和命令”分开。所有仓库内相对路径从主仓根目录解析，并在启动前做路径包含检查。
 
-## 五类配置
+## 六类配置
 
 | Kind                  | 回答的问题                                                   |
 |-----------------------|--------------------------------------------------------------|
@@ -10,11 +10,24 @@ Adapter 把“通用进化算法”与“某个 Agent/Benchmark 的目录和命�
 | `UpdaterAdapter`      | 用谁启动 Updater、共享提示词在哪里、报告文件叫什么           |
 | `ModelProviderAdapter` | 连接哪个模型网关、用哪些环境变量、有哪些固定模型与兼容开关 |
 | `EnvironmentAdapter`  | 任务从哪里来、如何建容器、如何调用 Verifier 和读取 Reward    |
+| `SearchStrategyAdapter` | 本轮从哪个父 Candidate 开始、搜哪些 Target Region         |
 | `EvolutionExperiment` | 本次把哪个 Target/Updater/Provider/Environment/Benchmark/Policy 组合起来 |
 
 Provider Adapter 只声明连接元数据和“环境变量名”，永远不写字面 Key。Experiment 分别声明 Solver/Updater 的 `provider`、`model` 与 `maxTokens`；当前低成本 POC 两个角色都用 `gpt-5.6-terra`，并共用 `zcloud-openai` 连接。
 
 DSH Runtime 把 `openai-chat-completions` 协议翻译为它内置的 `llm-pi-ai` Profile，不再把非 DeepSeek 模型冒充成 `deepseek-official`。换 PI Agent 时，对应 Runtime Driver 应读取同一 Provider Adapter 并生成 PI 自己需要的环境或配置。
+当前的 Cowork Adapter Schema、Source 预检和 Materializer 仍只完整支持 DSH + SkillsBench；
+PI Agent 仍是下一个 Adapter/Driver 实现任务，不是已可运行的占位配置。
+
+## 搜索策略与变异目录
+
+Target 的 `mutation.catalog.regions` 定义可搜索模块、风险层级、路径、扩展名、依赖和冲突。
+SearchStrategy 只返回父 Candidate 和 Region ID，Controller 校验后自己生成单轮
+`MutationLease`。搜索算法不能返回文件路径，也看不到 final、trace 或凭据。
+
+`builtin-v1` 用于仓库内受审查算法；`docker-json-v1` 用于 Contributor 算法。后者无网络、
+无挂载、无宿主环境变量，且镜像必须固定 SHA-256 Digest。详见
+[`docs/search-strategy.zh.md`](../docs/search-strategy.zh.md)。
 
 ## DeepSeek Harness Target
 
@@ -51,6 +64,7 @@ Target/Updater Runtime 声明自己需要的环境变量名，Controller 会强�
 npm run rsi -- adapter validate --config adapters/targets/deepseek-harness.yml
 npm run rsi -- adapter validate --config adapters/updaters/deepseek-harness.yml
 npm run rsi -- adapter validate --config adapters/providers/zcloud-openai.yml
+npm run rsi -- adapter validate --config adapters/strategies/linear-hill-climb.yml
 npm run rsi -- adapter validate --config environments/skillsbench-cowork.yml
 npm run rsi -- experiment validate --config experiments/cowork-skillsbench-dsh-l1.json
 ```

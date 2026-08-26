@@ -7,7 +7,9 @@ Controller 是 RSI 系统的可信、确定性控制平面。Updater 负责开�
 | 文件                           | 职责                                                       |
 |--------------------------------|------------------------------------------------------------|
 | `src/cli.mjs`                  | 命令解析、sealed Final 显式入口、报告输出                   |
-| `src/adapters.mjs`             | Target/Updater/Provider/Environment/Experiment 配置校验     |
+| `src/adapters.mjs`             | Target/Updater/Provider/Environment/Strategy/Experiment 配置校验 |
+| `src/mutation-catalog.mjs`     | Target Region Catalog、Strategy Plan 校验与单轮 Lease       |
+| `src/search-strategy.mjs`      | 内置策略 Registry 与无网络 Docker JSON 策略协议          |
 | `src/candidate.mjs`            | Tree Snapshot、Digest、Diff Guard、Manifest、Mutation Report |
 | `src/path-policy.mjs`          | 安全相对路径、Glob、只读优先级和扩展名策略                  |
 | `src/docker.mjs`               | 无 Shell 的 Docker CLI、资源与权限限制                      |
@@ -30,7 +32,9 @@ Controller 是 RSI 系统的可信、确定性控制平面。Updater 负责开�
 load/validate
 -> preflight pinned sources
 -> materialize H0
--> run feedback
+-> SearchStrategy 选 parent + Region IDs
+-> Controller 签发 MutationLease
+-> run parent feedback
 -> build feedback packet
 -> update disposable proposal
 -> enforce full diff
@@ -39,12 +43,16 @@ load/validate
 -> persist state
 ```
 
-Updater 内部不拆成固定的 `failure-analyzer`、`mutation-proposer`、`candidate-builder` 或 `search-policy` 服务。它是一个完整 Coding Agent Session；Controller 只要求真实文件 Diff 和结构化 Mutation Report。
+Updater 内部不拆成固定的 `failure-analyzer`、`mutation-proposer` 或 `candidate-builder`
+服务。它是一个完整 Coding Agent Session，自己归因、改代码和自检。`SearchStrategy`
+只决定搜索父 Candidate 和哪些 Target Region；Controller 将 Region 翻译成 Lease，
+并且只信真实文件 Diff，不把 Mutation Report 当作授权证据。
 
 ## 命令
 
 ```bash
 npm run rsi -- adapter validate --config adapters/targets/deepseek-harness.yml
+npm run rsi -- adapter validate --config adapters/strategies/linear-hill-climb.yml
 npm run rsi -- experiment validate --config experiments/cowork-skillsbench-dsh-l1.json
 npm run rsi -- experiment preflight --config experiments/cowork-skillsbench-dsh-l1.json
 npm run rsi -- runtime build --experiment experiments/cowork-skillsbench-dsh-l1.json
@@ -58,10 +66,19 @@ npm run rsi -- experiment finalize --run .rsi/runs/<id>
 
 - 配置、Revision、密钥或 Docker 缺失：Run 启动前失败。
 - Updater 或 Diff 失败：当前 Proposal 记录为 rejected，Champion 不变。
+- SearchStrategy 返回越界 Region、非法父节点或夹带路径：Run 按协议错误停止，不调用 Updater。
 - Solver/Verifier 单题失败：标准结果为 `error`，完成率 Gate 决定不能静默晋升。
 - Selection Gate 失败：保留父 Champion，不覆盖任何 Candidate。
 - Final 实际回放成功或失败后重复调用：直接拒绝，避免把测试集变成选择集。
 
 运行状态只写 `.rsi/`。Source Submodule、Benchmark、Evaluation Policy、Verifier、凭据和主仓 Git 元数据不会挂入 Updater 的可写面。Solver/Updater 只接入 Run 级 internal network；真实 Provider Key 仅由 Model Gateway 环境继承，Agent 收到的是一次性令牌。
 
-`ModelProviderAdapter` 统一声明上游协议、凭据环境变量名、兼容参数与模型目录；Experiment 分别选择 Solver/Updater 的模型。DSH Runtime 将它翻译为 `llm-pi-ai` 配置，其他 Agent Runtime 只需实现自己的翻译层，不需要复制凭据管理逻辑。
+`ModelProviderAdapter` 统一声明上游协议、凭据环境变量名、兼容参数与模型目录；Experiment 分别选择 Solver/Updater 的模型。DSH Runtime 将它翻译为 `llm-pi-ai` 配置。其他 Agent Runtime 未来应读同一 Provider Adapter，不复制凭据管理逻辑。
+
+Solver、Updater 和 Environment 的“实现创建”已通过 `factories.mjs` 中带版本的 Driver
+Registry 隔离，不再在主编排循环写协议分支。但当前 Cowork Adapter 校验、Source 预检和
+Materializer 仍只实现 DSH + SkillsBench。真正接 pi-agent 时，还需同时补它的 Adapter
+Schema、Source/Materialization 生命周期和 Driver 注册，不是只注册一个函数就能运行。
+
+Driver 能执行和挂载工作区，因此必须作为受审查的 Controller 代码；只做搜索决策的外部
+Strategy 才可以使用沙箱镜像。

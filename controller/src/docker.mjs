@@ -263,6 +263,7 @@ export class DockerClient {
       capabilities = [],
       timeoutMs = this.resources.timeoutSeconds * 1000,
       resources = this.resources,
+      input,
     } = options
     if (network === 'host') throw new ProtocolError('安全策略禁止 Docker host 网络')
     if (typeof hostGateway !== 'boolean') throw new ProtocolError('Docker hostGateway 必须是布尔值')
@@ -329,6 +330,7 @@ export class DockerClient {
       return await runProcess(this.binary, args, {
         timeoutMs,
         maxOutputBytes: 16 * 1024 * 1024,
+        input,
         env: { ...process.env, ...secretEnvironment },
         secretValues: [
           ...Object.values(secretEnvironment),

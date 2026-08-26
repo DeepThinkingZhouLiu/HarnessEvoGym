@@ -9,7 +9,8 @@
       "target": "adapters/targets/deepseek-harness.yml",
       "updater": "adapters/updaters/deepseek-harness.yml",
       "environment": "environments/skillsbench-cowork.yml",
-      "provider": "adapters/providers/zcloud-openai.yml"
+      "provider": "adapters/providers/zcloud-openai.yml",
+      "strategy": "adapters/strategies/linear-hill-climb.yml"
     },
     "benchmark": "benchmarks/cowork-skillsbench-poc/benchmark.json",
     "policy": "evaluation/policies/cowork-rsi-poc.json",

@@ -3,10 +3,13 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import {
+  defaultSearchStrategyAdapter,
   loadExperimentBundle,
   validateEnvironmentAdapter,
+  validateExperiment,
   validateModelProviderAdapter,
   validateTargetAdapter,
+  validateUpdaterAdapter,
 } from '../src/adapters.mjs'
 import { readConfigFile } from '../src/config.mjs'
 
@@ -38,6 +41,31 @@ test('Cowork Experiment 分别固定 Target/Updater Source 和模型上限', asy
   assert.equal(bundle.environment.task.workspaceLimits.maximumChangedBytes, 536870912)
   assert.equal(bundle.target.mutation.limits.maximumTreeEntries, 1000)
   assert.equal(bundle.target.mutation.semanticChecks.skills.requiredNamePrefix, 'cowork-')
+  assert.equal(bundle.strategy.id, 'linear-hill-climb')
+  assert.deepEqual(
+    bundle.target.mutation.catalog.regions.map((region) => region.id),
+    ['preset-composition', 'skill-guidance', 'skill-scripts'],
+  )
+})
+
+test('旧 Cowork Experiment 不声明 Strategy 时保持线性策略兼容', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'experiments/cowork-skillsbench-dsh-l1.json'))
+  delete config.spec.adapters.strategy
+  const experiment = validateExperiment(config)
+  assert.equal(experiment.adapters.strategy, null)
+  assert.equal(defaultSearchStrategyAdapter().id, 'linear-hill-climb')
+})
+
+test('DSH Driver 同时接受旧协议名和带版本协议名', async () => {
+  const target = await readConfigFile(resolve(repositoryRoot, 'adapters/targets/deepseek-harness.yml'))
+  assert.equal(validateTargetAdapter(target).solver.protocol, 'dsh-headless-docker')
+  target.spec.solver.protocol = 'dsh-headless-docker-v1'
+  assert.equal(validateTargetAdapter(target).solver.protocol, 'dsh-headless-docker-v1')
+
+  const updater = await readConfigFile(resolve(repositoryRoot, 'adapters/updaters/deepseek-harness.yml'))
+  assert.equal(validateUpdaterAdapter(updater).protocol, 'dsh-headless-docker')
+  updater.spec.protocol = 'dsh-headless-docker-v1'
+  assert.equal(validateUpdaterAdapter(updater).protocol, 'dsh-headless-docker-v1')
 })
 
 test('Environment Adapter 拒绝让 Verifier 继承非代理宿主变量', async () => {

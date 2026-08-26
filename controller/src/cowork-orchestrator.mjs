@@ -18,6 +18,7 @@ import { DockerClient } from './docker.mjs'
 import { evaluateBenchmark } from './evaluator.mjs'
 import { createEnvironmentRunner, createSolverDriver, createUpdaterDriver } from './factories.mjs'
 import { buildFeedbackPacket } from './feedback.mjs'
+import { issueMutationLease, mutationCatalogFor } from './mutation-catalog.mjs'
 import {
   buildModelGatewayImage,
   ModelGateway,
@@ -25,6 +26,9 @@ import {
 } from './cowork-model-gateway.mjs'
 import { ProtocolError, readJsonFile, writeJsonFile } from './protocol.mjs'
 import { runProcess, secretValuesFromEnvironment } from './process.mjs'
+import { createSearchStrategyDriver } from './search-strategy.mjs'
+
+const MAXIMUM_STRATEGY_HISTORY_ENTRIES = 64
 
 function safeRunId(value) {
   if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9._-]{2,119}$/u.test(value)) {
@@ -251,6 +255,7 @@ async function createContext({
     ),
   ])
   const docker = makeDocker(bundle.environment)
+  const searchStrategy = createSearchStrategyDriver({ adapter: bundle.strategy, docker })
   const modelGateway = gatewayScope
     ? new ModelGateway({
         config: bundle.environment.modelGateway,
@@ -290,6 +295,7 @@ async function createContext({
     docker,
     solverDriver,
     updaterDriver,
+    searchStrategy,
     modelGateway,
     runRoot,
     absoluteExperimentPath,
@@ -313,11 +319,15 @@ export async function preflightExperiment({ repositoryRoot, experimentPath, requ
     docker: context.docker,
     runRoot: temporaryRunRoot,
   })
-  const environmentStatus = await environment.preflight()
+  const [environmentStatus] = await Promise.all([
+    environment.preflight(),
+    context.searchStrategy.preflight(),
+  ])
   for (const instanceId of context.bundle.benchmark.allInstanceIds) await environment.taskLayout(instanceId)
   return {
     experiment: context.bundle.experiment.id,
     mutationLevel: context.bundle.experiment.evolution.mutationLevel,
+    searchStrategy: context.searchStrategy.descriptor(),
     controllerRevision,
     targetSourceRevision: context.targetSourceRevision,
     updaterSourceRevision: context.updaterSourceRevision,
@@ -404,6 +414,7 @@ async function runUpdaterGeneration({
       'target.name': context.bundle.target.id,
       'baseline.revision': parent.digest,
       'mutation.level': level,
+      'mutation.regions': mutationPolicy.metadata.regions.join(', '),
       'mutation.writablePaths': mutationPolicy.spec.writable.map((value) => `- ${value}`).join('\n'),
       'mutation.readOnlyPaths': mutationPolicy.spec.readOnly.map((value) => `- ${value}`).join('\n'),
       'output.mutationReportPath': `.rsi-output/${context.bundle.updater.mutationReportName}`,
@@ -469,6 +480,7 @@ function publicBundleSnapshot(bundle) {
     updater: bundle.updater,
     provider: bundle.provider,
     environment: bundle.environment,
+    strategy: bundle.strategy,
     benchmark: {
       id: bundle.benchmark.id,
       name: bundle.benchmark.name,
@@ -580,6 +592,7 @@ export async function runEvolution({
   })
   onEvent({ stage: 'preflight', message: '校验 Docker、DSH Source 与 SkillsBench Revision' })
   const environmentStatus = await environment.preflight()
+  await context.searchStrategy.preflight()
   for (const instanceId of context.bundle.benchmark.allInstanceIds) await environment.taskLayout(instanceId)
   const updaterImageRevision = await context.docker.imageExists(context.bundle.updater.runtime.image)
     ? await context.docker.imageLabel(context.bundle.updater.runtime.image, 'org.opencontainers.image.revision')
@@ -591,12 +604,17 @@ export async function runEvolution({
 
   const h0 = await materializeH0({ context, runRoot })
   let champion = h0
+  const materializedCandidates = new Map([[h0.id, h0]])
   let candidatesEvaluated = 0
-  const mutationPolicy = mutationPolicyFor(
+  const compatibilityPolicy = mutationPolicyFor(
     context.bundle.target,
     context.bundle.experiment.evolution.mutationLevel,
   )
-  await writeJsonFile(join(runRoot, 'mutation-policy.json'), mutationPolicy)
+  const mutationCatalog = mutationCatalogFor(context.bundle.target)
+  await Promise.all([
+    writeJsonFile(join(runRoot, 'mutation-policy.json'), compatibilityPolicy),
+    writeJsonFile(join(runRoot, 'mutation-catalog.json'), mutationCatalog),
+  ])
   const experimentRelativePath = relative(repositoryRoot, context.absoluteExperimentPath).replaceAll('\\', '/')
   const state = {
     apiVersion: 'harness-rsi/v1alpha1',
@@ -611,6 +629,8 @@ export async function runEvolution({
       baselineId: h0.id,
       championId: champion.id,
       mutationLevel: context.bundle.experiment.evolution.mutationLevel,
+      searchStrategy: context.searchStrategy.descriptor(),
+      searchStrategyState: null,
       generationsRequested: context.bundle.experiment.evolution.generations,
       generationsCompleted: 0,
       seeds: context.bundle.experiment.evolution.seeds.slice(
@@ -632,21 +652,56 @@ export async function runEvolution({
 
   try {
     for (let generation = 1; generation <= context.bundle.experiment.evolution.generations; generation += 1) {
-      onEvent({ stage: 'feedback', generation, message: `${champion.id} 运行 feedback Partition` })
       const generationRoot = join(runRoot, 'generations', `generation-${generation}`)
       await mkdir(generationRoot, { recursive: true })
+      const proposed = await context.searchStrategy.propose({
+        runId,
+        generation,
+        riskCeiling: state.spec.mutationLevel,
+        catalog: mutationCatalog,
+        championId: champion.id,
+        allowedParentIds: [...materializedCandidates.keys()],
+        candidates: state.spec.candidates.map((candidate) => ({
+          id: candidate.id,
+          parentId: candidate.parentId,
+          digest: candidate.digest,
+          status: candidate.status,
+        })),
+        // Strategy 已通过 observe 持有自己的有界状态；这里只回放最近摘要，
+        // 避免长运行的协议请求随轮次无限增长。
+        searchHistory: state.spec.searchHistory.slice(-MAXIMUM_STRATEGY_HISTORY_ENTRIES),
+      }, state.spec.searchStrategyState)
+      state.spec.searchStrategyState = proposed.state
+      const mutationPlan = proposed.plan
+      if (state.spec.searchHistory.some((entry) => entry.mutationPlanId === mutationPlan.metadata.id)) {
+        throw new ProtocolError(`Search Strategy 重复使用 MutationPlan ID：${mutationPlan.metadata.id}`)
+      }
+      const mutationLease = issueMutationLease({
+        target: context.bundle.target,
+        catalog: mutationCatalog,
+        plan: mutationPlan,
+        riskCeiling: state.spec.mutationLevel,
+      })
+      const mutationParent = materializedCandidates.get(mutationPlan.spec.parentIds[0])
+      if (!mutationParent) throw new ProtocolError('Search Strategy 选择的父 Candidate 尚未实例化')
+      await Promise.all([
+        writeJsonFile(join(generationRoot, 'mutation-plan.json'), mutationPlan),
+        writeJsonFile(join(generationRoot, 'mutation-lease.json'), mutationLease),
+      ])
+
+      onEvent({ stage: 'feedback', generation, message: `${mutationParent.id} 运行 feedback Partition` })
       const feedbackRecords = await environment.runCandidatePartition({
-        candidateId: champion.id,
-        candidateWorkspace: champion.workspace,
+        candidateId: mutationParent.id,
+        candidateWorkspace: mutationParent.workspace,
         model: context.bundle.experiment.models.solver,
         partition: 'feedback',
         seeds: state.spec.seeds,
-        outputPath: resultPath(runRoot, generation, champion.id, 'feedback'),
+        outputPath: resultPath(runRoot, generation, mutationParent.id, 'feedback'),
       })
       const feedbackPacket = buildFeedbackPacket({
         runId,
         generation,
-        candidateId: champion.id,
+        candidateId: mutationParent.id,
         benchmark: context.bundle.benchmark,
         records: feedbackRecords,
         maximumTextBytesPerCase: context.bundle.environment.feedback.maximumTextBytesPerCase,
@@ -670,10 +725,11 @@ export async function runEvolution({
           context,
           runRoot,
           generation,
-          parent: champion,
+          parent: mutationParent,
           feedbackPacket,
-          mutationPolicy,
+          mutationPolicy: mutationLease,
         })
+        materializedCandidates.set(proposal.id, proposal)
       } catch (error) {
         rejection = {
           stage: 'update-and-diff',
@@ -717,7 +773,8 @@ export async function runEvolution({
           }),
         })
         await writeJsonFile(join(proposal.root, 'evaluation.json'), evaluation)
-        const parentId = champion.id
+        const parentId = mutationParent.id
+        const championBeforeId = champion.id
         if (evaluation.decision.eligible) champion = proposal
         else rejection = { stage: 'selection-gates', message: 'Candidate 未通过晋升 Gate', details: [] }
         state.spec.candidates.push({
@@ -725,6 +782,8 @@ export async function runEvolution({
           parentId,
           digest: proposal.digest,
           status: evaluation.decision.eligible ? 'promoted' : 'rejected',
+          mutationPlanId: mutationPlan.metadata.id,
+          regionIds: mutationPlan.spec.regionIds,
           decision: evaluation.decision,
         })
         historyEntry = {
@@ -735,7 +794,11 @@ export async function runEvolution({
           hypothesis: proposal.report.hypothesis,
           changedFiles: proposal.report.changedFiles,
           expectedImpact: proposal.report.expectedImpact,
+          mutationPlanId: mutationPlan.metadata.id,
+          regionIds: mutationPlan.spec.regionIds,
           selection: publicDecision(evaluation.decision),
+          championBeforeId,
+          championAfterId: champion.id,
         }
         await appendRegistry(repositoryRoot, {
           runId,
@@ -743,34 +806,35 @@ export async function runEvolution({
           parentId,
           digest: proposal.digest,
           mutationLevel: state.spec.mutationLevel,
+          regionIds: mutationPlan.spec.regionIds,
           status: evaluation.decision.eligible ? 'promoted' : 'rejected',
         })
       } else {
         const rejectedId = `g${String(generation).padStart(3, '0')}-${state.spec.mutationLevel}`
         state.spec.candidates.push({
           id: rejectedId,
-          parentId: champion.id,
+          parentId: mutationParent.id,
           digest: null,
           status: 'rejected',
+          mutationPlanId: mutationPlan.metadata.id,
+          regionIds: mutationPlan.spec.regionIds,
           rejection,
         })
         historyEntry = {
           generation,
-          parentId: champion.id,
+          parentId: mutationParent.id,
           proposalId: rejectedId,
           status: 'invalid-proposal',
+          mutationPlanId: mutationPlan.metadata.id,
+          regionIds: mutationPlan.spec.regionIds,
           rejection: { stage: rejection.stage, message: rejection.message },
         }
       }
 
       state.spec.searchHistory.push(historyEntry)
 
-      onEvent({
-        stage: 'decision',
-        generation,
-        message: proposal && champion.id === proposal.id ? `晋升 ${proposal.id}` : `保留 ${champion.id}`,
-      })
-
+      // 晋升决策是 Controller 事实，先持久再把结果告诉可能不可信的 Strategy。
+      // observe 失败时 Run 会安全停止，但不会丢失已完成的 Candidate 谱系与决策。
       state.spec.championId = champion.id
       state.spec.generationsCompleted = generation
       await writeJsonFile(join(generationRoot, 'decision.json'), {
@@ -779,6 +843,27 @@ export async function runEvolution({
         promoted: proposal ? champion.id === proposal.id : false,
         rejection,
       })
+      await writeJsonFile(join(runRoot, 'state.json'), state)
+
+      const observed = await context.searchStrategy.observe({
+        runId,
+        generation,
+        parentId: mutationParent.id,
+        proposalId: historyEntry.proposalId,
+        status: historyEntry.status,
+        championId: champion.id,
+        regionIds: mutationPlan.spec.regionIds,
+        ...(historyEntry.selection ? { selection: historyEntry.selection } : {}),
+        ...(historyEntry.rejection ? { rejection: historyEntry.rejection } : {}),
+      }, state.spec.searchStrategyState)
+      state.spec.searchStrategyState = observed.state
+
+      onEvent({
+        stage: 'decision',
+        generation,
+        message: proposal && champion.id === proposal.id ? `晋升 ${proposal.id}` : `保留 ${champion.id}`,
+      })
+
       await writeJsonFile(join(runRoot, 'state.json'), state)
     }
   } catch (error) {

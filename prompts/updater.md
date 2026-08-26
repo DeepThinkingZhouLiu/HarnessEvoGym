@@ -3,6 +3,7 @@
 目标：`{{ target.name }}`
 当前基线：`{{ baseline.revision }}`
 本轮变异层级：`{{ mutation.level }}`
+本轮获准搜索模块：`{{ mutation.regions }}`
 可写路径：`{{ mutation.writablePaths }}`
 永久只读路径：`{{ mutation.readOnlyPaths }}`
 报告输出：`{{ output.mutationReportPath }}`

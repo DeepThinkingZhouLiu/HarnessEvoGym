@@ -13,39 +13,44 @@ DeepSeek Harness RSI 使用独立 GitHub 仓库作为可信控制平面，不再
 Future 分支的 Reasoning Controller 是当前基座；Cowork 作为增量执行面接入。两者共用
 Benchmark、Evaluation Policy、Solver Result 和 Evaluator 协议，但不强行共用不同的环境隔离实现。
 
-| 执行面 | 编排器 | 环境与隔离 | 当前搜索形式 |
-|---|---|---|---|
-| Reasoning | `controller/src/orchestrator.mjs` + `population-orchestrator.mjs` | 宿主独立 UID、bubblewrap、Unix gateway、sealed broker | 五种种群模式 |
-| Cowork | `controller/src/cowork-orchestrator.mjs` | SkillsBench 任务镜像、独立 Verifier、Docker internal network | 线性 Champion/Proposal |
+| 执行面     | 编排器                                                           | 环境与隔离                                                   | 当前搜索形式                                      |
+|------------|------------------------------------------------------------------|--------------------------------------------------------------|-------------------------------------------------|
+| Reasoning  | `controller/src/orchestrator.mjs` + `population-orchestrator.mjs` | 宿主独立 UID、bubblewrap、Unix gateway、sealed broker              | 五种种群模式                                    |
+| Cowork     | `controller/src/cowork-orchestrator.mjs`                          | SkillsBench 任务镜像、独立 Verifier、Docker internal network | 可插拔 SearchStrategy，默认策略保持线性 Champion |
 
 Cowork 专用的网关生命周期在 `cowork-model-gateway.mjs`；Reasoning 的 Responses/Unix-socket
 网关仍在 `model-gateway.mjs`。这两个文件分别对应 OpenAI Chat Completions Docker 隔离和
 OpenAI Responses 宿主隔离，不是同一协议的重复实现。
 
-## 五类对象
+## 核心对象
 
-| 对象        | 负责什么                                                   | 是否允许 Updater 修改 |
-|-------------|------------------------------------------------------------|------------------------|
-| Source      | 保存可信、固定的上游源码 Revision                          | 否                     |
-| Solver      | 在任务环境中真正解题                                       | 只修改其 Candidate     |
-| Updater     | 读取反馈和源码，在一个 Session 内分析、提出假设并改 Candidate | 不修改自身运行底座     |
-| Controller  | 实例化、权限、调度、Diff 校验、谱系、晋升和回滚            | 否                     |
-| Evaluator   | 用冻结任务、Rubric、成本和安全 Gate 比较 Baseline/Candidate | 否                     |
+| 对象             | 负责什么                                                       | 是否允许 Updater 修改             |
+|------------------|----------------------------------------------------------------|--------------------------------|
+| Source           | 保存可信、固定的上游源码 Revision                              | 否                             |
+| Target           | 声明 Harness Driver、Candidate 实例化和 Mutation Catalog              | 否                             |
+| SearchStrategy   | 从 Catalog 选父 Candidate 和 Region ID                             | 否；它也不能直接写 Candidate       |
+| Solver           | 用 Candidate Harness 在任务环境中真正解题                         | 只通过 Candidate 间接改变行为         |
+| Updater          | 读取反馈和源码，在一个 Session 内分析、提假设并改 Candidate     | 只能改本轮 Lease 允许的 Candidate 路径 |
+| Controller       | 实例化、发权、调度、Diff 校验、谱系、晋升和回滚                     | 否                             |
+| Evaluator        | 用冻结任务、Rubric、成本和安全 Gate 比较 Baseline/Candidate     | 否                             |
 
-Updater 内部无需固定的失败分析器、提案器、构建器或搜索策略服务。它在一次上下文中完成推理、修改、检查与提交；Controller 只接收 Git commit 和客观 validation 结果。
+Updater 内部仍无需固定的失败分析器、提案器或构建器。它在一次上下文中完成推理、
+修改和检查。SearchStrategy 是 Controller 侧的“搜索哪个模块”算法，不负责自然语言归因，
+也不帮 Updater 写代码。
 
 ## 一轮进化
 
 ```text
 固定 Source Revision
 -> 创建 Baseline 实例和 Candidate 实例
--> Baseline 跑训练任务并生成客观 Feedback Packet
--> 向 Updater 提供 Target 配置的完整 L1/L2/L3 目录
+-> SearchStrategy 从 Target Catalog 选父 Candidate 和 Region ID
+-> Controller 验证 Plan 并发放本轮 MutationLease
+-> 父 Candidate 跑 feedback 任务并生成客观 Feedback Packet
 -> 启动一个独立 Updater Session
--> Updater 分析证据、选择最小充分层级、修改并提交
--> Controller 检查 commit 形态与配置路径边界，再构建 Candidate
--> Baseline/Candidate 在同条件下运行训练、回放和隐藏评测
--> 冻结 Gate 决定 Reject、Revise 或 Promote
+-> Updater 分析证据，在 Lease 内做最小完整修改
+-> Controller 重算完整 Diff 并执行路径、资源和语义检查
+-> Champion/Candidate 在同条件下运行配对 selection
+-> 冻结 Gate 决定 Reject 或 Promote
 -> 保存不可变 Candidate、结果、父版本和决策原因
 ```
 
@@ -86,6 +91,13 @@ Candidate 源码摘要、Benchmark、固定 Node/pnpm 版本、构建配方、�
 
 ## 变异边界
 
+Cowork 执行面使用 `MutationCatalog -> MutationPlan -> MutationLease -> full Diff Guard`。
+L1/L2/L3 是风险上限，Catalog Region 是某个 Target 自己的可搜索模块。策略只能返回
+Region ID，路径由 Controller 从受信 Target Adapter 中翻译。外部策略使用无网络、无挂载、
+无宿主环境变量的 Docker JSON 协议。详见 [搜索策略与兼容边界](search-strategy.zh.md)。
+
+Reasoning/Future 执行面继续保留下述已验证的软分层 Git 工作流：
+
 L1、L2、L3 是软搜索分类，其说明和路径属于 Target Runtime 配置。在 `updater-soft` 模式下，每轮 Prompt 都拼接完整三层目录；提示词指导 Updater 优先选择最小可行的 L1 改动，只有 validation 证据表明收益递减或故障机制更深时才外扩到 L2/L3。
 
 - 语义指导：Prompt 说明三层、累计可写路径和禁止事项。
@@ -116,4 +128,10 @@ Solver 给出主定理的 proof replacement。独立可信重放把证明放回�
 
 ## 已实现的生产路径
 
-控制平面现已包括：冻结 Manifest、精确 Source 实例化、可配置 L1/L2/L3 Diff 边界、单 Session Git 变异、Candidate 构建、逐题 Checkpoint、验证反馈、仅子进程可见的 sealed test、严格晋升与回滚、崩溃安全 Campaign 状态、单写者锁、实现与 Runtime 证明、仅 FD 凭据，以及关闭后的 JSON/CSV/Markdown/SVG 报告。MSA-derived minimal Target 提供轻量 math/reasoning 路径；仓库现有 SWE-bench 文件仍只是契约占位。
+控制平面现已包括：冻结 Manifest、精确 Source 实例化、可配置 L1/L2/L3 Diff 边界、Cowork
+Mutation Catalog/Plan/Lease、内置与沙箱 SearchStrategy、单 Session 变异、Candidate 构建、
+逐题 Checkpoint、验证反馈、仅子进程可见的 sealed test、严格晋升与回滚、崩溃安全 Campaign 状态、
+单写者锁、实现与 Runtime 证明、仅 FD 凭据，以及关闭后的 JSON/CSV/Markdown/SVG 报告。
+
+Reasoning 五种模式目前还没有改成外部 `SearchStrategyAdapter`；它们是兼容保留的受信内置算法。
+MSA-derived minimal Target 提供轻量 math/reasoning 路径；仓库现有 SWE-bench 文件仍只是契约占位。

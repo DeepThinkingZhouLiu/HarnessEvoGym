@@ -50,7 +50,7 @@ test('内置线性 Strategy 保持旧行为并持久化最小状态', async () =
   assert.equal(observed.state.lastObservation.status, 'promoted')
 })
 
-test('外部 Docker Strategy 无网络、无挂载、无环境变量，只交换 JSON', async () => {
+test('外部 Docker Strategy 无网络、无挂载、无宿主环境泄漏，只交换 JSON', async () => {
   const requests = []
   const fakeDocker = {
     async imageExists() { return true },
@@ -94,17 +94,38 @@ test('外部 Docker Strategy 无网络、无挂载、无环境变量，只交换
       configuration: { policy: 'round-robin' },
     },
   })
-  const driver = createSearchStrategyDriver({ adapter, docker: fakeDocker })
-  await driver.preflight()
-  const proposed = await driver.propose(await context())
+  const proxyNames = [
+    'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
+    'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy',
+  ]
+  const originalProxyEnvironment = Object.fromEntries(proxyNames.map((name) => [name, process.env[name]]))
+  const hostProxySecret = 'http://host-proxy-credential.invalid:7890'
+  let proposed
+  try {
+    for (const name of proxyNames) process.env[name] = hostProxySecret
+    const driver = createSearchStrategyDriver({ adapter, docker: fakeDocker })
+    await driver.preflight()
+    proposed = await driver.propose(await context())
+  } finally {
+    for (const name of proxyNames) {
+      if (originalProxyEnvironment[name] === undefined) delete process.env[name]
+      else process.env[name] = originalProxyEnvironment[name]
+    }
+  }
   assert.deepEqual(proposed.plan.spec.regionIds, ['skill-guidance'])
   const publicRegion = JSON.parse(requests[0].input).context.catalog.spec.regions[0]
   assert.equal(Object.hasOwn(publicRegion, 'writable'), false)
   assert.equal(Object.hasOwn(publicRegion, 'extensions'), false)
   assert.equal(requests[0].network, 'none')
   assert.deepEqual(requests[0].mounts, [])
-  assert.deepEqual(requests[0].environment, {})
+  assert.deepEqual(requests[0].environment, Object.fromEntries(proxyNames.map((name) => [name, ''])))
+  assert.deepEqual(requests[0].secretEnvironment, {})
   assert.deepEqual(requests[0].inheritEnvironment, [])
+  assert.equal(JSON.stringify({
+    environment: requests[0].environment,
+    secretEnvironment: requests[0].secretEnvironment,
+    inheritEnvironment: requests[0].inheritEnvironment,
+  }).includes(hostProxySecret), false)
   assert.equal(requests[0].readOnlyRoot, true)
 })
 

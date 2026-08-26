@@ -6,6 +6,18 @@ import { ProtocolError } from './protocol.mjs'
 const BUILTIN_STRATEGIES = new Map()
 const MAXIMUM_PROTOCOL_BYTES = 256 * 1024
 const MAXIMUM_STATE_BYTES = 64 * 1024
+// Docker CLI 可能从 ~/.docker/config.json 隐式注入代理变量。即使 Strategy 断网，
+// 也要显式传空，避免宿主代理地址或其中的凭据进入不可信容器。
+const EMPTY_STANDARD_PROXY_ENVIRONMENT = Object.freeze(Object.fromEntries([
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'all_proxy',
+  'no_proxy',
+].map((name) => [name, ''])))
 const FORBIDDEN_CONTEXT_KEYS = new Set([
   'apikey',
   'authorization',
@@ -281,7 +293,7 @@ async function runDockerStrategy({ adapter, docker, operation, context, state })
     readOnlyRoot: true,
     runAsCurrentUser: true,
     mounts: [],
-    environment: {},
+    environment: EMPTY_STANDARD_PROXY_ENVIRONMENT,
     secretEnvironment: {},
     inheritEnvironment: [],
     tmpfs: ['/tmp:rw,nosuid,nodev,noexec,size=16m'],

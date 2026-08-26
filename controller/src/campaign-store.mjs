@@ -235,8 +235,14 @@ function safeAggregate(summary, latencyMs, expectedCandidateId, expectedTotal, l
 }
 
 export class CampaignStore {
-  constructor(rootPath, campaignId) {
+  constructor(rootPath, campaignId, {
+    trustedUid = process.getuid?.() ?? 0,
+  } = {}) {
     assertId(campaignId, 'campaignId')
+    if (!Number.isInteger(trustedUid) || trustedUid < 0) {
+      throw new ProtocolError('Campaign store trustedUid 无效')
+    }
+    this.trustedUid = trustedUid
     this.root = resolve(rootPath, campaignId)
     this.publicRoot = join(this.root, 'public')
     this.privateRoot = join(this.root, 'private')
@@ -253,7 +259,7 @@ export class CampaignStore {
     if (!Number.isInteger(groupId) || groupId < 0) throw new ProtocolError('Candidate access groupId 无效')
     const candidateDirectory = join(this.candidatesRoot, candidateId)
     for (const path of [this.root, this.candidatesRoot, candidateDirectory]) {
-      await chown(path, 0, groupId)
+      await chown(path, this.trustedUid, groupId)
       await chmod(path, 0o710)
     }
   }
@@ -264,19 +270,19 @@ export class CampaignStore {
       throw new ProtocolError('Validation access groupId 无效')
     }
     for (const path of [this.root, this.privateRoot, this.validationRoot]) {
-      await chown(path, 0, groupId)
+      await chown(path, this.trustedUid, groupId)
       await chmod(path, 0o710)
     }
     const candidateRoot = join(this.validationRoot, candidateId)
     const visit = async (directory) => {
-      await chown(directory, 0, groupId)
+      await chown(directory, this.trustedUid, groupId)
       await chmod(directory, 0o750)
       const entries = await readdir(directory, { withFileTypes: true })
       for (const entry of entries) {
         const path = join(directory, entry.name)
         if (entry.isDirectory()) await visit(path)
         else if (entry.isFile()) {
-          await chown(path, 0, groupId)
+          await chown(path, this.trustedUid, groupId)
           await chmod(path, 0o440)
         }
       }
@@ -289,10 +295,10 @@ export class CampaignStore {
       throw new ProtocolError('Evolution log access groupId 无效')
     }
     for (const path of [this.root, this.publicRoot]) {
-      await chown(path, 0, groupId)
+      await chown(path, this.trustedUid, groupId)
       await chmod(path, 0o710)
     }
-    await chown(this.evolutionLogPath, 0, groupId)
+    await chown(this.evolutionLogPath, this.trustedUid, groupId)
     await chmod(this.evolutionLogPath, 0o440)
   }
 

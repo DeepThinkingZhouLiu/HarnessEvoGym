@@ -214,7 +214,7 @@ export class EvolutionOrchestrator {
           runtime: structuredClone(runtimeSnapshot),
           implementationFingerprint,
         }
-    this.store = new CampaignStore(campaignsRoot, campaignId)
+    this.store = new CampaignStore(campaignsRoot, campaignId, { trustedUid })
     this.workspace = join(this.store.candidatesRoot, 'baseline', 'workspace')
     this.linearGit = new LinearGitWorkspace({
       campaignRoot: this.store.root,
@@ -223,6 +223,7 @@ export class EvolutionOrchestrator {
       targetRevision: this.config.spec.solver.targetRevision,
       updaterUid,
       updaterGid,
+      trustedUid,
       mutationPolicy: runtime.mutationPolicy,
     })
   }

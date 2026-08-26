@@ -798,10 +798,6 @@ export async function preparePutnamBenchDataset({
     })
     const marker = preparedAttestation(pin, staged.outputSha256)
     await writePreparedAttestation(stagedSolutionsRoot, marker)
-    await freezePreparedOutput(
-      stagedSolutionsRoot,
-      staged.problemIds.map((name) => `${name}_sol.lean`),
-    )
 
     if (await pathExists(solutionsRoot)) {
       // A pre-attestation deployment may already have generated the exact
@@ -837,6 +833,12 @@ export async function preparePutnamBenchDataset({
     } else {
       await rename(stagedSolutionsRoot, solutionsRoot)
     }
+    // 跨父目录移动会更新目录的 `..`，普通用户因此需要目录写权限。先发布再冻结；
+    // 如果进程恰好在两步之间退出，下次运行会通过上面的 attestation 分支补完冻结。
+    await freezePreparedOutput(
+      solutionsRoot,
+      staged.problemIds.map((name) => `${name}_sol.lean`),
+    )
     await rm(stageRoot, { recursive: true, force: true }).catch(() => {})
     stageRoot = null
     return { ...checkout, sourceRoot, solutionsRoot, ...staged }

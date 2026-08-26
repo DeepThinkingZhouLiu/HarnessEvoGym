@@ -13,8 +13,11 @@ import {
 
 test('Driver Registry 暴露带版本的内置协议', () => {
   const protocols = registeredDriverProtocols()
-  assert.deepEqual(protocols.environment, ['skillsbench-docker-v1'])
-  assert.deepEqual(protocols.solver, ['dsh-headless-docker-v1'])
+  assert.deepEqual(protocols.environment, [
+    'skillsbench-docker-v1',
+    'text-reasoning-deterministic-v1',
+  ])
+  assert.deepEqual(protocols.solver, ['dsh-headless-docker-v1', 'msa-minimal-docker-v1'])
   assert.deepEqual(protocols.updater, ['dsh-headless-docker-v1'])
 })
 
@@ -50,4 +53,38 @@ test('Driver Registry 拒绝覆盖协议和不完整实现', () => {
     () => createSolverDriver({ target: { solver: { protocol: 'fixture-invalid-v1' } } }),
     /缺少 ensureRuntime/u,
   )
+})
+
+test('Updater 启动前撤销 Solver Token，结束后撤销 Updater Token', async () => {
+  const calls = []
+  const driver = createUpdaterDriver({
+    updater: {
+      protocol: 'dsh-headless-docker-v1',
+      runtime: {},
+    },
+    provider: {
+      compatibility: { maxTokensField: 'max_tokens' },
+    },
+    docker: {},
+    repositoryRoot: '/repo',
+    sourceRevision: 'a'.repeat(40),
+    sourcePath: 'sources/deepseek-harness',
+    modelGateway: {
+      async rotateRoleToken(role) { calls.push(`rotate:${role}`) },
+      async access(role) {
+        calls.push(`access:${role}`)
+        throw new Error('fixture-stop-before-runtime')
+      },
+    },
+  })
+
+  await assert.rejects(
+    () => driver.run({ model: { model: 'trusted-updater', maxTokens: 64 } }),
+    /fixture-stop-before-runtime/u,
+  )
+  assert.deepEqual(calls, [
+    'rotate:solver',
+    'access:updater',
+    'rotate:updater',
+  ])
 })

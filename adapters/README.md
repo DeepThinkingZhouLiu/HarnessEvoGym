@@ -16,8 +16,10 @@ Adapter 把“通用进化算法”与“某个 Agent/Benchmark 的目录和命�
 Provider Adapter 只声明连接元数据和“环境变量名”，永远不写字面 Key。Experiment 分别声明 Solver/Updater 的 `provider`、`model` 与 `maxTokens`；当前低成本 POC 两个角色都用 `gpt-5.6-terra`，并共用 `zcloud-openai` 连接。
 
 DSH Runtime 把 `openai-chat-completions` 协议翻译为它内置的 `llm-pi-ai` Profile，不再把非 DeepSeek 模型冒充成 `deepseek-official`。换 PI Agent 时，对应 Runtime Driver 应读取同一 Provider Adapter 并生成 PI 自己需要的环境或配置。
-当前的 Cowork Adapter Schema、Source 预检和 Materializer 仍只完整支持 DSH + SkillsBench；
-PI Agent 仍是下一个 Adapter/Driver 实现任务，不是已可运行的占位配置。
+当前已完整支持 DSH Overlay Target 和 `repository-tree + CandidateSeed` 形式的
+MSA Minimal Target。MSA 可以分别叠加 Cowork 或 Reasoning Seed，并通过各自的
+Catalog 和语义 Validator 硬限制可变文件。PI Agent 仍是下一个 Adapter/Driver 实现任务，
+不是已可运行的占位配置。
 
 ## 搜索策略与变异目录
 
@@ -45,6 +47,21 @@ L1 允许 Preset 与 Skill 文档；L2 额外允许 Skill Scripts；L3 未定义
 
 `semanticChecks.skills` 另外强制 Candidate Skill 的根目录和命名前缀。DSH Cowork Target 使用 `cowork-*`，并校验目录/文件名与 frontmatter `name` 一致，用来防止高优先级 Candidate Skill 遮蔽 Benchmark Skill。
 
+## MSA Minimal Target
+
+MSA Target 使用 `repository-tree-v1` 固定主仓中的 Source Tree，再用
+`source-plus-seed-overlay-v1` 叠加 Target 自有 Seed。Seed 覆盖 Source 里的文件必须在
+`materialization.overrides` 显式声明；符号链接、特殊文件和未声明覆盖会失败。
+
+```text
+sources/msa-minimal-harness
+  + targets/msa-minimal/cowork-v1       -> msa-minimal
+  + targets/msa-minimal/reasoning-v1    -> msa-minimal-reasoning
+```
+
+两个 Target 共用 `msa-minimal-docker-v1` Solver Driver，但分别使用
+`msa-minimal-cowork-v1` 和 `msa-minimal-reasoning-v1` Candidate Validator。
+
 ## DeepSeek Harness Updater
 
 Updater Adapter 拥有自己独立的 `source.path` 与固定 Revision，不再暗中复用 Target Source。当前示例仍使用同一 DSH Submodule 和 `standard` Preset；以后把 Updater 换成 PI Agent 时，可以新增 Source、Runtime Driver 和 Adapter，而不用改变 Target Candidate 的实例化方式。在容器里看到的路径只有：
@@ -62,6 +79,8 @@ Target/Updater Runtime 声明自己需要的环境变量名，Controller 会强�
 
 ```bash
 npm run rsi -- adapter validate --config adapters/targets/deepseek-harness.yml
+npm run rsi -- adapter validate --config adapters/targets/msa-minimal.yml
+npm run rsi -- adapter validate --config adapters/targets/msa-minimal-reasoning.yml
 npm run rsi -- adapter validate --config adapters/updaters/deepseek-harness.yml
 npm run rsi -- adapter validate --config adapters/providers/zcloud-openai.yml
 npm run rsi -- adapter validate --config adapters/strategies/linear-hill-climb.yml

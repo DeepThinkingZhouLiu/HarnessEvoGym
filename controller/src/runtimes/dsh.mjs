@@ -262,13 +262,13 @@ export async function runDshSolver({
 }
 
 function updaterTask({ level, targetId, reportName }) {
-  return `你正在执行一次受控 RSI Updater Session，目标是改进 ${targetId} 的 Cowork Solver。
+  return `你正在执行一次受控 RSI Updater Session，目标是改进 Target ${targetId} 实例化出的 Solver。具体任务场景、失败证据和评分信号由 feedback packet 提供，不要假定它一定是 Cowork、Reasoning 或 Coding。
 
 当前唯一允许的变异层级是 ${level.toUpperCase()}。请先阅读：
 - .rsi-context/updater.md：工作方法与禁止事项
 - .rsi-context/mutation-policy.json：机器强制执行的写入白名单
 - .rsi-context/feedback-packet.json：上一轮 Feedback 任务的脱敏证据
-- .rsi-context/upstream/：只读的 DeepSeek Harness 上游源码，用于理解接口
+- .rsi-context/upstream/：只读的 Target 上游源码，用于理解当前 Harness 接口
 
 你只能修改当前 /candidate 下符合 mutation-policy 的 Candidate 文件。不要修改、复制或试图绕过 .rsi-context；不要读取任何隐藏任务，因为容器内也不会提供它们。请横向分析多个案例，提出一个可证伪的改进假设，然后做最小完整修改。
 

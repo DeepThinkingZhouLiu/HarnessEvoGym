@@ -1,5 +1,7 @@
 import { relative } from 'node:path'
 
+import { validateBranchEvolutionDriver } from './branch-evolution-driver.mjs'
+import { createReasoningBranchDriver } from './branches/reasoning.mjs'
 import { redactSecrets } from './campaign-store.mjs'
 import {
   buildCoordinationContext,
@@ -13,10 +15,6 @@ import {
 import { PopulationStore } from './population-store.mjs'
 import { ProtocolError } from './protocol.mjs'
 
-const EVOLVING_CHILD_STATES = new Set([
-  'EVOLVING', 'EVOLVING_L1', 'EVOLVING_L2', 'EVOLVING_L3',
-])
-const TERMINAL_CHILD_STATES = new Set(['CLOSED', 'REPORTED'])
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u
 
 function iso(clock) {
@@ -32,34 +30,42 @@ function event(state, type, at, details = {}) {
   }
 }
 
-function publicIncumbent(childState) {
-  const incumbent = childState?.incumbent
-  if (!incumbent || !Number.isInteger(incumbent.validationVerified)) {
+function publicIncumbent(projection) {
+  const incumbent = projection?.incumbent
+  const primary = incumbent?.evaluation?.primary
+  if (!incumbent || !Number.isFinite(primary?.value)) {
     throw new ProtocolError('Branch 缺少已评测 incumbent')
   }
   return {
     candidateId: incumbent.candidateId,
     digest: incumbent.digest,
-    commit: incumbent.commit,
-    validationVerified: incumbent.validationVerified,
-    validationTotal: incumbent.validationTotal,
+    revision: incumbent.revision,
+    evaluation: incumbent.evaluation,
+    primaryMetric: primary.metric,
+    primaryValue: primary.value,
+    primaryDirection: primary.direction,
+    primaryTotal: primary.total,
+    // 兼容旧 Reasoning State/Report；新场景只消费上面的通用字段。
+    ...(primary.metric === 'validation-verified-count'
+      ? {
+          commit: incumbent.revision,
+          validationVerified: primary.value,
+          validationTotal: primary.total,
+        }
+      : {}),
   }
+}
+
+function incumbentScore(incumbent) {
+  return incumbent.primaryDirection === 'minimize' ? -incumbent.primaryValue : incumbent.primaryValue
 }
 
 function branchRemaining(branch) {
   return branch.baseBudget + branch.bonusBudget - branch.consumed
 }
 
-function childStopped(childState) {
-  return TERMINAL_CHILD_STATES.has(childState.status)
-}
-
-function childPaused(childState) {
-  return childState.status === 'PAUSED_INFRASTRUCTURE'
-}
-
-function branchStatus(branch, childState) {
-  if (childStopped(childState)) return 'stopped'
+function branchStatus(branch, projection) {
+  if (projection.status === 'stopped') return 'stopped'
   return branchRemaining(branch) > 0 ? 'active' : 'exhausted'
 }
 
@@ -70,6 +76,7 @@ function assertRoundLimit(value) {
 }
 
 function markdownReport(summary) {
+  const bestMetric = summary.best.evaluation.primary
   const lines = [
     '# Population Evolution Report',
     '',
@@ -78,14 +85,14 @@ function markdownReport(summary) {
     `- Consumed budget: ${summary.budget.consumed}`,
     `- Unused budget: ${summary.budget.unused}`,
     `- Best branch: \`${summary.best.branchId}\``,
-    `- Best validation: ${summary.best.validationVerified}/${summary.best.validationTotal}`,
-    `- Best commit: \`${summary.best.commit}\``,
+    `- Best metric: ${bestMetric.metric}=${bestMetric.value}${bestMetric.total === null ? '' : `/${bestMetric.total}`}`,
+    `- Best revision: \`${summary.best.revision}\``,
     `- Harness implementation: \`best-harness.json\` + \`best-harness.patch\``,
     '',
-    '| Branch | Base | Bonus | Consumed | Best validation | Best candidate | Status |',
+    '| Branch | Base | Bonus | Consumed | Best metric | Best candidate | Status |',
     '|---|---:|---:|---:|---:|---|---|',
     ...summary.branches.map((branch) => (
-      `| ${branch.branchId} | ${branch.baseBudget} | ${branch.bonusBudget} | ${branch.consumed} | ${branch.incumbent.validationVerified}/${branch.incumbent.validationTotal} | ${branch.incumbent.candidateId} | ${branch.status} |`
+      `| ${branch.branchId} | ${branch.baseBudget} | ${branch.bonusBudget} | ${branch.consumed} | ${branch.incumbent.primaryMetric}=${branch.incumbent.primaryValue} | ${branch.incumbent.candidateId} | ${branch.status} |`
     )),
     '',
     'Competition awards and per-round deltas are retained in the parent event log; each branch keeps its full mutation history in its own evolution log.',
@@ -136,16 +143,17 @@ export class PopulationOrchestrator {
     frozenConfig = null,
     secretValues = [],
   }) {
-    if (!loadedCampaign?.config?.controller_config
-        || !SHA256_PATTERN.test(loadedCampaign?.fingerprint ?? '')) {
-      throw new ProtocolError('PopulationOrchestrator 需要带 controller_config 的冻结 Campaign')
+    const populationConfig = loadedCampaign?.recipe?.spec?.population
+      ?? loadedCampaign?.config?.controller_config
+    if (!populationConfig || !SHA256_PATTERN.test(loadedCampaign?.fingerprint ?? '')) {
+      throw new ProtocolError('PopulationOrchestrator 需要带 EvolutionRecipe 或 controller_config 的冻结配置')
     }
     if (typeof createBranch !== 'function') {
       throw new ProtocolError('PopulationOrchestrator 需要 createBranch()')
     }
     this.loaded = loadedCampaign
     this.config = loadedCampaign.config
-    this.controller = normalizeControllerConfig(this.config.controller_config)
+    this.controller = normalizeControllerConfig(populationConfig)
     this.plan = createBudgetPlan(this.controller)
     this.campaignId = campaignId
     this.createBranch = createBranch
@@ -155,6 +163,7 @@ export class PopulationOrchestrator {
     this.secretValues = secretValues
     this.store = new PopulationStore(campaignsRoot, campaignId)
     this.handles = new Map()
+    this.coordinationContexts = new Map()
   }
 
   async #handle(branchId) {
@@ -163,17 +172,14 @@ export class PopulationOrchestrator {
         branchId,
         branchesRoot: this.store.branchesRoot,
       })).then((handle) => {
-        if (!handle?.orchestrator || typeof handle.orchestrator.initialize !== 'function'
-            || typeof handle.orchestrator.run !== 'function'
-            || typeof handle.orchestrator.resume !== 'function'
-            || !handle.orchestrator.store || !handle.orchestrator.linearGit) {
-          throw new ProtocolError(`createBranch(${branchId}) 返回值无效`)
-        }
-        if (handle.setCoordinationContext !== undefined
-            && typeof handle.setCoordinationContext !== 'function') {
-          throw new ProtocolError(`createBranch(${branchId}).setCoordinationContext 无效`)
-        }
-        return handle
+        const driver = handle?.orchestrator
+          ? createReasoningBranchDriver({
+              branchId,
+              handle,
+              baseRevision: this.config.spec?.solver?.targetRevision,
+            })
+          : handle
+        return validateBranchEvolutionDriver(driver)
       }))
     }
     return this.handles.get(branchId)
@@ -232,15 +238,23 @@ export class PopulationOrchestrator {
     }
     await this.store.saveState(state)
 
-    const childStates = await Promise.all(state.branches.map(async ({ branchId }) => {
-      const handle = await this.#handle(branchId)
-      await handle.orchestrator.initialize()
-      return handle.orchestrator.run({ baselineOnly: true })
+    const baselineSettlements = await Promise.allSettled(state.branches.map(async ({ branchId }) => {
+      const driver = await this.#handle(branchId)
+      return await driver.initialize()
     }))
+    const baselineFailures = baselineSettlements.flatMap((settlement, index) => (
+      settlement.status === 'rejected'
+        ? [{ branchId: state.branches[index].branchId, error: settlement.reason }]
+        : []
+    ))
+    if (baselineFailures.length > 0) {
+      return await this.#pauseInfrastructure(state, baselineFailures, 'baseline')
+    }
+    const projections = baselineSettlements.map((settlement) => settlement.value)
     const branches = state.branches.map((branch, index) => ({
       ...branch,
-      incumbent: publicIncumbent(childStates[index]),
-      status: branchStatus(branch, childStates[index]),
+      incumbent: publicIncumbent(projections[index]),
+      status: branchStatus(branch, projections[index]),
     }))
     const bestBranch = selectPopulationBest(branches)
     const completedAt = iso(this.clock)
@@ -253,7 +267,8 @@ export class PopulationOrchestrator {
       events: [...state.events, event(state, 'POPULATION_BASELINE_EVALUATED', completedAt, {
         branches: branches.map((branch) => ({
           branchId: branch.branchId,
-          validationVerified: branch.incumbent.validationVerified,
+          primaryMetric: branch.incumbent.primaryMetric,
+          primaryValue: branch.incumbent.primaryValue,
         })),
       })],
     }
@@ -268,6 +283,32 @@ export class PopulationOrchestrator {
       throw new ProtocolError('Population 配置或 Runtime 指纹与冻结 state 不一致')
     }
     return state
+  }
+
+  async #pauseInfrastructure(state, failures, phase) {
+    const pausedAt = iso(this.clock)
+    const publicFailures = redactSecrets(failures.map(({ branchId, error }) => ({
+      branchId,
+      name: error?.name ?? 'Error',
+      message: error?.message ?? String(error),
+      details: Array.isArray(error?.details) ? error.details : [],
+    })), this.secretValues)
+    const paused = {
+      ...state,
+      status: 'PAUSED_INFRASTRUCTURE',
+      updatedAt: pausedAt,
+      events: [...state.events, event(state, 'POPULATION_INFRASTRUCTURE_PAUSED', pausedAt, {
+        phase,
+        ...(state.inFlightWave ? { epoch: state.inFlightWave.epoch } : {}),
+        failures: publicFailures,
+      })],
+    }
+    await this.store.saveState(paused)
+    this.progress({
+      type: 'population-infrastructure-paused',
+      branches: publicFailures.map((failure) => failure.branchId),
+    })
+    return paused
   }
 
   async run({ roundLimit = 0 } = {}) {
@@ -358,12 +399,12 @@ export class PopulationOrchestrator {
     if (participants.length === 0) return this.#close(state)
 
     const snapshots = await Promise.all(participants.map(async (branch) => {
-      const handle = await this.#handle(branch.branchId)
-      const childState = await handle.orchestrator.store.readState()
+      const driver = await this.#handle(branch.branchId)
+      const projection = await driver.inspect()
       return {
         branchId: branch.branchId,
-        beforeCandidates: childState.candidates.length,
-        beforeScore: childState.incumbent.validationVerified,
+        beforeSteps: projection.completedSteps,
+        beforeScore: incumbentScore(publicIncumbent(projection)),
       }
     }))
     const startedAt = iso(this.clock)
@@ -393,21 +434,22 @@ export class PopulationOrchestrator {
 
   async #applyCoordinationContexts(state) {
     const sharingReady = modeUsesPeerSharing(state.mode) && state.epoch > 0
-    const handles = new Map(await Promise.all(state.branches.map(async (branch) => (
+    const drivers = new Map(await Promise.all(state.branches.map(async (branch) => (
       [branch.branchId, await this.#handle(branch.branchId)]
     ))))
+    const evidence = new Map(await Promise.all(state.branches.map(async (branch) => (
+      [branch.branchId, await drivers.get(branch.branchId).exportPeerEvidence()]
+    ))))
     await Promise.all(state.inFlightWave.participants.map(async ({ branchId }) => {
-      const handle = handles.get(branchId)
-      if (!handle.setCoordinationContext) return
       const peers = sharingReady
         ? state.branches.filter((branch) => (
             branch.branchId !== branchId && branch.consumed > 0
           )).map((branch) => ({
             branchId: branch.branchId,
-            sourcePath: handles.get(branch.branchId).orchestrator.store.evolutionLogPath,
+            sourcePath: evidence.get(branch.branchId).sourcePath,
           }))
         : []
-      handle.setCoordinationContext(buildCoordinationContext({
+      this.coordinationContexts.set(branchId, buildCoordinationContext({
         controllerConfig: this.controller,
         branchId,
         peerLogs: peers,
@@ -416,81 +458,94 @@ export class PopulationOrchestrator {
     }))
   }
 
-  async #runChildRound(participant) {
-    const handle = await this.#handle(participant.branchId)
-    let childState = await handle.orchestrator.store.readState()
-    if (childState.candidates.length > participant.beforeCandidates + 1) {
+  async #runChildRound(participant, epoch) {
+    const driver = await this.#handle(participant.branchId)
+    const projection = await driver.inspect()
+    if (projection.completedSteps > participant.beforeSteps + 1) {
       throw new ProtocolError(`${participant.branchId} 超前于 Population wave`)
     }
-    if (childState.candidates.length === participant.beforeCandidates + 1
-        && !childState.inFlight) return childState
-    if (childPaused(childState)) {
-      return handle.orchestrator.resume({ roundLimit: 1 })
+    if (projection.completedSteps === participant.beforeSteps + 1) {
+      return {
+        apiVersion: 'harness-rsi/v1alpha1',
+        kind: 'BranchStepResult',
+        stepId: projection.lastStep.stepId,
+        budgetConsumed: 1,
+        projection,
+      }
     }
-    if (TERMINAL_CHILD_STATES.has(childState.status)) return childState
-    if (!EVOLVING_CHILD_STATES.has(childState.status)) {
-      throw new ProtocolError(`${participant.branchId} 状态不能执行进化轮次：${childState.status}`)
-    }
-    return handle.orchestrator.run({ roundLimit: 1 })
+    return await driver.advanceOne({
+      stepId: `epoch-${String(epoch).padStart(4, '0')}-${participant.branchId}`,
+      coordination: this.coordinationContexts.get(participant.branchId),
+    })
   }
 
   async #runWave(state) {
     await this.#applyCoordinationContexts(state)
-    const childStates = await Promise.all(
-      state.inFlightWave.participants.map((participant) => this.#runChildRound(participant)),
+    const settlements = await Promise.allSettled(
+      state.inFlightWave.participants.map((participant) => (
+        this.#runChildRound(participant, state.inFlightWave.epoch)
+      )),
     )
-    if (childStates.some(childPaused)) {
-      const pausedAt = iso(this.clock)
-      const paused = {
-        ...state,
-        status: 'PAUSED_INFRASTRUCTURE',
-        updatedAt: pausedAt,
-        events: [...state.events, event(state, 'POPULATION_INFRASTRUCTURE_PAUSED', pausedAt, {
-          epoch: state.inFlightWave.epoch,
-          branches: childStates.flatMap((childState, index) => (
-            childPaused(childState) ? [state.inFlightWave.participants[index].branchId] : []
-          )),
-        })],
-      }
-      await this.store.saveState(paused)
-      return paused
+    const failures = settlements.flatMap((settlement, index) => (
+      settlement.status === 'rejected'
+        ? [{ branchId: state.inFlightWave.participants[index].branchId, error: settlement.reason }]
+        : []
+    ))
+    if (failures.length > 0) return await this.#pauseInfrastructure(state, failures, 'wave')
+    const stepResults = settlements.map((settlement) => settlement.value)
+    if (stepResults.some((result) => result.projection.status === 'paused')) {
+      return await this.#pauseInfrastructure(state, stepResults.flatMap((result, index) => (
+        result.projection.status === 'paused'
+          ? [{
+              branchId: state.inFlightWave.participants[index].branchId,
+              error: new ProtocolError('Branch Driver 报告基础设施暂停'),
+            }]
+          : []
+      )), 'wave')
     }
 
     const results = state.inFlightWave.participants.map((participant, index) => {
-      const childState = childStates[index]
-      const candidate = childState.candidates[participant.beforeCandidates] ?? null
-      const stopped = childStopped(childState)
-      if (!stopped && candidate === null) {
+      const stepResult = stepResults[index]
+      const projection = stepResult.projection
+      const candidate = projection.lastStep
+      const stopped = projection.status === 'stopped'
+      if (!stopped && stepResult.budgetConsumed === 0) {
         throw new ProtocolError(`${participant.branchId} 未产生本轮 Candidate`)
       }
-      const validationScore = candidate?.validationVerified ?? participant.beforeScore
+      const primary = candidate?.ranking?.evaluation?.primary
+      const validationScore = primary
+        ? (primary.direction === 'minimize' ? -primary.value : primary.value)
+        : participant.beforeScore
       return {
         branchId: participant.branchId,
         validationScore,
         deltaScore: validationScore - participant.beforeScore,
         candidateId: candidate?.candidateId ?? null,
         decision: candidate?.decision ?? 'stopped',
-        eligible: !stopped,
+        // Competition 可以比较已评测但未晋升的 Candidate；无评测的 invalid/stopped
+        // 提案不能靠 delta=0 赢得额外预算。
+        eligible: !stopped && primary !== undefined,
         stopped,
-        childState,
+        budgetConsumed: stepResult.budgetConsumed,
+        projection,
       }
     })
 
     let branches = state.branches.map((branch) => {
       const result = results.find((entry) => entry.branchId === branch.branchId)
       if (!result) return branch
-      const consumed = branch.consumed + 1
+      const consumed = branch.consumed + result.budgetConsumed
       const updated = {
         ...branch,
         consumed,
-        incumbent: publicIncumbent(result.childState),
+        incumbent: publicIncumbent(result.projection),
         lastDeltaScore: result.deltaScore,
       }
-      return { ...updated, status: branchStatus(updated, result.childState) }
+      return { ...updated, status: branchStatus(updated, result.projection) }
     })
     let budget = {
       ...state.budget,
-      consumed: state.budget.consumed + results.length,
+      consumed: state.budget.consumed + results.reduce((sum, result) => sum + result.budgetConsumed, 0),
     }
     let bonusWinner = null
     let bonusGrant = 0
@@ -578,19 +633,16 @@ export class PopulationOrchestrator {
       // Generate the immutable summary from child ledgers below.
     }
     const bestBranch = state.branches.find((branch) => branch.branchId === state.best.branchId)
-    const bestHandle = await this.#handle(bestBranch.branchId)
-    const implementation = await bestHandle.orchestrator.linearGit.implementation(
-      this.config.spec.solver.targetRevision,
-      bestBranch.incumbent.commit,
-    )
+    const bestDriver = await this.#handle(bestBranch.branchId)
+    const implementation = await bestDriver.exportBest()
     const branchDetails = await Promise.all(state.branches.map(async (branch) => {
-      const handle = await this.#handle(branch.branchId)
-      const mutations = await handle.orchestrator.store.readEvolutionLog()
+      const driver = await this.#handle(branch.branchId)
+      const evidence = await driver.exportPeerEvidence()
       return {
         ...branch,
         remaining: branchRemaining(branch),
-        evolutionLog: relative(this.store.root, handle.orchestrator.store.evolutionLogPath),
-        mutations,
+        evolutionLog: relative(this.store.root, evidence.sourcePath),
+        mutations: evidence.entries,
       }
     }))
     const summary = redactSecrets({
@@ -618,23 +670,30 @@ export class PopulationOrchestrator {
       mode: state.mode,
       branchId: bestBranch.branchId,
       candidateId: bestBranch.incumbent.candidateId,
-      baseRevision: implementation.baseCommit,
-      commit: implementation.commit,
-      tree: implementation.tree,
+      revision: implementation.revision,
+      evaluation: implementation.evaluation,
+      ...(implementation.baseRevision ? { baseRevision: implementation.baseRevision } : {}),
+      ...(implementation.revision ? { commit: implementation.revision } : {}),
+      ...(implementation.tree ? { tree: implementation.tree } : {}),
       digest: implementation.digest,
-      validationVerified: bestBranch.incumbent.validationVerified,
-      validationTotal: bestBranch.incumbent.validationTotal,
+      ...(bestBranch.incumbent.validationVerified === undefined
+        ? {}
+        : {
+            validationVerified: bestBranch.incumbent.validationVerified,
+            validationTotal: bestBranch.incumbent.validationTotal,
+          }),
       changedFiles: implementation.changedFiles,
       diffStat: implementation.diffStat,
       patchArtifact: 'best-harness.patch',
-      workspace: bestHandle.orchestrator.workspace,
-      gitRoot: bestHandle.orchestrator.linearGit.gitRoot,
+      workspace: implementation.workspace,
+      implementationRoot: implementation.implementationRoot,
+      ...(implementation.implementationRoot ? { gitRoot: implementation.implementationRoot } : {}),
     }, this.secretValues)
     const report = await this.store.writeReport({
       summary,
       markdown: markdownReport(summary),
       bestHarness,
-      patch: redactSecrets(implementation.patch, this.secretValues),
+      patch: redactSecrets(implementation.patch ?? '', this.secretValues),
     })
     return { state, ...report, summary, bestHarness }
   }

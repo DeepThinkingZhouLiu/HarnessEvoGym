@@ -1,0 +1,22 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "EvolutionExperiment",
+  "metadata": { "id": "reasoning-msa-smoke-independent" },
+  "spec": {
+    "recipe": "recipes/population-smoke/independent.yml",
+    "adapters": {
+      "target": "adapters/targets/msa-minimal-reasoning.yml",
+      "updater": "adapters/updaters/deepseek-harness.yml",
+      "environment": "environments/text-reasoning-smoke.yml",
+      "provider": "adapters/providers/zcloud-openai.yml",
+      "strategy": "adapters/strategies/linear-hill-climb.yml"
+    },
+    "benchmark": "benchmarks/text-reasoning-smoke/benchmark.json",
+    "policy": "evaluation/policies/text-reasoning-smoke.json",
+    "models": {
+      "solver": { "provider": "zcloud-openai", "model": "gpt-5.6-terra", "maxTokens": 2048 },
+      "updater": { "provider": "zcloud-openai", "model": "gpt-5.6-terra", "maxTokens": 4096 }
+    },
+    "evolution": { "mutationLevel": "l1", "generations": 1, "trialsPerInstance": 1, "seeds": [20260826] }
+  }
+}

@@ -1,0 +1,57 @@
+apiVersion: harness-rsi/v1alpha1
+kind: EnvironmentAdapter
+
+metadata:
+  id: text-reasoning-smoke
+  name: Synthetic Text Reasoning Connectivity Smoke
+
+spec:
+  protocol: text-reasoning-deterministic-v1
+
+  # 题目与可信答案都在 Controller 侧，用摘要防止未记录的本地篡改。
+  source:
+    tasksPath: benchmarks/text-reasoning-smoke/tasks.json
+    digest: 54195b9b309e370c28bd6f7f6efb06d8edb6bf5fee67c1b451e2b86e17c8020a
+
+  task:
+    workspacePath: /workspace
+    answerNormalization: trim-collapse-casefold-v1
+
+  runtime:
+    baseImage: python@sha256:0f5b26b9518d002b6173fd61daad821fa340635ebfec5bba471013f9ca114579
+    imagePrefix: harness-rsi/text-reasoning-smoke
+
+  docker:
+    binary: docker
+    network: bridge
+    runAsCurrentUser: true
+    resources:
+      cpus: 2
+      memory: 2g
+      pids: 256
+      timeoutSeconds: 300
+
+  modelGateway:
+    image: harness-rsi/model-gateway:v1
+    dockerfile: docker/model-gateway/Dockerfile
+    alias: model-gateway
+    port: 8080
+    egressNetwork: bridge
+    maximumRequestsPerRun: 256
+    maximumConcurrentRequests: 8
+    resources:
+      cpus: 1
+      memory: 512m
+      pids: 128
+
+  reward:
+    minimum: 0
+    maximum: 1
+    resolvedThreshold: 1
+
+  feedback:
+    maximumTextBytesPerCase: 8192
+    maximumArtifactEntriesPerCase: 16
+    maximumArtifactBytesPerCase: 8192
+    maximumHistoryEntries: 10
+    maximumHistoryBytes: 32768

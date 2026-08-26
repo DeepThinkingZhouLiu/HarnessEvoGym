@@ -118,3 +118,14 @@ test('MutationPlan 不能选择不存在的父 Candidate 或夹带路径', async
     /未知字段/u,
   )
 })
+
+test('Target 加载时拒绝 Region 依赖环和向上风险依赖', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'adapters/targets/deepseek-harness.yml'))
+  config.spec.mutation.catalog.regions[0].requires = ['skill-guidance']
+  config.spec.mutation.catalog.regions[1].requires = ['preset-composition']
+  assert.throws(() => validateTargetAdapter(config), /依赖图存在环/u)
+
+  const upward = await readConfigFile(resolve(repositoryRoot, 'adapters/targets/deepseek-harness.yml'))
+  upward.spec.mutation.catalog.regions[0].requires = ['skill-scripts']
+  assert.throws(() => validateTargetAdapter(upward), /更高风险/u)
+})

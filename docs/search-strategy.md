@@ -50,25 +50,27 @@ MutationPlan; `observe` returns only updated state.
 
 Solver, Updater, and Environment implementation creation uses the versioned
 trusted Driver Registry. The main evolution loop no longer branches on those
-protocols. This is an extension seam, not a claim that pi-agent is already
-plug-and-play: Cowork adapter validation, source preflight, and materialization
-are still DSH/SkillsBench-specific. A new Harness contribution must add those
-lifecycle pieces and then register through `registerSolverDriver`,
+protocols. Registries now also cover Target Source resolution, Candidate
+materialization, and Candidate validation; MSA Minimal proves a non-DSH Target
+end to end. This is still not a claim that pi-agent is already plug-and-play: a
+new Harness contribution must add its reviewed schema and Source/Seed/runtime
+lifecycle pieces, then register through `registerSolverDriver`,
 `registerUpdaterDriver`, or `registerEnvironmentDriver`. Drivers execute and
 mount Harness workspaces, so unlike a search algorithm they are trusted
 Controller code rather than arbitrary sandboxed plugins.
 
 ## Compatibility matrix
 
-| Plane                    | Search configuration              | Enforcement                       | Status                         |
-|--------------------------|-----------------------------------|-----------------------------------|--------------------------------|
-| Cowork `experiment`      | `SearchStrategyAdapter`           | Catalog -> Plan -> Lease -> Diff  | Builtin and Docker strategies  |
-| Reasoning `campaign`     | Five `controller_config.mode`s    | Git commit + layer path audit     | Existing Future behavior       |
-| Legacy Cowork experiment | No `strategy` field               | Default all-region lease          | Backward compatible            |
-| Legacy Target adapter    | No `mutation.catalog`             | L1/L2/L3 mapped to regions        | Backward compatible            |
-| Non-DSH Cowork Harness   | Driver Registry seam              | Needs adapter + materializer      | Not end-to-end yet             |
+| Plane                         | Search configuration                  | Enforcement                       | Status                    |
+|-------------------------------|---------------------------------------|-----------------------------------|---------------------------|
+| Generic `experiment` Population | EvolutionRecipe + SearchStrategy   | Catalog -> Plan -> Lease -> Diff  | Cowork/Reasoning shared   |
+| Legacy Reasoning `campaign`   | Five `controller_config.mode`s        | Git commit + layer path audit     | Existing HZY behavior     |
+| Legacy Cowork experiment      | No Recipe/Strategy                    | Single + default all-region lease | Backward compatible       |
+| Legacy Target adapter         | No `mutation.catalog`                 | L1/L2/L3 mapped to regions        | Backward compatible       |
+| MSA Minimal Target            | Cowork/Reasoning Target-owned Catalog | Hard lease + semantic validator   | End-to-end implemented    |
 
-This refactor intentionally does not alter the proven Future Reasoning sealed
-broker, Git lineage, or rollback semantics. External Docker SearchStrategy is
-currently a production capability of the Cowork plane; it does not yet replace
-the five Reasoning population modes.
+This refactor does not alter the proven Future Reasoning sealed broker, Git
+lineage, or rollback semantics. The new text-Reasoning smoke uses the generic
+Experiment path and can combine the same SearchStrategy with all five
+Population modes; it proves engineering compatibility, not replacement of HLE
+production evaluation.

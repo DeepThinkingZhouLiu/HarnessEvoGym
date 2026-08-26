@@ -1,9 +1,9 @@
 {
-  "name": "deepseek-harness-rsi",
+  "name": "harness-evo-gym",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Recursive self-improvement platform for Reasoning and Cowork agent harnesses.",
+  "description": "Pluggable self-evolution platform for agent Harness targets, environments, and recipes.",
   "engines": {
     "node": ">=20"
   },

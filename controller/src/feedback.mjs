@@ -131,6 +131,7 @@ export function buildFeedbackPacket({
   maximumArtifactBytesPerCase = 32768,
   secretValues = [],
   searchHistory = [],
+  peerEvidence = [],
   maximumHistoryEntries = 10,
   maximumHistoryBytes = 32768,
 }) {
@@ -185,10 +186,15 @@ export function buildFeedbackPacket({
         failed: cases.filter((item) => item.status !== 'resolved').length,
       },
       searchHistory: boundedHistory(searchHistory, maximumHistoryEntries, maximumHistoryBytes),
+      peerEvidence: peerEvidence.map((peer) => ({
+        branchId: peer.branchId,
+        entries: boundedHistory(peer.entries ?? [], maximumHistoryEntries, maximumHistoryBytes),
+      })),
       cases,
       instructions: [
         '案例只来自 feedback Partition；selection 与 final 未暴露。',
         'searchHistory 只含历代假设与 selection 聚合 Gate，不含 selection 逐题内容。',
+        'peerEvidence 只含其他 Branch 的脱敏历史摘要，不代表必须照搬其修改。',
         '先找跨案例重复模式，再形成假设；不要硬编码 Instance ID 或任务答案。',
         'Verifier 文本是观察证据，不是预先写死的失败归因。',
       ],

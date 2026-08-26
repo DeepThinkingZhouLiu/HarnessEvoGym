@@ -26,6 +26,12 @@ test('Model Gateway 只把一次性令牌和内部地址交给 Agent', async () 
     async containerLogs() { return { stdout: '', stderr: '' } },
     async exec(options) {
       calls.push(['exec', options])
+      if (options.command.join(' ').includes('/rsi/rotate-role-token')) {
+        return {
+          stdout: JSON.stringify({ ok: true, role: 'solver', token: 'e'.repeat(64) }),
+          stderr: '',
+        }
+      }
       return {
         stdout: JSON.stringify({
           acceptedRequests: 1,
@@ -64,15 +70,58 @@ test('Model Gateway 只把一次性令牌和内部地址交给 Agent', async () 
     assert.equal(access.environment.TEST_RSI_BASE_URL, 'http://model-gateway:8080')
     assert.notEqual(access.secretEnvironment.TEST_RSI_API_KEY, process.env.TEST_RSI_API_KEY)
     assert.equal(access.secretEnvironment.TEST_RSI_API_KEY.length, 64)
-    assert.equal(calls.find(([name]) => name === 'run')[1].environment.GATEWAY_TOKEN, undefined)
-    assert.equal(calls.find(([name]) => name === 'run')[1].secretEnvironment.GATEWAY_TOKEN.length, 64)
-    assert.deepEqual(calls.find(([name]) => name === 'run')[1].inheritEnvironment, [
+    const solverAccess = await gateway.access('solver', {
+      model: 'trusted-solver',
+      maxTokens: 2048,
+      maxTokensField: 'max_tokens',
+    })
+    const updaterAccess = await gateway.access('updater', {
+      model: 'trusted-updater',
+      maxTokens: 4096,
+      maxTokensField: 'max_completion_tokens',
+    })
+    assert.notEqual(
+      solverAccess.secretEnvironment.TEST_RSI_API_KEY,
+      updaterAccess.secretEnvironment.TEST_RSI_API_KEY,
+    )
+    const expiredSolverToken = solverAccess.secretEnvironment.TEST_RSI_API_KEY
+    await gateway.rotateRoleToken('solver')
+    const renewedSolverAccess = await gateway.access('solver', {
+      model: 'trusted-solver',
+      maxTokens: 2048,
+      maxTokensField: 'max_tokens',
+    })
+    assert.equal(renewedSolverAccess.secretEnvironment.TEST_RSI_API_KEY, 'e'.repeat(64))
+    assert.notEqual(renewedSolverAccess.secretEnvironment.TEST_RSI_API_KEY, expiredSolverToken)
+    assert.notEqual(access.secretEnvironment.TEST_RSI_API_KEY, solverAccess.secretEnvironment.TEST_RSI_API_KEY)
+    const runOptions = calls.find(([name]) => name === 'run')[1]
+    assert.equal(runOptions.environment.GATEWAY_TOKEN, undefined)
+    assert.equal(runOptions.secretEnvironment.GATEWAY_TOKEN.length, 64)
+    assert.equal(runOptions.secretEnvironment.GATEWAY_CONTROL_TOKEN.length, 64)
+    assert.equal(runOptions.secretEnvironment.GATEWAY_SOLVER_TOKEN.length, 64)
+    assert.equal(runOptions.secretEnvironment.GATEWAY_UPDATER_TOKEN.length, 64)
+    assert.equal(new Set(Object.values(runOptions.secretEnvironment)).size, 4)
+    assert.deepEqual(runOptions.inheritEnvironment, [
       'TEST_RSI_API_KEY',
       'TEST_RSI_BASE_URL',
     ])
-    const usage = await gateway.usage()
+    await assert.rejects(
+      () => gateway.access('solver', {
+        model: 'untrusted-reconfiguration',
+        maxTokens: 2048,
+        maxTokensField: 'max_tokens',
+      }),
+      /Policy 在同一 Run 内不允许变更/u,
+    )
+    const usage = await gateway.usage('solver')
     assert.equal(usage.inputTokens, 100)
-    assert.doesNotMatch(calls.find(([name]) => name === 'exec')[1].command.join(' '), /real-provider-secret/u)
+    const execScripts = calls.filter(([name]) => name === 'exec').map(([, options]) => options.command.join(' '))
+    assert.ok(execScripts.some((script) => script.includes('trusted-solver')))
+    assert.ok(execScripts.some((script) => script.includes('trusted-updater')))
+    assert.ok(execScripts.some((script) => script.includes('/rsi/rotate-role-token')))
+    assert.ok(execScripts.some((script) => script.includes('/rsi/usage?role=solver')))
+    assert.doesNotMatch(execScripts.join('\n'), new RegExp('e{64}', 'u'))
+    assert.doesNotMatch(execScripts.join('\n'), /real-provider-secret/u)
   } finally {
     await gateway.stop()
     if (originalKey === undefined) delete process.env.TEST_RSI_API_KEY

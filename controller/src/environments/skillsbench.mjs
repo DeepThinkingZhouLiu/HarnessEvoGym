@@ -576,7 +576,7 @@ export class SkillsBenchEnvironment {
     throw new ProtocolError('Verifier 重试循环异常结束')
   }
 
-  async runTrial({ candidateId, candidatePreset, instanceId, seed, model, partition, trialIndex, executionId }) {
+  async runTrial({ candidateId, candidateWorkspace, instanceId, seed, model, partition, trialIndex, executionId }) {
     const layout = await this.taskLayout(instanceId)
     const images = await this.ensureImages(layout)
     const trialRoot = join(
@@ -590,9 +590,9 @@ export class SkillsBenchEnvironment {
     )
     await mkdir(trialRoot, { recursive: true })
     const workspace = join(trialRoot, 'workspace')
-    const dshHome = join(trialRoot, 'dsh-home')
+    const sessionRoot = join(trialRoot, 'solver-session')
     const logs = join(trialRoot, 'verifier-logs')
-    await mkdir(dshHome, { recursive: true })
+    await mkdir(sessionRoot, { recursive: true })
     await this.extractWorkspace({
       image: images.task,
       destination: workspace,
@@ -600,32 +600,21 @@ export class SkillsBenchEnvironment {
     })
     const before = await snapshotWorkspace(workspace, this.environment.task.workspaceLimits)
     const instruction = await readFile(layout.instructionPath, 'utf8')
-    let solver
-    let solverError = null
     const startedAt = Date.now()
-    try {
-      solver = await this.solverDriver.run({
-        image: images.solver,
-        model,
-        candidatePreset,
-        workspace,
-        dshHome,
-        benchmarkSkills: layout.skillsDirectory,
-        task: instruction,
-        name: `${executionId}-${candidateId}-${instanceId}-${seed}-solver`,
-        timeoutMs: this.environment.docker.resources.timeoutSeconds * 1000,
-        containerWorkspace: this.environment.task.workspacePath,
-      })
-    } catch (error) {
-      solverError = error.message
-      solver = {
-        answer: '',
-        stderr: [error.message, ...(error.details ?? [])].filter(Boolean).join('\n'),
-        durationMs: Date.now() - startedAt,
-        outputTruncated: false,
-        modelUsage: error.modelUsage ?? null,
-      }
-    }
+    // Solver 进程异常可能来自 Docker、Gateway、Provider 或超时；在没有可信分类信号前
+    // 采用 fail-closed，交给上层暂停实验，绝不把基础设施故障记成普通 0 分。
+    const solver = await this.solverDriver.run({
+      image: images.solver,
+      model,
+      candidateWorkspace,
+      taskWorkspace: workspace,
+      sessionRoot,
+      benchmarkSkills: layout.skillsDirectory,
+      task: instruction,
+      name: `${executionId}-${candidateId}-${instanceId}-${seed}-solver`,
+      timeoutMs: this.environment.docker.resources.timeoutSeconds * 1000,
+      containerWorkspace: this.environment.task.workspacePath,
+    })
     let artifacts = []
     let artifactError = null
     try {
@@ -662,6 +651,14 @@ export class SkillsBenchEnvironment {
     await writeFile(join(trialRoot, 'verifier-evidence.txt'), `${verifier.evidence ?? ''}\n`, 'utf8')
     await writeFile(join(trialRoot, 'artifacts.json'), `${JSON.stringify(artifacts, null, 2)}\n`, 'utf8')
 
+    if (verifier.error) {
+      throw new ProtocolError('SkillsBench Verifier 基础设施失败', [
+        verifier.error,
+        verifier.evidence ?? '',
+        `instance=${instanceId}`,
+      ].filter(Boolean))
+    }
+
     const reward = verifier.reward
     const inRange =
       typeof reward === 'number' &&
@@ -672,7 +669,7 @@ export class SkillsBenchEnvironment {
     if (unsafeArtifacts.length > 0) policyViolations.push('solver-unsafe-artifact')
     if (typeof reward === 'number' && !inRange) policyViolations.push('verifier-reward-out-of-range')
     const rewardError = typeof reward === 'number' && !inRange ? 'Verifier reward 超出声明范围' : null
-    const failed = Boolean(verifier.error || solverError || rewardError)
+    const failed = Boolean(rewardError)
     const normalizedReward = failed ? 0 : reward
     return {
       seed,
@@ -690,7 +687,7 @@ export class SkillsBenchEnvironment {
       verifierFeedback: verifier.evidence ?? verifier.error ?? '',
       policyViolations,
       artifacts,
-      errors: [solverError, verifier.error, rewardError].filter(Boolean),
+      errors: [rewardError].filter(Boolean),
       trialRoot,
     }
   }
@@ -698,8 +695,7 @@ export class SkillsBenchEnvironment {
   async runCandidatePartition({ candidateId, candidateWorkspace, model, partition, seeds, outputPath }) {
     const partitionSpec = this.benchmark.partitions[partition]
     if (!partitionSpec) throw new ProtocolError(`Benchmark 不存在 Partition：${partition}`)
-    const candidatePreset = resolve(candidateWorkspace, this.target.materialization.presetRelativePath)
-    await assertPathKind(candidatePreset, `Candidate ${candidateId} Preset`)
+    await assertPathKind(candidateWorkspace, `Candidate ${candidateId} Workspace`)
     const executionId = sha256(resolve(outputPath)).slice(0, 12)
     const records = []
 
@@ -709,7 +705,7 @@ export class SkillsBenchEnvironment {
         trials.push(
           await this.runTrial({
             candidateId,
-            candidatePreset,
+            candidateWorkspace,
             instanceId,
             seed,
             model,

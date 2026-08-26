@@ -1,24 +1,26 @@
-# 独立 RSI 控制平面架构
+# HarnessEvoGym 通用控制平面架构
 
 [English](architecture.md) | 中文
 
 ## 决策
 
-DeepSeek Harness RSI 使用独立 GitHub 仓库作为可信控制平面，不再以 DeepSeek Harness Fork 作为主仓。官方 DeepSeek Harness 的历史只通过固定的 `sources/deepseek-harness/` 集成子模块进入系统，子模块远端保持官方 `deepseek-ai/deepseek-harness`，Updater 永远不直接修改该目录。
+HarnessEvoGym 使用独立 GitHub 仓库作为可信控制平面，不再以 DeepSeek Harness Fork 作为主仓。官方 DeepSeek Harness 的历史只通过固定的 `sources/deepseek-harness/` 集成子模块进入系统，子模块远端保持官方 `deepseek-ai/deepseek-harness`，Updater 永远不直接修改该目录。
 
 这个决策解决两个问题：一是把可变 Solver 与不可变评测根分开；二是让 DeepSeek Harness、pi-agent 等项目都能通过 Adapter 成为 Target 或 Updater，而不需要改变 Controller 的核心流程。
 
-## 双场景架构
+## Target × Environment × EvolutionRecipe
 
-Future 分支的 Reasoning Controller 是当前基座；Cowork 作为增量执行面接入。两者共用
-Benchmark、Evaluation Policy、Solver Result 和 Evaluator 协议，但不强行共用不同的环境隔离实现。
+Future 分支的 Population Controller 保留为算法基座，但它现在只消费通用
+`BranchEvolutionDriver` 和 `EvaluationSummary`。Target 定义优化对象及可变 Region，
+Environment 定义题目与评分，EvolutionRecipe 组合五种 Population Mode 与 Module Search。
 
-| 执行面     | 编排器                                                           | 环境与隔离                                                   | 当前搜索形式                                      |
-|------------|------------------------------------------------------------------|--------------------------------------------------------------|-------------------------------------------------|
-| Reasoning  | `controller/src/orchestrator.mjs` + `population-orchestrator.mjs` | 宿主独立 UID、bubblewrap、Unix gateway、sealed broker              | 五种种群模式                                    |
-| Cowork     | `controller/src/cowork-orchestrator.mjs`                          | SkillsBench 任务镜像、独立 Verifier、Docker internal network | 可插拔 SearchStrategy，默认策略保持线性 Champion |
+| 组合                         | Branch 执行层                    | 环境与隔离                                                   | 搜索形式                         |
+|------------------------------|----------------------------------|--------------------------------------------------------------|----------------------------------|
+| MSA Cowork + SkillsBench     | 通用 Cowork Branch Driver         | Task 镜像、独立 Verifier、Docker internal network              | Recipe + SearchStrategy          |
+| MSA Text Reasoning smoke     | 同一 Cowork Branch Driver          | 固定文本题、受信精确匹配、Docker internal network                | 同一 Recipe + SearchStrategy      |
+| HZY Reasoning production    | 兼容 Reasoning Branch Driver       | 宿主独立 UID、bubblewrap、Unix gateway、sealed broker              | 旧 Campaign 配置映射到五种 Mode       |
 
-Cowork 专用的网关生命周期在 `cowork-model-gateway.mjs`；Reasoning 的 Responses/Unix-socket
+Experiment 的 Chat Completions 网关生命周期在 `cowork-model-gateway.mjs`；HZY 生产 Reasoning 的 Responses/Unix-socket
 网关仍在 `model-gateway.mjs`。这两个文件分别对应 OpenAI Chat Completions Docker 隔离和
 OpenAI Responses 宿主隔离，不是同一协议的重复实现。
 
@@ -27,7 +29,9 @@ OpenAI Responses 宿主隔离，不是同一协议的重复实现。
 | 对象             | 负责什么                                                       | 是否允许 Updater 修改             |
 |------------------|----------------------------------------------------------------|--------------------------------|
 | Source           | 保存可信、固定的上游源码 Revision                              | 否                             |
-| Target           | 声明 Harness Driver、Candidate 实例化和 Mutation Catalog              | 否                             |
+| Target           | 声明 Source、CandidateSeed、Materializer、Driver、Validator 和 Catalog | 否                             |
+| Environment      | 声明题目、任务工作区、Verifier 和评分指标                           | 否                             |
+| EvolutionRecipe  | 组合 Population Mode、Module Search、Budget 和经验共享               | 否                             |
 | SearchStrategy   | 从 Catalog 选父 Candidate 和 Region ID                             | 否；它也不能直接写 Candidate       |
 | Solver           | 用 Candidate Harness 在任务环境中真正解题                         | 只通过 Candidate 间接改变行为         |
 | Updater          | 读取反馈和源码，在一个 Session 内分析、提假设并改 Candidate     | 只能改本轮 Lease 允许的 Candidate 路径 |
@@ -91,7 +95,8 @@ Candidate 源码摘要、Benchmark、固定 Node/pnpm 版本、构建配方、�
 
 ## 变异边界
 
-Cowork 执行面使用 `MutationCatalog -> MutationPlan -> MutationLease -> full Diff Guard`。
+MSA Cowork 和 Text Reasoning 的通用 Experiment 执行面使用
+`MutationCatalog -> MutationPlan -> MutationLease -> full Diff Guard`。
 L1/L2/L3 是风险上限，Catalog Region 是某个 Target 自己的可搜索模块。策略只能返回
 Region ID，路径由 Controller 从受信 Target Adapter 中翻译。外部策略使用无网络、无挂载、
 无宿主环境变量的 Docker JSON 协议。详见 [搜索策略与兼容边界](search-strategy.zh.md)。
@@ -126,12 +131,16 @@ Solver 给出主定理的 proof replacement。独立可信重放把证明放回�
 
 主仓固定一个 DeepSeek Harness SHA，所以每轮实验的 Source 可复现。`git submodule update --remote` 只是在本地取得上游新提交；只有把新的子模块指针提交到主仓后，它才成为新的可信 Source Revision。旧 Candidate 仍记录旧 SHA，不随上游更新漂移。
 
-## 已实现的生产路径
+## 已实现路径与当前边界
 
-控制平面现已包括：冻结 Manifest、精确 Source 实例化、可配置 L1/L2/L3 Diff 边界、Cowork
-Mutation Catalog/Plan/Lease、内置与沙箱 SearchStrategy、单 Session 变异、Candidate 构建、
-逐题 Checkpoint、验证反馈、仅子进程可见的 sealed test、严格晋升与回滚、崩溃安全 Campaign 状态、
-单写者锁、实现与 Runtime 证明、仅 FD 凭据，以及关闭后的 JSON/CSV/Markdown/SVG 报告。
+共享控制平面现已包括：冻结 Manifest、可注册 Source Resolver、Source+Seed Candidate 实例化、
+可配置 L1/L2/L3 Diff 边界、Mutation Catalog/Plan/Lease、内置与沙箱 SearchStrategy、
+通用 Population/Branch 协议、单 Session 变异、Candidate 构建、逐题 Checkpoint、验证反馈、
+权限租约和实现/Runtime 证明。HZY 原有生产 Reasoning 链路继续提供仅子进程可见的
+sealed test、严格晋升/回滚、崩溃恢复、单写者锁、FD 凭据和关闭后的完整报告。
 
-Reasoning 五种模式目前还没有改成外部 `SearchStrategyAdapter`；它们是兼容保留的受信内置算法。
-MSA-derived minimal Target 提供轻量 math/reasoning 路径；仓库现有 SWE-bench 文件仍只是契约占位。
+通用 Experiment 已证明 MSA Minimal 在 Cowork 和 Text Reasoning 两个 Environment 上共用
+五种 Mode 与 SearchStrategy。Text Reasoning 只是工程冒烟，HLE 生产评测仍使用其专用隔离链路；
+通用 Population 当前遇到基础设施异常会 fail-closed 并写入 `PAUSED_INFRASTRUCTURE`，但尚未
+提供跨进程 Resume 和 sealed Final；Gateway 请求预算也仍按 Branch 计算。仓库现有 SWE-bench
+文件仍只是契约占位。

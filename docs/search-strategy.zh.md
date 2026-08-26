@@ -133,13 +133,14 @@ npm run rsi -- adapter validate --config adapters/strategies/docker-round-robin.
 
 ## Driver 插件边界
 
-Solver、Updater 和 Environment 的实现创建不再由 Cowork 主编排循环写死分支，而是通过
-带版本的 Driver Registry 解析。当前内置协议是 `dsh-headless-docker-v1` 和
-`skillsbench-docker-v1`，旧 `dsh-headless-docker` 协议名仍然可用。
+Solver、Updater 和 Environment 的实现创建不再由主编排循环写死分支，而是通过
+带版本的 Driver Registry 解析。当前内置了 DSH、MSA Minimal、SkillsBench 和
+Synthetic Text Reasoning 协议；旧 `dsh-headless-docker` 协议名仍然可用。
 
-这是一个受信任扩展接口，但不等于 pi-agent 已经即插即用。当前 Cowork 的 Adapter 校验、
-Source 预检和 Materializer 仍然是 DSH/SkillsBench 具体实现。新 Harness 需要作为受审查代码
-贡献，同时增加 Adapter Schema、Source/Materialization 生命周期，再调用
+这是一个受信任扩展接口，但不等于 pi-agent 已经即插即用。仓库已经实现可注册的
+Source Resolver、Candidate Materializer 和 Candidate Validator，并用 MSA Minimal 完成了一个
+非 DSH Target 的端到端链路。新 Harness 仍需作为受审查代码贡献它自己的 Adapter Schema、
+Source/Seed/Materialization 生命周期，再调用
 `registerSolverDriver`、`registerUpdaterDriver` 或 `registerEnvironmentDriver`。完成这些后，
 主进化循环不需要再理解它的执行细节。
 
@@ -148,14 +149,14 @@ Driver 会真正执行 Harness 和挂载工作区，所以它是受信任 Contro
 
 ## 当前兼容矩阵
 
-| 执行面                 | 搜索配置                         | 变异强制                         | 当前状态                 |
-|--------------------------|----------------------------------|----------------------------------|--------------------------|
-| Cowork `experiment`      | `SearchStrategyAdapter`          | Catalog -> Plan -> Lease -> Diff | 已接入内置与 Docker 策略   |
-| Reasoning `campaign`     | 五种 `controller_config.mode`       | Git commit + Layer path audit    | 保持 Future 已测试行为      |
-| 旧 Cowork Experiment    | 缺少 `strategy`                   | 自动使用全 Region Lease           | 完全兼容                 |
-| 旧 Target Adapter       | 缺少 `mutation.catalog`           | 每个 L1/L2/L3 自动映射为 Region | 完全兼容                 |
-| 非 DSH Cowork Harness   | Driver Registry 已预留            | 还需 Adapter + Materializer       | 未实现端到端              |
+| 执行面                    | 搜索配置                              | 变异强制                         | 当前状态                 |
+|-----------------------------|---------------------------------------|----------------------------------|--------------------------|
+| 通用 `experiment` Population | EvolutionRecipe + SearchStrategy     | Catalog -> Plan -> Lease -> Diff | Cowork/Reasoning 已共用       |
+| 旧 Reasoning `campaign`        | 五种 `controller_config.mode`        | Git commit + Layer path audit    | 保持 HZY 已测试行为         |
+| 旧 Cowork Experiment           | 缺少 Recipe/Strategy                  | 自动使用 Single + 全 Region Lease   | 完全兼容                 |
+| 旧 Target Adapter              | 缺少 `mutation.catalog`              | 每个 L1/L2/L3 自动映射为 Region | 完全兼容                 |
+| MSA Minimal Target          | Target 自有 Cowork/Reasoning Catalog | 硬 Lease + 语义 Validator          | 已实现端到端              |
 
-Reasoning/Future 生产链路仍使用它已验证的 Updater 单 commit 和五种种群模式，这次重构没有
-为了形式统一而改动其 sealed broker、Git 谱系或回退语义。因此，“外部 Docker Strategy”
-当前是 Cowork 执行面的生产能力，不应误说为已统一接管 Reasoning 五种模式。
+Reasoning/Future 生产链路仍使用它已验证的 Updater 单 commit、sealed broker 和 Git 谱系。
+新的 Text Reasoning smoke 走通用 Experiment 链路，已能使用同一个 SearchStrategy 和五种
+Population Mode；它只证明工程兼容性，不代表 HLE 生产评测已被替换。

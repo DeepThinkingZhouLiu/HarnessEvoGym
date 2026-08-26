@@ -16,12 +16,15 @@ import { posix } from 'node:path'
 import { normalizeMutationCatalogConfiguration } from './mutation-catalog.mjs'
 import { normalizeRelativePath } from './path-policy.mjs'
 import { ProtocolError, readJsonFile, validateBenchmark, validateEvaluationPolicy } from './protocol.mjs'
+import { normalizeCoworkEvolutionRecipe, normalizeEvolutionRecipe } from './evolution-recipe.mjs'
 
 const MUTATION_LEVELS = ['l1', 'l2', 'l3']
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/u
 const ENVIRONMENT_NAME = /^[A-Z_][A-Z0-9_]*$/u
 const ADAPTER_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
 const STRATEGY_IMAGE = /^[a-z0-9][a-z0-9._:-]*(?:\/[a-z0-9][a-z0-9._-]*)*@sha256:[0-9a-f]{64}$/u
+const SHA256_DIGEST = /^[0-9a-f]{64}$/u
+const PINNED_CONTAINER_IMAGE = /^(?:[a-z0-9][a-z0-9._:-]*\/)*[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$/u
 const VERIFIER_PROXY_ENVIRONMENT = new Set([
   'HTTP_PROXY',
   'HTTPS_PROXY',
@@ -69,14 +72,48 @@ function validateRuntime(raw, label) {
   }
 }
 
+function validateMsaSolverRuntime(raw, label) {
+  const runtime = expectObject(raw, label)
+  const secretEnvironment = expectStringArray(runtime.secretEnvironment, `${label}.secretEnvironment`)
+  for (const name of secretEnvironment) {
+    if (!ENVIRONMENT_NAME.test(name)) throw new ProtocolError(`${label}.secretEnvironment 包含非法名称：${name}`)
+  }
+  return {
+    image: expectText(runtime.image, `${label}.image`),
+    dockerfile: relativePath(runtime.dockerfile, `${label}.dockerfile`),
+    profile: expectText(runtime.profile, `${label}.profile`),
+    pythonCommand: expectText(runtime.pythonCommand ?? 'python3', `${label}.pythonCommand`),
+    answerFile: relativePath(runtime.answerFile ?? 'answer.txt', `${label}.answerFile`),
+    traceFile: relativePath(runtime.traceFile ?? 'trace.json', `${label}.traceFile`),
+    maximumAnswerBytes: expectNumber(runtime.maximumAnswerBytes ?? 1024 * 1024, `${label}.maximumAnswerBytes`, {
+      integer: true,
+      min: 1,
+      max: 16 * 1024 * 1024,
+    }),
+    maximumTraceBytes: expectNumber(runtime.maximumTraceBytes ?? 4 * 1024 * 1024, `${label}.maximumTraceBytes`, {
+      integer: true,
+      min: 1,
+      max: 64 * 1024 * 1024,
+    }),
+    secretEnvironment,
+  }
+}
+
 function gitRevision(value, label) {
   const revision = expectText(value, label)
   if (!FULL_GIT_SHA.test(revision)) throw new ProtocolError(`${label} 必须是完整的 40 位小写 Git SHA`)
   return revision
 }
 
-function mutationGlobs(value, label) {
-  return expectStringArray(value, label).map((pattern, index) => relativePath(pattern, `${label}[${index}]`))
+function sha256Digest(value, label) {
+  const digest = expectText(value, label)
+  if (!SHA256_DIGEST.test(digest)) throw new ProtocolError(`${label} 必须是 64 位小写 SHA-256`)
+  return digest
+}
+
+function mutationGlobs(value, label, { nonEmpty = true } = {}) {
+  return expectStringArray(value, label, { nonEmpty })
+    .map((pattern, index) => relativePath(pattern, `${label}[${index}]`))
 }
 
 function extensions(value, label) {
@@ -118,42 +155,89 @@ export function validateTargetAdapter(input) {
   let semanticChecks = null
   if (mutation.semanticChecks !== undefined) {
     const checks = expectObject(mutation.semanticChecks, 'TargetAdapter.spec.mutation.semanticChecks')
-    const cordis = expectObject(checks.cordis, 'TargetAdapter.spec.mutation.semanticChecks.cordis')
-    const skills = expectObject(checks.skills, 'TargetAdapter.spec.mutation.semanticChecks.skills')
-    const requiredNamePrefix = expectText(
-      skills.requiredNamePrefix,
-      'TargetAdapter.spec.mutation.semanticChecks.skills.requiredNamePrefix',
-    )
-    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*-$/u.test(requiredNamePrefix)) {
-      throw new ProtocolError('TargetAdapter.spec.mutation.semanticChecks.skills.requiredNamePrefix 必须是以连字符结尾的 kebab-case 前缀')
-    }
-    semanticChecks = {
-      skills: {
-        root: relativePath(skills.root, 'TargetAdapter.spec.mutation.semanticChecks.skills.root'),
+    const semanticProtocol = expectText(checks.protocol ?? 'dsh-cordis-v1', 'TargetAdapter.spec.mutation.semanticChecks.protocol')
+    const rawSkills = checks.skills
+    let skills = null
+    if (rawSkills !== undefined) {
+      const skillConfig = expectObject(rawSkills, 'TargetAdapter.spec.mutation.semanticChecks.skills')
+      const requiredNamePrefix = expectText(
+        skillConfig.requiredNamePrefix,
+        'TargetAdapter.spec.mutation.semanticChecks.skills.requiredNamePrefix',
+      )
+      if (!/^[a-z0-9]+(?:-[a-z0-9]+)*-$/u.test(requiredNamePrefix)) {
+        throw new ProtocolError('TargetAdapter.spec.mutation.semanticChecks.skills.requiredNamePrefix 必须是以连字符结尾的 kebab-case 前缀')
+      }
+      skills = {
+        root: relativePath(skillConfig.root, 'TargetAdapter.spec.mutation.semanticChecks.skills.root'),
         requiredNamePrefix,
-      },
-      cordis: {
-        path: relativePath(cordis.path, 'TargetAdapter.spec.mutation.semanticChecks.cordis.path'),
-        allowedPluginNames: expectStringArray(
-          cordis.allowedPluginNames,
-          'TargetAdapter.spec.mutation.semanticChecks.cordis.allowedPluginNames',
-        ),
-        allowedJsLines: expectStringArray(
-          cordis.allowedJsLines,
-          'TargetAdapter.spec.mutation.semanticChecks.cordis.allowedJsLines',
-        ),
-      },
+      }
+    }
+    if (semanticProtocol === 'dsh-cordis-v1') {
+      const cordis = expectObject(checks.cordis, 'TargetAdapter.spec.mutation.semanticChecks.cordis')
+      if (!skills) throw new ProtocolError('dsh-cordis-v1 Candidate Validator 必须配置 skills')
+      semanticChecks = {
+        protocol: semanticProtocol,
+        skills,
+        cordis: {
+          path: relativePath(cordis.path, 'TargetAdapter.spec.mutation.semanticChecks.cordis.path'),
+          allowedPluginNames: expectStringArray(
+            cordis.allowedPluginNames,
+            'TargetAdapter.spec.mutation.semanticChecks.cordis.allowedPluginNames',
+          ),
+          allowedJsLines: expectStringArray(
+            cordis.allowedJsLines,
+            'TargetAdapter.spec.mutation.semanticChecks.cordis.allowedJsLines',
+          ),
+        },
+      }
+    } else if (['msa-minimal-cowork-v1', 'msa-minimal-reasoning-v1'].includes(semanticProtocol)) {
+      const profile = expectObject(checks.profile, 'TargetAdapter.spec.mutation.semanticChecks.profile')
+      const maximums = expectObject(profile.maximums, 'TargetAdapter.spec.mutation.semanticChecks.profile.maximums')
+      semanticChecks = {
+        protocol: semanticProtocol,
+        requiredFiles: mutationGlobs(checks.requiredFiles, 'TargetAdapter.spec.mutation.semanticChecks.requiredFiles'),
+        pythonFiles: mutationGlobs(checks.pythonFiles, 'TargetAdapter.spec.mutation.semanticChecks.pythonFiles'),
+        profile: {
+          path: relativePath(profile.path, 'TargetAdapter.spec.mutation.semanticChecks.profile.path'),
+          maximums: Object.fromEntries(Object.entries(maximums).map(([field, maximum]) => [
+            field,
+            expectNumber(maximum, `TargetAdapter.spec.mutation.semanticChecks.profile.maximums.${field}`, {
+              integer: true,
+              min: 1,
+              max: 1_000_000_000,
+            }),
+          ])),
+        },
+        skills,
+      }
+    } else {
+      throw new ProtocolError(`当前未实现 Candidate Validator：${semanticProtocol}`)
     }
   }
   const sourceKind = expectText(source.kind, 'TargetAdapter.spec.source.kind')
-  if (sourceKind !== 'git-submodule') throw new ProtocolError('当前 TargetAdapter 只支持 git-submodule Source')
+  const sourceProtocol = sourceKind === 'git-submodule'
+    ? 'git-submodule-v1'
+    : sourceKind === 'repository-tree'
+      ? 'repository-tree-v1'
+      : sourceKind
+  if (!['git-submodule-v1', 'repository-tree-v1'].includes(sourceProtocol)) {
+    throw new ProtocolError(`当前未实现 Target Source：${sourceKind}`)
+  }
   const strategy = expectText(materialization.strategy, 'TargetAdapter.spec.materialization.strategy')
-  if (strategy !== 'controller-owned-overlay') {
-    throw new ProtocolError('当前安全实现只支持 controller-owned-overlay Materialization')
+  const materializationProtocol = strategy === 'controller-owned-overlay'
+    ? 'controller-owned-overlay-v1'
+    : strategy === 'source-plus-seed-overlay'
+      ? 'source-plus-seed-overlay-v1'
+      : strategy
+  if (!['controller-owned-overlay-v1', 'source-plus-seed-overlay-v1'].includes(materializationProtocol)) {
+    throw new ProtocolError(`当前未实现 Candidate Materialization：${strategy}`)
   }
   const solverProtocol = expectText(solver.protocol, 'TargetAdapter.spec.solver.protocol')
-  if (!['dsh-headless-docker', 'dsh-headless-docker-v1'].includes(solverProtocol)) {
-    throw new ProtocolError('当前只实现 dsh-headless-docker-v1 Solver Protocol')
+  const normalizedSolverProtocol = solverProtocol === 'dsh-headless-docker'
+    ? 'dsh-headless-docker-v1'
+    : solverProtocol
+  if (!['dsh-headless-docker-v1', 'msa-minimal-docker-v1'].includes(normalizedSolverProtocol)) {
+    throw new ProtocolError(`当前未实现 Solver Protocol：${solverProtocol}`)
   }
   const resolvedMutationLimits = {
     maximumTreeEntries: expectNumber(limits.maximumTreeEntries, 'mutation.limits.maximumTreeEntries', {
@@ -183,21 +267,42 @@ export function validateTargetAdapter(input) {
     id,
     source: {
       kind: sourceKind,
+      protocol: sourceProtocol,
       path: relativePath(source.path, 'TargetAdapter.spec.source.path'),
       revision: gitRevision(source.revision, 'TargetAdapter.spec.source.revision'),
     },
-    materialization: {
-      strategy,
-      baselinePath: relativePath(materialization.baselinePath, 'TargetAdapter.spec.materialization.baselinePath'),
-      runtimeRoot: relativePath(materialization.runtimeRoot, 'TargetAdapter.spec.materialization.runtimeRoot'),
-      presetRelativePath: relativePath(
-        materialization.presetRelativePath,
-        'TargetAdapter.spec.materialization.presetRelativePath',
-      ),
-    },
+    materialization: materializationProtocol === 'controller-owned-overlay-v1'
+      ? {
+          strategy,
+          protocol: materializationProtocol,
+          baselinePath: relativePath(materialization.baselinePath, 'TargetAdapter.spec.materialization.baselinePath'),
+          runtimeRoot: relativePath(materialization.runtimeRoot, 'TargetAdapter.spec.materialization.runtimeRoot'),
+          presetRelativePath: relativePath(
+            materialization.presetRelativePath,
+            'TargetAdapter.spec.materialization.presetRelativePath',
+          ),
+        }
+      : {
+          strategy,
+          protocol: materializationProtocol,
+          seedPath: relativePath(materialization.seedPath, 'TargetAdapter.spec.materialization.seedPath'),
+          seedDigest: sha256Digest(
+            materialization.seedDigest,
+            'TargetAdapter.spec.materialization.seedDigest',
+          ),
+          overrides: mutationGlobs(
+            materialization.overrides ?? [],
+            'TargetAdapter.spec.materialization.overrides',
+            { nonEmpty: false },
+          ),
+          runtimeRoot: relativePath(materialization.runtimeRoot, 'TargetAdapter.spec.materialization.runtimeRoot'),
+          presetRelativePath: '.',
+        },
     solver: {
       protocol: solverProtocol,
-      runtime: validateRuntime(solver.runtime, 'TargetAdapter.spec.solver.runtime'),
+      runtime: normalizedSolverProtocol === 'dsh-headless-docker-v1'
+        ? validateRuntime(solver.runtime, 'TargetAdapter.spec.solver.runtime')
+        : validateMsaSolverRuntime(solver.runtime, 'TargetAdapter.spec.solver.runtime'),
     },
     mutation: {
       alwaysReadOnly,
@@ -418,11 +523,212 @@ export function validateModelProviderAdapter(input) {
   }
 }
 
+function rejectUnknownConfiguration(value, allowed, label) {
+  const unknown = Object.keys(value).filter((key) => !allowed.has(key))
+  if (unknown.length > 0) throw new ProtocolError(`${label} 含有未知字段`, unknown)
+}
+
+function validateTextReasoningEnvironment({ id, spec, protocol }) {
+  rejectUnknownConfiguration(
+    spec,
+    new Set(['protocol', 'source', 'task', 'runtime', 'docker', 'modelGateway', 'reward', 'feedback']),
+    'EnvironmentAdapter.spec',
+  )
+  const source = expectObject(spec.source, 'EnvironmentAdapter.spec.source')
+  const task = expectObject(spec.task, 'EnvironmentAdapter.spec.task')
+  const runtime = expectObject(spec.runtime, 'EnvironmentAdapter.spec.runtime')
+  const docker = expectObject(spec.docker, 'EnvironmentAdapter.spec.docker')
+  const resources = expectObject(docker.resources, 'EnvironmentAdapter.spec.docker.resources')
+  const modelGateway = expectObject(spec.modelGateway, 'EnvironmentAdapter.spec.modelGateway')
+  const gatewayResources = expectObject(modelGateway.resources, 'EnvironmentAdapter.spec.modelGateway.resources')
+  const reward = expectObject(spec.reward, 'EnvironmentAdapter.spec.reward')
+  const feedback = expectObject(spec.feedback, 'EnvironmentAdapter.spec.feedback')
+  rejectUnknownConfiguration(source, new Set(['tasksPath', 'digest']), 'EnvironmentAdapter.spec.source')
+  rejectUnknownConfiguration(task, new Set(['workspacePath', 'answerNormalization']), 'EnvironmentAdapter.spec.task')
+  rejectUnknownConfiguration(runtime, new Set(['baseImage', 'imagePrefix']), 'EnvironmentAdapter.spec.runtime')
+  rejectUnknownConfiguration(docker, new Set(['binary', 'network', 'runAsCurrentUser', 'resources']), 'EnvironmentAdapter.spec.docker')
+  rejectUnknownConfiguration(resources, new Set(['cpus', 'memory', 'pids', 'timeoutSeconds']), 'EnvironmentAdapter.spec.docker.resources')
+  rejectUnknownConfiguration(
+    modelGateway,
+    new Set([
+      'image',
+      'dockerfile',
+      'alias',
+      'port',
+      'egressNetwork',
+      'maximumRequestsPerRun',
+      'maximumConcurrentRequests',
+      'resources',
+    ]),
+    'EnvironmentAdapter.spec.modelGateway',
+  )
+  rejectUnknownConfiguration(gatewayResources, new Set(['cpus', 'memory', 'pids']), 'modelGateway.resources')
+  rejectUnknownConfiguration(reward, new Set(['minimum', 'maximum', 'resolvedThreshold']), 'EnvironmentAdapter.spec.reward')
+  rejectUnknownConfiguration(
+    feedback,
+    new Set([
+      'maximumTextBytesPerCase',
+      'maximumArtifactEntriesPerCase',
+      'maximumArtifactBytesPerCase',
+      'maximumHistoryEntries',
+      'maximumHistoryBytes',
+    ]),
+    'EnvironmentAdapter.spec.feedback',
+  )
+
+  const digest = expectText(source.digest, 'EnvironmentAdapter.spec.source.digest')
+  if (!SHA256_DIGEST.test(digest)) {
+    throw new ProtocolError('EnvironmentAdapter.spec.source.digest 必须是 64 位小写 SHA-256')
+  }
+  const workspacePath = expectText(task.workspacePath, 'EnvironmentAdapter.spec.task.workspacePath')
+  if (
+    !workspacePath.startsWith('/')
+    || workspacePath === '/'
+    || workspacePath.includes(':')
+    || workspacePath.includes(',')
+    || posix.normalize(workspacePath) !== workspacePath
+  ) {
+    throw new ProtocolError('EnvironmentAdapter.spec.task.workspacePath 必须是安全的容器绝对路径')
+  }
+  const reserved = ['/candidate', '/benchmark-skills', '/solver-output', '/tmp', '/run']
+  if (reserved.some((root) => workspacePath === root || workspacePath.startsWith(`${root}/`))) {
+    throw new ProtocolError(`EnvironmentAdapter.spec.task.workspacePath 与 RSI 保留挂载冲突：${workspacePath}`)
+  }
+  const answerNormalization = expectText(
+    task.answerNormalization,
+    'EnvironmentAdapter.spec.task.answerNormalization',
+  )
+  if (answerNormalization !== 'trim-collapse-casefold-v1') {
+    throw new ProtocolError('Synthetic Reasoning 只支持 trim-collapse-casefold-v1 答案归一化')
+  }
+  const baseImage = expectText(runtime.baseImage, 'EnvironmentAdapter.spec.runtime.baseImage')
+  if (!PINNED_CONTAINER_IMAGE.test(baseImage)) {
+    throw new ProtocolError('Synthetic Reasoning Base Image 必须固定到 sha256 Digest')
+  }
+  const imagePrefix = expectText(runtime.imagePrefix, 'EnvironmentAdapter.spec.runtime.imagePrefix')
+  if (!/^[a-z0-9][a-z0-9._/-]{0,127}$/u.test(imagePrefix)) {
+    throw new ProtocolError('EnvironmentAdapter.spec.runtime.imagePrefix 格式无效')
+  }
+  const network = expectText(docker.network, 'EnvironmentAdapter.spec.docker.network')
+  if (network === 'host') throw new ProtocolError('Solver/Updater Docker 禁止使用 host 网络')
+  const gatewayAlias = expectText(modelGateway.alias, 'EnvironmentAdapter.spec.modelGateway.alias')
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(gatewayAlias) || gatewayAlias === 'localhost') {
+    throw new ProtocolError('EnvironmentAdapter.spec.modelGateway.alias 必须是非 localhost 的小写 Docker DNS 名')
+  }
+  const gatewayEgressNetwork = expectText(
+    modelGateway.egressNetwork,
+    'EnvironmentAdapter.spec.modelGateway.egressNetwork',
+  )
+  if (['host', 'none'].includes(gatewayEgressNetwork)) {
+    throw new ProtocolError('Model Gateway egressNetwork 不能是 host 或 none')
+  }
+  const rewardMinimum = expectNumber(reward.minimum, 'EnvironmentAdapter.spec.reward.minimum')
+  const rewardMaximum = expectNumber(reward.maximum, 'EnvironmentAdapter.spec.reward.maximum')
+  const resolvedThreshold = expectNumber(reward.resolvedThreshold, 'EnvironmentAdapter.spec.reward.resolvedThreshold')
+  if (rewardMinimum !== 0 || rewardMaximum !== 1 || resolvedThreshold !== 1) {
+    throw new ProtocolError('Synthetic Reasoning 确定性评分必须固定为 0/1，resolvedThreshold=1')
+  }
+
+  return {
+    apiVersion: API_VERSION,
+    kind: 'EnvironmentAdapter',
+    id,
+    protocol,
+    source: {
+      tasksPath: relativePath(source.tasksPath, 'EnvironmentAdapter.spec.source.tasksPath'),
+      digest,
+      revision: digest,
+    },
+    task: { workspacePath, answerNormalization },
+    runtime: { baseImage, imagePrefix },
+    docker: {
+      binary: expectText(docker.binary, 'EnvironmentAdapter.spec.docker.binary'),
+      network,
+      runAsCurrentUser: expectBoolean(docker.runAsCurrentUser, 'EnvironmentAdapter.spec.docker.runAsCurrentUser'),
+      resources: {
+        cpus: expectNumber(resources.cpus, 'EnvironmentAdapter.spec.docker.resources.cpus', { min: 0.1, max: 32 }),
+        memory: expectText(resources.memory, 'EnvironmentAdapter.spec.docker.resources.memory'),
+        pids: expectNumber(resources.pids, 'EnvironmentAdapter.spec.docker.resources.pids', {
+          integer: true,
+          min: 16,
+          max: 4096,
+        }),
+        timeoutSeconds: expectNumber(
+          resources.timeoutSeconds,
+          'EnvironmentAdapter.spec.docker.resources.timeoutSeconds',
+          { integer: true, min: 1, max: 7200 },
+        ),
+      },
+    },
+    modelGateway: {
+      image: expectText(modelGateway.image, 'EnvironmentAdapter.spec.modelGateway.image'),
+      dockerfile: relativePath(modelGateway.dockerfile, 'EnvironmentAdapter.spec.modelGateway.dockerfile'),
+      alias: gatewayAlias,
+      port: expectNumber(modelGateway.port, 'EnvironmentAdapter.spec.modelGateway.port', {
+        integer: true,
+        min: 1024,
+        max: 65535,
+      }),
+      egressNetwork: gatewayEgressNetwork,
+      maximumRequestsPerRun: expectNumber(
+        modelGateway.maximumRequestsPerRun,
+        'EnvironmentAdapter.spec.modelGateway.maximumRequestsPerRun',
+        { integer: true, min: 1, max: 100000 },
+      ),
+      maximumConcurrentRequests: expectNumber(
+        modelGateway.maximumConcurrentRequests,
+        'EnvironmentAdapter.spec.modelGateway.maximumConcurrentRequests',
+        { integer: true, min: 1, max: 64 },
+      ),
+      resources: {
+        cpus: expectNumber(gatewayResources.cpus, 'modelGateway.resources.cpus', { min: 0.1, max: 32 }),
+        memory: expectText(gatewayResources.memory, 'modelGateway.resources.memory'),
+        pids: expectNumber(gatewayResources.pids, 'modelGateway.resources.pids', {
+          integer: true,
+          min: 16,
+          max: 4096,
+        }),
+      },
+    },
+    reward: { minimum: 0, maximum: 1, resolvedThreshold: 1 },
+    feedback: {
+      maximumTextBytesPerCase: expectNumber(
+        feedback.maximumTextBytesPerCase,
+        'EnvironmentAdapter.spec.feedback.maximumTextBytesPerCase',
+        { integer: true, min: 256, max: 1024 * 1024 },
+      ),
+      maximumArtifactEntriesPerCase: expectNumber(
+        feedback.maximumArtifactEntriesPerCase,
+        'EnvironmentAdapter.spec.feedback.maximumArtifactEntriesPerCase',
+        { integer: true, min: 1, max: 10000 },
+      ),
+      maximumArtifactBytesPerCase: expectNumber(
+        feedback.maximumArtifactBytesPerCase,
+        'EnvironmentAdapter.spec.feedback.maximumArtifactBytesPerCase',
+        { integer: true, min: 1024, max: 1024 * 1024 },
+      ),
+      maximumHistoryEntries: expectNumber(
+        feedback.maximumHistoryEntries,
+        'EnvironmentAdapter.spec.feedback.maximumHistoryEntries',
+        { integer: true, min: 1, max: 100 },
+      ),
+      maximumHistoryBytes: expectNumber(
+        feedback.maximumHistoryBytes,
+        'EnvironmentAdapter.spec.feedback.maximumHistoryBytes',
+        { integer: true, min: 1024, max: 1024 * 1024 },
+      ),
+    },
+  }
+}
+
 export function validateEnvironmentAdapter(input) {
   assertApiObject(input, 'EnvironmentAdapter')
   const id = metadataId(input, 'EnvironmentAdapter')
   const spec = expectObject(input.spec, 'EnvironmentAdapter.spec')
   const protocol = expectText(spec.protocol, 'EnvironmentAdapter.spec.protocol')
+  if (protocol === 'text-reasoning-deterministic-v1') {
+    return validateTextReasoningEnvironment({ id, spec, protocol })
+  }
   if (protocol !== 'skillsbench-docker-v1') {
     throw new ProtocolError(`当前未实现 Environment Protocol：${protocol}`)
   }
@@ -738,6 +1044,9 @@ export function validateExperiment(input) {
     },
     benchmarkPath: relativePath(spec.benchmark, 'EvolutionExperiment.spec.benchmark'),
     policyPath: relativePath(spec.policy, 'EvolutionExperiment.spec.policy'),
+    recipePath: spec.recipe === undefined
+      ? null
+      : relativePath(spec.recipe, 'EvolutionExperiment.spec.recipe'),
     models: {
       solver: validateModel(models.solver, 'EvolutionExperiment.spec.models.solver'),
       updater: validateModel(models.updater, 'EvolutionExperiment.spec.models.updater'),
@@ -758,9 +1067,13 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
   const experiment = validateExperiment(await readConfigFile(experimentPath))
   const benchmarkPath = resolveInside(repositoryRoot, experiment.benchmarkPath, 'Benchmark 路径')
   const policyPath = resolveInside(repositoryRoot, experiment.policyPath, 'Evaluation Policy 路径')
+  const recipePath = experiment.recipePath === null
+    ? null
+    : resolveInside(repositoryRoot, experiment.recipePath, 'Evolution Recipe 路径')
   await Promise.all([
     assertPathKind(benchmarkPath, 'Benchmark 配置', 'file'),
     assertPathKind(policyPath, 'Evaluation Policy 配置', 'file'),
+    ...(recipePath ? [assertPathKind(recipePath, 'Evolution Recipe 配置', 'file')] : []),
   ])
   const target = validateTargetAdapter(
     await readConfigFile(resolveInside(repositoryRoot, experiment.adapters.target, 'Target Adapter 路径')),
@@ -785,6 +1098,23 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
   const policy = validateEvaluationPolicy(
     await readJsonFile(policyPath),
   )
+  const recipe = recipePath
+    ? normalizeEvolutionRecipe(await readConfigFile(recipePath))
+    : normalizeCoworkEvolutionRecipe({
+        generations: experiment.evolution.generations,
+        strategy,
+        mutationLevel: experiment.evolution.mutationLevel,
+      })
+  if (recipe.spec.moduleSearch.riskCeiling !== experiment.evolution.mutationLevel) {
+    throw new ProtocolError('Evolution Recipe 风险上限与旧 mutationLevel 不一致')
+  }
+  if (recipe.spec.moduleSearch.authority === 'strategy-directed'
+      && recipe.spec.moduleSearch.strategy !== strategy.id) {
+    throw new ProtocolError('Evolution Recipe 的 Module Search Strategy 与 Adapter 不一致', [
+      `recipe=${recipe.spec.moduleSearch.strategy}`,
+      `adapter=${strategy.id}`,
+    ])
+  }
   if (benchmark.source.adapter !== environment.id) {
     throw new ProtocolError('Benchmark 与 Environment Adapter 不匹配', [
       `Benchmark=${benchmark.source.adapter}`,
@@ -837,7 +1167,7 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
       upstreamBaseUrlEnvironment: provider.credentials.baseUrlEnvironment,
     },
   }
-  return { experiment, target, updater, environment: resolvedEnvironment, provider, strategy, benchmark, policy }
+  return { experiment, recipe, target, updater, environment: resolvedEnvironment, provider, strategy, benchmark, policy }
 }
 
 export async function validateAnyAdapter(input) {

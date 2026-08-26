@@ -8,7 +8,7 @@ import {
   buildExperimentRuntime,
   finalizeEvolution,
   preflightExperiment,
-  runEvolution,
+  runConfiguredEvolution,
 } from './cowork-orchestrator.mjs'
 import {
   PARTITION_NAMES,
@@ -23,7 +23,7 @@ import {
 } from './protocol.mjs'
 import { isCampaignCliCommand, runCampaignCliCommand } from './campaign-cli.mjs'
 
-const HELP = `DeepSeek Harness RSI Controller
+const HELP = `HarnessEvoGym Controller
 
 用法：
   harness-rsi adapter validate --config <adapter.yml>
@@ -168,7 +168,7 @@ async function buildRuntimeCommand(args) {
 
 async function evolveRunCommand(args) {
   const { options } = parseOptions(args, { valueOptions: new Set(['config', 'run-id', 'output']) })
-  const result = await runEvolution({
+  const result = await runConfiguredEvolution({
     repositoryRoot: REPOSITORY_ROOT,
     experimentPath: requiredPath(options, 'config'),
     ...(options.get('run-id') ? { runId: options.get('run-id') } : {}),
@@ -180,7 +180,7 @@ async function evolveRunCommand(args) {
     runId: result.runId,
     runRoot: result.runRoot,
     championId: result.championId,
-    status: result.state.metadata.status,
+    status: result.population ? result.state.status : result.state.metadata.status,
   }, options.get('output'))
 }
 

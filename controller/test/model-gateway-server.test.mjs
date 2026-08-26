@@ -95,7 +95,13 @@ test('Model Gateway 校验令牌并只向固定 chat/completions 转发', async 
     })
     assert.equal(notFound.status, 404)
 
-    const body = JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: 'hi' }] })
+    const body = JSON.stringify({
+      model: 'deepseek-chat',
+      messages: [{ role: 'user', content: 'hi' }],
+      n: 2,
+      stream: false,
+      stream_options: { include_usage: false },
+    })
     const proxied = await fetch(`${gatewayUrl}/chat/completions`, {
       method: 'POST',
       body,
@@ -125,6 +131,183 @@ test('Model Gateway 校验令牌并只向固定 chat/completions 转发', async 
       cacheReadTokens: 3,
       reasoningTokens: 2,
     })
+  } finally {
+    child.kill('SIGTERM')
+    if (child.exitCode === null) await new Promise((resolveExit) => child.once('exit', resolveExit))
+    await new Promise((resolveClose) => upstream.close(resolveClose))
+  }
+})
+
+test('Model Gateway 按 Solver/Updater 强制覆盖可信模型并分角色计量', async () => {
+  const providerKey = 'provider-key-for-role-test'
+  const legacyToken = 'a'.repeat(64)
+  const controlToken = 'b'.repeat(64)
+  const solverToken = 'c'.repeat(64)
+  const updaterToken = 'd'.repeat(64)
+  const upstreamRequests = []
+  const upstream = http.createServer((request, response) => {
+    const chunks = []
+    request.on('data', (chunk) => chunks.push(chunk))
+    request.on('end', () => {
+      upstreamRequests.push(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end([
+        'data: {"choices":[{"delta":{"content":"ok"}}]}',
+        '',
+        'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}',
+        '',
+        'data: [DONE]',
+        '',
+      ].join('\n'))
+    })
+  })
+  const upstreamPort = await listen(upstream)
+  const gatewayPort = await freePort()
+  const stderr = []
+  const child = spawn(process.execPath, [resolve(repositoryRoot, 'docker/model-gateway/server.mjs')], {
+    env: {
+      ...process.env,
+      GATEWAY_PORT: String(gatewayPort),
+      GATEWAY_TOKEN: legacyToken,
+      GATEWAY_CONTROL_TOKEN: controlToken,
+      GATEWAY_SOLVER_TOKEN: solverToken,
+      GATEWAY_UPDATER_TOKEN: updaterToken,
+      UPSTREAM_API_KEY_ENV: 'TEST_UPSTREAM_KEY',
+      UPSTREAM_BASE_URL_ENV: 'TEST_UPSTREAM_URL',
+      GATEWAY_MAX_REQUESTS: '10',
+      GATEWAY_MAX_CONCURRENT_REQUESTS: '2',
+      TEST_UPSTREAM_KEY: providerKey,
+      TEST_UPSTREAM_URL: `http://127.0.0.1:${upstreamPort}/v1`,
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  })
+  child.stderr.on('data', (chunk) => stderr.push(chunk.toString('utf8')))
+  const gatewayUrl = `http://127.0.0.1:${gatewayPort}`
+
+  const request = async (path, token, options = {}) => await fetch(`${gatewayUrl}${path}`, {
+    ...options,
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+      ...options.headers,
+    },
+  })
+  const configure = async (policy, token = controlToken) => await request('/rsi/configure-role', token, {
+    method: 'POST',
+    body: JSON.stringify(policy),
+  })
+  const rotate = async (role, token = controlToken) => await request('/rsi/rotate-role-token', token, {
+    method: 'POST',
+    body: JSON.stringify({ role }),
+  })
+
+  try {
+    await waitForGateway(gatewayUrl, child, stderr)
+    assert.equal((await configure({
+      role: 'solver', model: 'trusted-solver', maxTokens: 111, maxTokensField: 'max_tokens',
+    }, solverToken)).status, 401)
+    assert.equal((await request('/chat/completions', solverToken, {
+      method: 'POST', body: JSON.stringify({ model: 'attacker' }),
+    })).status, 503)
+    assert.equal((await configure({
+      role: 'solver', model: 'trusted-solver', maxTokens: 111, maxTokensField: 'max_tokens',
+    })).status, 200)
+    assert.equal((await configure({
+      role: 'updater', model: 'trusted-updater', maxTokens: 222, maxTokensField: 'max_completion_tokens',
+    })).status, 200)
+    assert.equal((await configure({
+      role: 'solver', model: 'changed-model', maxTokens: 111, maxTokensField: 'max_tokens',
+    })).status, 409)
+
+    const solverResponse = await request('/chat/completions', solverToken, {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'attacker-model',
+        max_tokens: 999999,
+        max_completion_tokens: 999999,
+        n: 99,
+        stream: false,
+        stream_options: { include_usage: false },
+        best_of: 99,
+        num_return_sequences: 99,
+        messages: [{ role: 'user', content: 'solver' }],
+      }),
+    })
+    assert.equal(solverResponse.status, 200)
+    await solverResponse.text()
+
+    assert.equal((await rotate('solver', solverToken)).status, 401)
+    const rotationResponse = await rotate('solver')
+    assert.equal(rotationResponse.status, 200)
+    const rotation = await rotationResponse.json()
+    assert.equal(rotation.role, 'solver')
+    assert.match(rotation.token, /^[0-9a-f]{64}$/u)
+    assert.notEqual(rotation.token, solverToken)
+    assert.equal((await request('/chat/completions', solverToken, {
+      method: 'POST', body: JSON.stringify({ messages: [{ role: 'user', content: 'expired' }] }),
+    })).status, 401)
+    const renewedSolverResponse = await request('/chat/completions', rotation.token, {
+      method: 'POST',
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'renewed-solver' }] }),
+    })
+    assert.equal(renewedSolverResponse.status, 200)
+    await renewedSolverResponse.text()
+
+    const updaterResponse = await request('/chat/completions', updaterToken, {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'attacker-model',
+        max_tokens: 999999,
+        max_completion_tokens: 999999,
+        messages: [{ role: 'user', content: 'updater' }],
+      }),
+    })
+    assert.equal(updaterResponse.status, 200)
+    await updaterResponse.text()
+
+    assert.deepEqual(upstreamRequests, [
+      {
+        model: 'trusted-solver',
+        max_tokens: 111,
+        n: 1,
+        stream: true,
+        stream_options: { include_usage: true },
+        messages: [{ role: 'user', content: 'solver' }],
+      },
+      {
+        model: 'trusted-solver',
+        max_tokens: 111,
+        messages: [{ role: 'user', content: 'renewed-solver' }],
+        n: 1,
+        stream: true,
+        stream_options: { include_usage: true },
+      },
+      {
+        model: 'trusted-updater',
+        max_completion_tokens: 222,
+        messages: [{ role: 'user', content: 'updater' }],
+        n: 1,
+        stream: true,
+        stream_options: { include_usage: true },
+      },
+    ])
+    assert.equal((await request('/rsi/usage?role=updater', solverToken)).status, 401)
+    assert.equal((await request('/rsi/usage?role=updater', rotation.token)).status, 403)
+    const solverUsage = await request('/rsi/usage?role=solver', controlToken)
+    const updaterUsage = await request('/rsi/usage?role=updater', controlToken)
+    const aggregateUsage = await request('/rsi/usage', legacyToken)
+    assert.deepEqual(await solverUsage.json(), {
+      acceptedRequests: 2,
+      activeRequests: 0,
+      usageResponses: 2,
+      unknownUsageResponses: 0,
+      inputTokens: 6,
+      outputTokens: 4,
+      cacheReadTokens: 0,
+      reasoningTokens: 0,
+    })
+    assert.equal((await updaterUsage.json()).acceptedRequests, 1)
+    assert.equal((await aggregateUsage.json()).acceptedRequests, 3)
   } finally {
     child.kill('SIGTERM')
     if (child.exitCode === null) await new Promise((resolveExit) => child.once('exit', resolveExit))

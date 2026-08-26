@@ -1,0 +1,38 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "Benchmark",
+  "metadata": {
+    "id": "cowork-skillsbench-smoke-v1",
+    "name": "Cowork SkillsBench one-task-per-partition smoke"
+  },
+  "spec": {
+    "source": {
+      "adapter": "skillsbench-cowork",
+      "dataset": "skillsbench/tasks",
+      "split": "smoke-1-feedback-1-selection-1-final",
+      "revision": "bf3793e9ec20e9682e6f18dbf4de3c69163dc9c7"
+    },
+    "evaluator": {
+      "adapter": "skillsbench-cowork",
+      "resultFormat": "harness-rsi/solver-result-jsonl-v2"
+    },
+    "partitions": {
+      "feedback": {
+        "visibility": "detailed",
+        "expectedCount": 1,
+        "instanceIds": ["offer-letter-generator"]
+      },
+      "selection": {
+        "visibility": "aggregate-only",
+        "expectedCount": 1,
+        "instanceIds": ["sales-pivot-analysis"]
+      },
+      "final": {
+        "visibility": "sealed",
+        "expectedCount": 1,
+        "instanceIds": ["exceltable-in-ppt"]
+      }
+    },
+    "expectedTotal": 3
+  }
+}

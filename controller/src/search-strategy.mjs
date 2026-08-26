@@ -21,8 +21,34 @@ const FORBIDDEN_CONTEXT_KEYS = new Set([
   'traces',
 ])
 
+function assertPlainJson(value, label, path = '$', seen = new Set()) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new ProtocolError(`${label} 包含非有限数字：${path}`)
+    return
+  }
+  if (typeof value !== 'object') {
+    throw new ProtocolError(`${label} 包含非 JSON 值：${path}`)
+  }
+  if (seen.has(value)) throw new ProtocolError(`${label} 包含循环引用：${path}`)
+  seen.add(value)
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertPlainJson(item, label, `${path}[${index}]`, seen))
+  } else {
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new ProtocolError(`${label} 只能包含普通 JSON 对象：${path}`)
+    }
+    for (const [key, child] of Object.entries(value)) {
+      assertPlainJson(child, label, `${path}.${key}`, seen)
+    }
+  }
+  seen.delete(value)
+}
+
 function jsonClone(value, label, maximumBytes = MAXIMUM_STATE_BYTES) {
   if (value === undefined || value === null) return null
+  assertPlainJson(value, label)
   let serialized
   try {
     serialized = JSON.stringify(value)

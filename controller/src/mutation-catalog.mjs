@@ -45,6 +45,35 @@ function riskIndex(level) {
   return MUTATION_RISK_LEVELS.indexOf(level)
 }
 
+function validateDependencyGraph(regions) {
+  const byId = new Map(regions.map((region) => [region.id, region]))
+  const visited = new Set()
+  const visiting = new Set()
+
+  function visit(region, path) {
+    if (visiting.has(region.id)) {
+      throw new ProtocolError('Mutation Catalog Region 依赖图存在环', [
+        [...path, region.id].join(' -> '),
+      ])
+    }
+    if (visited.has(region.id)) return
+    visiting.add(region.id)
+    for (const requiredId of region.requires) {
+      const required = byId.get(requiredId)
+      if (riskIndex(required.riskLevel) > riskIndex(region.riskLevel)) {
+        throw new ProtocolError(`Mutation Catalog Region ${region.id} 依赖了更高风险的 Region`, [
+          `${region.id}(${region.riskLevel}) -> ${required.id}(${required.riskLevel})`,
+        ])
+      }
+      visit(required, [...path, region.id])
+    }
+    visiting.delete(region.id)
+    visited.add(region.id)
+  }
+
+  for (const region of regions) visit(region, [])
+}
+
 function derivedCatalog(levels) {
   const regions = Object.entries(levels).map(([riskLevel, level]) => ({
     id: riskLevel,
@@ -118,6 +147,7 @@ export function normalizeMutationCatalogConfiguration(input, levels) {
       ])
     }
   }
+  validateDependencyGraph(regions)
 
   // 兼容要求：内置线性策略选择当前风险上限内的全部 Region 时，必须得到旧层级完全相同的权限。
   for (const [levelName, level] of Object.entries(levels)) {

@@ -1,12 +1,16 @@
 import { SkillsBenchEnvironment } from './environments/skillsbench.mjs'
+import { TextReasoningEnvironment } from './environments/text-reasoning.mjs'
 import { diffModelUsage } from './cowork-model-gateway.mjs'
+import { assertPathKind } from './config.mjs'
 import { ProtocolError } from './protocol.mjs'
+import { resolve } from 'node:path'
 import {
   ensureDshRuntime,
   runDshSolver,
   runDshUpdater,
   stageUpdaterContext,
 } from './runtimes/dsh.mjs'
+import { createMsaMinimalCoworkSolverDriver } from './runtimes/msa-minimal-cowork.mjs'
 
 const DRIVER_PROTOCOL = /^[a-z0-9]+(?:-[a-z0-9]+)*-v[0-9]+$/u
 const ENVIRONMENT_FACTORIES = new Map()
@@ -97,8 +101,16 @@ function publicUsage(accumulator) {
   }
 }
 
-async function runWithUsage(modelGateway, accumulator, operation) {
-  const before = await modelGateway.usage()
+function modelRolePolicy(model, provider) {
+  return {
+    model: model.model,
+    maxTokens: model.maxTokens,
+    maxTokensField: provider.compatibility.maxTokensField,
+  }
+}
+
+async function runWithUsage(modelGateway, accumulator, role, operation) {
+  const before = await modelGateway.usage(role)
   let result
   let operationError
   try {
@@ -109,7 +121,7 @@ async function runWithUsage(modelGateway, accumulator, operation) {
 
   let usage
   try {
-    usage = diffModelUsage(before, await modelGateway.usage())
+    usage = diffModelUsage(before, await modelGateway.usage(role))
     addUsage(accumulator, usage)
   } catch (error) {
     accumulator.complete = false
@@ -156,9 +168,26 @@ function createDshSolverDriver({ target, provider, docker, repositoryRoot, sourc
     },
     async run(options) {
       if (!modelGateway) throw new ProtocolError('Solver 运行必须使用隔离 Model Gateway')
-      const modelAccess = await modelGateway.access()
-      return await runWithUsage(modelGateway, measuredUsage, async () =>
-        await runDshSolver({ docker, runtime: target.solver.runtime, provider, modelAccess, ...options }))
+      const modelAccess = await modelGateway.access(
+        'solver',
+        modelRolePolicy(options.model, provider),
+      )
+      const candidatePreset = resolve(
+        options.candidateWorkspace,
+        target.materialization.presetRelativePath,
+      )
+      await assertPathKind(candidatePreset, 'DSH Candidate Preset')
+      return await runWithUsage(modelGateway, measuredUsage, 'solver', async () =>
+        await runDshSolver({
+          ...options,
+          docker,
+          runtime: target.solver.runtime,
+          provider,
+          modelAccess,
+          candidatePreset,
+          workspace: options.taskWorkspace,
+          dshHome: options.sessionRoot,
+        }))
     },
     usage() {
       return publicUsage(measuredUsage)
@@ -185,9 +214,34 @@ function createDshUpdaterDriver({ updater, provider, docker, repositoryRoot, sou
     },
     async run(options) {
       if (!modelGateway) throw new ProtocolError('Updater 运行必须使用隔离 Model Gateway')
-      const modelAccess = await modelGateway.access()
-      return await runWithUsage(modelGateway, measuredUsage, async () =>
-        await runDshUpdater({ docker, runtime: updater.runtime, provider, modelAccess, ...options }))
+      // Feedback 可能是恶意 Solver 生成的，所以不能仅依赖字符串脱敏。
+      // 进入 Updater 前在 Gateway 中原子轮换 Solver Token，使反馈中的旧令牌立即失效。
+      await modelGateway.rotateRoleToken('solver')
+      let result
+      let operationError
+      try {
+        const modelAccess = await modelGateway.access(
+          'updater',
+          modelRolePolicy(options.model, provider),
+        )
+        result = await runWithUsage(modelGateway, measuredUsage, 'updater', async () =>
+          await runDshUpdater({ ...options, docker, runtime: updater.runtime, provider, modelAccess }))
+      } catch (error) {
+        operationError = error
+      }
+      try {
+        // Updater 也可能把自己的 Token 写入 Candidate；轮换后再进入 Selection。
+        // Solver 下次 access() 会取到前面已轮换的新 Solver Token。
+        await modelGateway.rotateRoleToken('updater')
+      } catch (error) {
+        if (!operationError) throw error
+        operationError.details = [
+          ...(operationError.details ?? []),
+          `Updater Token 撤销失败：${error.message}`,
+        ]
+      }
+      if (operationError) throw operationError
+      return result
     },
     usage() {
       return publicUsage(measuredUsage)
@@ -196,7 +250,9 @@ function createDshUpdaterDriver({ updater, provider, docker, repositoryRoot, sou
 }
 
 registerEnvironmentDriver('skillsbench-docker-v1', (options) => new SkillsBenchEnvironment(options))
+registerEnvironmentDriver('text-reasoning-deterministic-v1', (options) => new TextReasoningEnvironment(options))
 registerSolverDriver('dsh-headless-docker-v1', createDshSolverDriver)
+registerSolverDriver('msa-minimal-docker-v1', createMsaMinimalCoworkSolverDriver)
 registerUpdaterDriver('dsh-headless-docker-v1', createDshUpdaterDriver)
 
 export function createSolverDriver(options) {

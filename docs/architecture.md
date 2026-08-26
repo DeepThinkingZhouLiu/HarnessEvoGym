@@ -1,27 +1,29 @@
-# Independent RSI Control-Plane Architecture
+# HarnessEvoGym Generic Control-Plane Architecture
 
 English | [中文](architecture.zh.md)
 
 ## Decision
 
-DeepSeek Harness RSI uses an independent GitHub repository as its trusted control plane. It is no longer a DeepSeek Harness fork. Official history enters only through the pinned `sources/deepseek-harness/` submodule, whose remote remains `deepseek-ai/deepseek-harness`; an Updater never edits that directory directly.
+HarnessEvoGym uses an independent GitHub repository as its trusted control plane. It is no longer a DeepSeek Harness fork. Official history enters only through the pinned `sources/deepseek-harness/` submodule, whose remote remains `deepseek-ai/deepseek-harness`; an Updater never edits that directory directly.
 
 This separates the mutable Solver from the immutable evaluation root and allows projects such as DeepSeek Harness and pi-agent to become Targets or Updaters through adapters without changing the Controller loop.
 
-## Two scenario planes
+## Target × Environment × EvolutionRecipe
 
-The Future Reasoning Controller is the current base; Cowork is integrated as an
-incremental execution plane. Both share Benchmark, Evaluation Policy, Solver
-Result, and Evaluator protocols without forcing unlike environment sandboxes
-into one implementation.
+The Future Population Controller remains the algorithmic base, but now consumes
+only a generic BranchEvolutionDriver and EvaluationSummary. Targets define the
+evolved Harness and Regions, Environments define tasks and scoring, and Recipes
+combine population coordination with module search.
 
-| Plane | Orchestrator | Environment isolation | Current search |
-|---|---|---|---|
-| Reasoning | `orchestrator.mjs` + `population-orchestrator.mjs` | Distinct host UIDs, bubblewrap, Unix gateway, sealed broker | Five population modes |
-| Cowork | `cowork-orchestrator.mjs` | SkillsBench task images, separate Verifier, Docker internal network | Pluggable SearchStrategy; compatible linear default |
+| Composition                 | Branch execution                 | Environment isolation                                      | Search                         |
+|-----------------------------|----------------------------------|------------------------------------------------------------|--------------------------------|
+| MSA Cowork + SkillsBench    | Generic Cowork Branch Driver     | Task images, separate Verifier, Docker internal network    | Recipe + SearchStrategy        |
+| MSA Text Reasoning smoke    | Same Cowork Branch Driver        | Pinned text tasks, exact verifier, Docker internal network | Same Recipe + SearchStrategy   |
+| HZY Reasoning production    | Compatibility Reasoning Driver   | Distinct UIDs, bubblewrap, Unix gateway, sealed broker     | Legacy config mapped to modes  |
 
-Cowork gateway lifecycle is implemented by `cowork-model-gateway.mjs`; the
-Reasoning Responses/Unix-socket gateway remains in `model-gateway.mjs`. They
+Experiment Chat Completions gateway lifecycle is implemented by
+`cowork-model-gateway.mjs`; the HZY production Reasoning Responses/Unix-socket
+gateway remains in `model-gateway.mjs`. They
 serve different provider and isolation contracts rather than duplicating one
 protocol.
 
@@ -30,7 +32,9 @@ protocol.
 | Object          | Responsibility                                                        | Updater-writable             |
 |-----------------|-----------------------------------------------------------------------|------------------------------|
 | Source          | Trusted, pinned upstream source revision                              | No                           |
-| Target          | Harness Driver, Candidate materialization, and Mutation Catalog       | No                           |
+| Target          | Source, CandidateSeed, Materializer, Driver, Validator, and Catalog  | No                           |
+| Environment     | Tasks, task workspaces, verifier, and primary metrics                | No                           |
+| EvolutionRecipe | Population mode, module search, budget, and peer sharing             | No                           |
 | SearchStrategy  | Selects parent Candidate and region IDs                               | No; cannot edit a Candidate  |
 | Solver          | Performs tasks with the Candidate Harness                             | Indirectly through Candidate |
 | Updater         | Reads evidence and code, then analyzes and edits in one session       | Current lease paths only     |
@@ -99,8 +103,9 @@ The lightweight linear path creates one campaign-owned Git worktree and a separa
 
 ## Mutation boundary
 
-Cowork uses `MutationCatalog -> MutationPlan -> MutationLease -> full Diff
-Guard`. L1/L2/L3 are risk ceilings; regions are Target-specific searchable
+Generic MSA Cowork and text-Reasoning Experiments use `MutationCatalog ->
+MutationPlan -> MutationLease -> full Diff Guard`. L1/L2/L3 are risk ceilings;
+regions are Target-specific searchable
 modules. A strategy returns only region IDs. The trusted Controller maps them
 to paths, while external strategies run through a no-network, no-mount,
 no-host-environment Docker JSON protocol. See [Search space, strategy, and
@@ -136,15 +141,18 @@ The generic normalized-result and three-partition APIs remain available for adap
 
 The superproject pins a DeepSeek Harness SHA, making every experiment reproducible. `git submodule update --remote` fetches an upstream revision locally; it becomes a trusted Source Revision only after the new submodule pointer is committed. Existing Candidates retain their original SHA.
 
-## Implemented production path
+## Implemented paths and current boundary
 
-The control plane now includes frozen manifests, exact source materialization,
-configurable L1/L2/L3 diff enforcement, Cowork Mutation Catalog/Plan/Lease,
-builtin and sandboxed SearchStrategy, one-session mutations, Candidate builds,
-per-task checkpoints, validation feedback, child-only sealed-test execution,
-strict promotion and rollback, crash-safe campaign state, single-writer locking,
-implementation/runtime attestation, FD-only credentials, and post-closure
-reports. The five Reasoning modes are not yet external SearchStrategy adapters;
-they remain compatible trusted builtin algorithms. The MSA-derived minimal
-Target provides the lightweight math/reasoning path; SWE-bench remains a
-contract stub rather than a completed production adapter.
+The shared control plane now includes frozen manifests, registered Source resolvers,
+Source-plus-Seed Candidate materialization, configurable L1/L2/L3 diff
+enforcement, Mutation Catalog/Plan/Lease, builtin and sandboxed SearchStrategy,
+generic Population/Branch protocols, one-session mutations, Candidate builds,
+per-task checkpoints, validation feedback, permission leases, and
+implementation/runtime attestation. The existing HZY production-Reasoning path
+continues to provide child-only sealed tests, strict promotion and rollback,
+crash recovery, single-writer locking, FD-only credentials, and post-closure
+reports. Generic Experiments prove that MSA Minimal can reuse all five modes and
+one SearchStrategy across Cowork and text Reasoning. They fail closed into
+`PAUSED_INFRASTRUCTURE`, but cross-process resume and sealed final are not yet
+available, and Gateway request budgets remain Branch-scoped. The text tasks are
+an engineering smoke, not HLE; SWE-bench remains a contract stub.

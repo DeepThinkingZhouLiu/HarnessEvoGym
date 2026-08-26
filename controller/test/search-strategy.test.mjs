@@ -172,3 +172,15 @@ test('Search Strategy Context 和响应不能夹带 Final 或越界 Region', asy
   const external = createSearchStrategyDriver({ adapter, docker: fakeDocker })
   await assert.rejects(external.propose(await context()), /未知 Region/u)
 })
+
+test('Search Strategy State 拒绝会被 JSON 静默改写的值', async () => {
+  const driver = createSearchStrategyDriver({ adapter: defaultSearchStrategyAdapter() })
+  for (const invalid of [
+    { value: Number.NaN },
+    { value: Number.POSITIVE_INFINITY },
+    { value: undefined },
+    { value: 1n },
+  ]) {
+    await assert.rejects(driver.propose(await context(), invalid), /非有限数字|非 JSON 值/u)
+  }
+})

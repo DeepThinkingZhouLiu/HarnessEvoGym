@@ -1,0 +1,38 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "Benchmark",
+  "metadata": {
+    "id": "synthetic-text-reasoning-smoke-v1",
+    "name": "Synthetic text reasoning connectivity smoke (not HLE)"
+  },
+  "spec": {
+    "source": {
+      "adapter": "text-reasoning-smoke",
+      "dataset": "repository-tracked-synthetic-connectivity-tasks",
+      "split": "one-feedback-one-selection-one-final",
+      "revision": "54195b9b309e370c28bd6f7f6efb06d8edb6bf5fee67c1b451e2b86e17c8020a"
+    },
+    "evaluator": {
+      "adapter": "text-reasoning-smoke",
+      "resultFormat": "harness-rsi/solver-result-jsonl-v2"
+    },
+    "partitions": {
+      "feedback": {
+        "visibility": "detailed",
+        "expectedCount": 1,
+        "instanceIds": ["synthetic-percent-reversal"]
+      },
+      "selection": {
+        "visibility": "aggregate-only",
+        "expectedCount": 1,
+        "instanceIds": ["synthetic-drawer-guarantee"]
+      },
+      "final": {
+        "visibility": "sealed",
+        "expectedCount": 1,
+        "instanceIds": ["synthetic-linear-equation"]
+      }
+    },
+    "expectedTotal": 3
+  }
+}

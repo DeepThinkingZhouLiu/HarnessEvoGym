@@ -380,7 +380,10 @@ async function validateSkillCatalog(workspace, policy) {
   return { id: 'skill-catalog-namespace', path: relativeRoot, violations }
 }
 
-export async function writeCandidateManifest(pathValue, { candidateId, parentId, snapshot, sourceRevision }) {
+export async function writeCandidateManifest(
+  pathValue,
+  { candidateId, parentId, snapshot, sourceRevision, composition = null },
+) {
   const entries = [...snapshot.values()].sort((left, right) => left.path.localeCompare(right.path))
   await writeJsonFile(pathValue, {
     apiVersion: 'harness-rsi/v1alpha1',
@@ -388,6 +391,7 @@ export async function writeCandidateManifest(pathValue, { candidateId, parentId,
     metadata: { id: candidateId, parentId },
     spec: {
       sourceRevision,
+      ...(composition ? { composition } : {}),
       treeDigest: treeDigest(snapshot),
       files: entries.filter((entry) => entry.kind !== 'directory'),
       directories: entries.filter((entry) => entry.kind === 'directory').map((entry) => entry.path),

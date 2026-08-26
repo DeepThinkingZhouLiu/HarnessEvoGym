@@ -1,0 +1,13 @@
+apiVersion: harness-rsi/v1alpha1
+kind: EvolutionRecipe
+spec:
+  population:
+    mode: mutualism
+    concurrency: { n_branches: 2 }
+    budget: { total_budget: 4, beta: 0.5 }
+    peer_sharing: { enabled: true }
+    competition: { enabled: false }
+  moduleSearch:
+    authority: strategy-directed
+    riskCeiling: l1
+    strategy: linear-hill-climb

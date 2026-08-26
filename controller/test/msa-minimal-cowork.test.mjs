@@ -403,13 +403,13 @@ test('MSA Cowork Candidate Profile 不能抬高 Controller 下发的步数上限
   assert.match(result.answer, /exhausted its step budget/u)
 })
 
-test('MSA Cowork Chat Client 只对首次正常结束的空流重试一次', async (context) => {
+test('MSA Cowork Chat Client 对正常结束的空流最多重试两次', async (context) => {
   const seedRoot = resolve(repositoryRoot, 'targets/msa-minimal/cowork-v1')
   let requests = 0
   const server = http.createServer((_request, response) => {
     requests += 1
     response.writeHead(200, { 'content-type': 'text/event-stream' })
-    if (requests === 1) {
+    if (requests < 3) {
       response.end([
         `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}`,
         '',
@@ -442,10 +442,10 @@ test('MSA Cowork Chat Client 只对首次正常结束的空流重试一次', asy
   })
 
   assert.equal(stdout.trim(), '<bash>echo safe</bash>')
-  assert.equal(requests, 2)
+  assert.equal(requests, 3)
 })
 
-test('MSA Cowork Chat Client 丢弃 reasoning_content 且两次空流后关闭失败', async (context) => {
+test('MSA Cowork Chat Client 丢弃 reasoning_content 且三次空流后关闭失败', async (context) => {
   const seedRoot = resolve(repositoryRoot, 'targets/msa-minimal/cowork-v1')
   const hiddenCommand = '<bash>touch /tmp/must-not-run</bash>'
   let requests = 0
@@ -484,7 +484,7 @@ test('MSA Cowork Chat Client 丢弃 reasoning_content 且两次空流后关闭�
       return true
     },
   )
-  assert.equal(requests, 2)
+  assert.equal(requests, 3)
 })
 
 test('MSA Cowork Chat Client 遇到 content_filter 不重试', async (context) => {

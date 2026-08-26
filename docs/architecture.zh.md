@@ -145,6 +145,8 @@ sealed test、严格晋升/回滚、崩溃恢复、单写者锁、FD 凭据和�
 
 通用 Experiment 已证明 MSA Minimal 在 Cowork 和 Text Reasoning 两个 Environment 上共用
 五种 Mode 与 SearchStrategy。Text Reasoning 只是工程冒烟，HLE 生产评测仍使用其专用隔离链路；
-通用 Population 当前遇到基础设施异常会 fail-closed 并写入 `PAUSED_INFRASTRUCTURE`，但尚未
-提供跨进程 Resume 和 sealed Final；Gateway 请求预算也仍按 Branch 计算。仓库现有 SWE-bench
-文件仍只是契约占位。
+通用 Population 遇到基础设施异常会 fail-closed 并写入 `PAUSED_INFRASTRUCTURE`。Cowork
+Population 已提供同 Controller Revision 下的跨进程 Resume，以及关闭后一次性 sealed Final；
+恢复会校验冻结 Bundle/Candidate，归档不完整产物，并继续累计失败尝试的资源账本。
+Gateway 请求预算仍按 Branch 计算，而不是 Population 全局费用上限。仓库现有
+SWE-bench 文件仍只是契约占位。

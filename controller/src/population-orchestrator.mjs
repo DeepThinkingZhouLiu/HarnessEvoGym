@@ -1,6 +1,9 @@
 import { relative } from 'node:path'
 
-import { validateBranchEvolutionDriver } from './branch-evolution-driver.mjs'
+import {
+  validateBranchEvolutionDriver,
+  validateBranchProjection,
+} from './branch-evolution-driver.mjs'
 import { createReasoningBranchDriver } from './branches/reasoning.mjs'
 import { redactSecrets } from './campaign-store.mjs'
 import {
@@ -67,6 +70,18 @@ function branchRemaining(branch) {
 function branchStatus(branch, projection) {
   if (projection.status === 'stopped') return 'stopped'
   return branchRemaining(branch) > 0 ? 'active' : 'exhausted'
+}
+
+function assertRestoredIncumbent(branch, projection) {
+  const expected = branch.incumbent
+  const actual = projection.incumbent
+  if (!expected || !actual
+      || expected.candidateId !== actual.candidateId
+      || expected.digest !== actual.digest
+      || expected.revision !== actual.revision
+      || JSON.stringify(expected.evaluation) !== JSON.stringify(actual.evaluation)) {
+    throw new ProtocolError(`${branch.branchId} 恢复后 incumbent 与 Population 冻结状态不一致`)
+  }
 }
 
 function assertRoundLimit(value) {
@@ -388,6 +403,32 @@ export class PopulationOrchestrator {
     if (state.status !== 'PAUSED_INFRASTRUCTURE') {
       throw new ProtocolError('Population 当前不是 PAUSED_INFRASTRUCTURE')
     }
+    await Promise.all(state.branches.map(async (branch) => {
+      const driver = await this.#handle(branch.branchId)
+      const restored = typeof driver.restore === 'function'
+        ? await driver.restore()
+        : await driver.inspect()
+      const projection = validateBranchProjection(restored)
+      if (projection.branchId !== branch.branchId) {
+        throw new ProtocolError(`Population 恢复得到了错误的 Branch：${projection.branchId}`)
+      }
+      const inFlight = state.inFlightWave?.participants.find(
+        (participant) => participant.branchId === branch.branchId,
+      )
+      const maximumCompleted = inFlight ? inFlight.beforeSteps + 1 : branch.consumed
+      if (projection.completedSteps < branch.consumed
+          || projection.completedSteps > maximumCompleted) {
+        throw new ProtocolError(`${branch.branchId} 恢复后 Step 与 Population Budget 不一致`, [
+          `population=${branch.consumed}`,
+          `branch=${projection.completedSteps}`,
+        ])
+      }
+      if (projection.completedSteps === branch.consumed) {
+        assertRestoredIncumbent(branch, projection)
+      } else if (!inFlight || projection.lastStep === null) {
+        throw new ProtocolError(`${branch.branchId} 超前 Step 缺少对应的 in-flight 记录`)
+      }
+    }))
     const resumedAt = iso(this.clock)
     state = {
       ...state,

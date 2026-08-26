@@ -309,6 +309,10 @@ for mode in single independent mutualism competition combined; do
     --config "experiments/cowork-msa-rsi-linear-${mode}.json" \
     --run-id "cowork-rsi-linear-${mode}-001"
 
+  # 若 Provider/Docker/Verifier 异常导致暂停，修复后继续同一个 Run。
+  # npm run rsi -- experiment resume \
+  #   --run ".rsi/runs/populations/cowork-rsi-linear-${mode}-001"
+
   # Population 关闭并锁定全局最优 Branch 后，只解封一次 final。
   npm run rsi -- experiment finalize \
     --run ".rsi/runs/populations/cowork-rsi-linear-${mode}-001"
@@ -328,9 +332,12 @@ Reasoning 的 Synthetic Text 五 Mode 仍只是工程冒烟。HLE 正式实验�
 不能把 Synthetic 结果替代为正式 Reasoning 成绩。
 
 当前通用 Population 的边界也需要明确：基础设施异常会被标成
-`PAUSED_INFRASTRUCTURE` 并让命令失败，绝不会冒充 0 分成功结束；但跨进程恢复尚未接入
-CLI，排除故障后应使用新 Run ID 重跑。Model Gateway 的请求上限目前按 Branch 生效，
-还不是整个 Population 的全局费用上限。生产 HLE/PutnamBench 继续使用原有的恢复、
+`PAUSED_INFRASTRUCTURE` 并让命令失败，绝不会冒充 0 分成功结束。Cowork Population 可以用
+`experiment resume --run <population-run>` 在同一个 Controller Revision 下继续；恢复时会重验冻结
+Bundle、Source、Candidate Digest 和 Mutation 边界，并把未完成轮次归档到 `recovery/`
+后重跑，失败尝试的 Token/时间仍计入 Ledger。修改 Controller 或冻结配置后必须使用
+新 Run ID。Model Gateway 的请求上限目前按 Branch 生效，还不是整个 Population 的全局费用上限。
+生产 HLE/PutnamBench 继续使用原有的恢复、
 sealed test 与 Final 链路，不能把这里的公开 Smoke 替代为正式评测。
 
 单个 Campaign 使用

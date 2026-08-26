@@ -1,5 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { appendFile, mkdir, open, readFile, realpath, stat, writeFile } from 'node:fs/promises'
+import {
+  appendFile,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  rename,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
   copyRegularTree,
@@ -36,6 +46,7 @@ import { runProcess, secretValuesFromEnvironment } from './process.mjs'
 import { createSearchStrategyDriver } from './search-strategy.mjs'
 import { resolveTargetSource } from './target-sources.mjs'
 import { PopulationOrchestrator } from './population-orchestrator.mjs'
+import { acquireCampaignLock } from './campaign-lock.mjs'
 
 const MAXIMUM_STRATEGY_HISTORY_ENTRIES = 64
 
@@ -156,16 +167,93 @@ async function resolvePinnedSource(repositoryRoot, source, label) {
   return { root, revision }
 }
 
-function buildLedger({ generations, candidatesEvaluated, startedAt, solverUsage, updaterUsage }) {
+const USAGE_COUNTER_FIELDS = Object.freeze([
+  'requests',
+  'usageResponses',
+  'unknownUsageResponses',
+  'observedInputTokens',
+  'observedOutputTokens',
+])
+
+const COMPLETE_USAGE_FIELDS = Object.freeze([
+  'inputTokens',
+  'outputTokens',
+  'totalTokens',
+  'cacheReadTokens',
+  'reasoningTokens',
+])
+
+function assertUsageSnapshot(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || typeof value.complete !== 'boolean') {
+    throw new ProtocolError(`${label} Usage 格式无效`)
+  }
+  for (const field of USAGE_COUNTER_FIELDS) {
+    if (!Number.isSafeInteger(value[field]) || value[field] < 0) {
+      throw new ProtocolError(`${label} Usage 字段无效：${field}`)
+    }
+  }
+  for (const field of COMPLETE_USAGE_FIELDS) {
+    if (value.complete) {
+      if (!Number.isSafeInteger(value[field]) || value[field] < 0) {
+        throw new ProtocolError(`${label} Usage 字段无效：${field}`)
+      }
+    } else if (value[field] !== null) {
+      throw new ProtocolError(`${label} Usage 不完整时 ${field} 必须为 null`)
+    }
+  }
+  return value
+}
+
+function mergeUsageSnapshots(previous, current, label) {
+  const right = assertUsageSnapshot(current, label)
+  if (previous === null || previous === undefined) return structuredClone(right)
+  const left = assertUsageSnapshot(previous, `已持久化 ${label}`)
+  const complete = left.complete && right.complete
+  const merged = {
+    complete,
+    ...Object.fromEntries(USAGE_COUNTER_FIELDS.map((field) => [field, left[field] + right[field]])),
+  }
+  for (const field of COMPLETE_USAGE_FIELDS) {
+    merged[field] = complete ? left[field] + right[field] : null
+  }
+  return merged
+}
+
+function buildLedger({
+  generations,
+  candidatesEvaluated,
+  startedAt,
+  solverUsage,
+  updaterUsage,
+  previousLedger = null,
+}) {
+  if (previousLedger !== null && previousLedger !== undefined
+      && (!Number.isSafeInteger(previousLedger.candidatesEvaluated)
+        || previousLedger.candidatesEvaluated < 0
+        || !Number.isSafeInteger(previousLedger.wallTimeMs)
+        || previousLedger.wallTimeMs < 0)) {
+    throw new ProtocolError('已持久化 Evolution Ledger 格式无效')
+  }
+  const mergedUpdaterUsage = mergeUsageSnapshots(
+    previousLedger?.updaterUsage,
+    updaterUsage,
+    'Updater',
+  )
+  const mergedSolverUsage = mergeUsageSnapshots(
+    previousLedger?.solverUsage,
+    solverUsage,
+    'Solver',
+  )
   return {
     generations,
-    candidatesEvaluated,
-    updaterTokens: updaterUsage.totalTokens,
-    solverTokens: solverUsage.totalTokens,
-    updaterUsage: structuredClone(updaterUsage),
-    solverUsage: structuredClone(solverUsage),
+    candidatesEvaluated: (previousLedger?.candidatesEvaluated ?? 0) + candidatesEvaluated,
+    updaterTokens: mergedUpdaterUsage.totalTokens,
+    solverTokens: mergedSolverUsage.totalTokens,
+    updaterUsage: mergedUpdaterUsage,
+    solverUsage: mergedSolverUsage,
     costUsd: null,
-    wallTimeMs: Date.now() - startedAt,
+    wallTimeMs: (previousLedger?.wallTimeMs ?? 0) + Date.now() - startedAt,
   }
 }
 
@@ -793,6 +881,101 @@ function coworkBranchProjection({ branchId, state, stepId = null }) {
   })
 }
 
+async function existingControllerDirectory(pathValue, label) {
+  try {
+    const info = await lstat(pathValue)
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new ProtocolError(`${label} 必须是 Controller 创建的普通目录`)
+    }
+    return true
+  } catch (error) {
+    if (error.code === 'ENOENT') return false
+    throw error
+  }
+}
+
+/**
+ * 恢复时不复用上次中断的临时工作区。它们可能只写了一半，但也不能删除：
+ * Controller 会原子地移入 recovery/ 保留审计证据，然后重跑尚未计入 Budget 的轮次。
+ */
+export async function archiveIncompleteCoworkGeneration({ runRoot, state, now = () => new Date() }) {
+  const generation = state?.spec?.generationsCompleted + 1
+  if (!Number.isSafeInteger(generation) || generation < 1) {
+    throw new ProtocolError('Cowork 恢复状态缺少合法的 generationsCompleted')
+  }
+  if (state.metadata?.status === 'stopped') return null
+  const level = state.spec.mutationLevel
+  const nextCandidateId = safeCandidateId(`g${String(generation).padStart(3, '0')}-${level}`)
+  const candidateIds = new Set([
+    nextCandidateId,
+    ...state.spec.candidates
+      .filter((candidate) => candidate?.digest !== null)
+      .map((candidate) => safeCandidateId(candidate.id)),
+  ])
+  const sources = new Set([
+    join(runRoot, 'generations', `generation-${generation}`),
+    join(runRoot, 'results', `generation-${generation}`),
+    join(runRoot, 'candidates', nextCandidateId),
+  ])
+  for (const candidateId of candidateIds) {
+    for (const partition of ['feedback', 'selection']) {
+      const outputPath = resultPath(runRoot, generation, candidateId, partition)
+      const executionId = createHash('sha256').update(resolve(outputPath)).digest('hex').slice(0, 12)
+      sources.add(join(runRoot, 'trials', executionId))
+    }
+  }
+
+  const existing = []
+  for (const source of sources) {
+    assertInside(runRoot, source, 'Cowork 恢复源路径')
+    if (await existingControllerDirectory(source, 'Cowork 未完成产物')) existing.push(source)
+  }
+  if (existing.length === 0) return null
+
+  const attemptId = `${now().toISOString().replace(/[:.]/gu, '-').toLowerCase()}-${randomUUID().slice(0, 8)}`
+  const recoveryBase = join(runRoot, 'recovery')
+  const recoveryRoot = join(recoveryBase, `generation-${generation}-${attemptId}`)
+  await mkdir(recoveryBase, { recursive: true, mode: 0o700 })
+  await mkdir(recoveryRoot, { recursive: false, mode: 0o700 })
+  const archived = []
+  for (const source of existing.sort()) {
+    const relativePath = relative(runRoot, source).replaceAll('\\', '/')
+    const destination = join(recoveryRoot, relativePath)
+    assertInside(recoveryRoot, destination, 'Cowork 恢复归档路径')
+    await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
+    await rename(source, destination)
+    archived.push(relativePath)
+  }
+  const manifest = {
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'CoworkRecoveryArchive',
+    metadata: { attemptId, archivedAt: now().toISOString() },
+    spec: { generation, archived },
+  }
+  await writeJsonFile(join(recoveryRoot, 'manifest.json'), manifest)
+  return { root: recoveryRoot, manifest }
+}
+
+function assertRestorableCoworkState(value, { runId, branchId }) {
+  if (!value || value.apiVersion !== 'harness-rsi/v1alpha1'
+      || value.kind !== 'EvolutionRunState'
+      || value.metadata?.id !== runId
+      || !['running', 'stopped'].includes(value.metadata?.status)
+      || value.spec?.branchId !== branchId
+      || !Array.isArray(value.spec.candidates)
+      || !Array.isArray(value.spec.searchHistory)
+      || !Number.isSafeInteger(value.spec.generationsCompleted)
+      || value.spec.generationsCompleted < 0) {
+    throw new ProtocolError(`Cowork Branch ${branchId} 持久化状态无法恢复`)
+  }
+  const ids = value.spec.candidates.map((candidate) => safeCandidateId(candidate?.id))
+  if (new Set(ids).size !== ids.length || !ids.includes(value.spec.baselineId)
+      || !ids.includes(value.spec.championId)) {
+    throw new ProtocolError(`Cowork Branch ${branchId} Candidate 谱系无效`)
+  }
+  return value
+}
+
 /**
  * Cowork 的单 Branch 执行面。Population 只通过通用 BranchEvolutionDriver 调它，
  * 不读取 SkillsBench、Overlay、SearchStrategy 或 Candidate Store 的内部字段。
@@ -817,9 +1000,21 @@ export function createCoworkBranchEvolutionDriver({
   let mutationCatalog = null
   let materializedCandidates = null
   let peerEvidencePath = null
+  let ledgerOffset = null
 
   async function persist() {
     await writeJsonFile(join(runRoot, 'state.json'), state)
+  }
+
+  function ledger(generations) {
+    return buildLedger({
+      generations,
+      candidatesEvaluated,
+      startedAt,
+      solverUsage: context.solverDriver.usage(),
+      updaterUsage: context.updaterDriver.usage(),
+      previousLedger: ledgerOffset,
+    })
   }
 
   async function initialize() {
@@ -943,13 +1138,7 @@ export function createCoworkBranchEvolutionDriver({
         searchHistory: [],
         lastCandidateId: null,
         lastStepId: null,
-        ledger: buildLedger({
-          generations: 0,
-          candidatesEvaluated: 0,
-          startedAt,
-          solverUsage: context.solverDriver.usage(),
-          updaterUsage: context.updaterDriver.usage(),
-        }),
+        ledger: ledger(0),
         final: null,
       },
     }
@@ -962,6 +1151,174 @@ export function createCoworkBranchEvolutionDriver({
       writeJsonFile(join(runRoot, 'experiment.snapshot.json'), experimentSnapshot),
       persist(),
     ])
+    return coworkBranchProjection({ branchId, state })
+  }
+
+  async function restore() {
+    if (state !== null) {
+      await archiveIncompleteCoworkGeneration({ runRoot, state })
+      return coworkBranchProjection({ branchId, state })
+    }
+    if (runRootOverride === null || expectedBundleDigest === null) {
+      throw new ProtocolError('Cowork Branch 跨进程恢复需要冻结的 Run Root 和 Bundle Digest')
+    }
+
+    const expectedRunRoot = resolve(runRootOverride)
+    await assertPathKind(expectedRunRoot, `Cowork Branch ${branchId} Run Root`)
+    const canonicalParent = await realpath(dirname(expectedRunRoot))
+    runRoot = await realpath(expectedRunRoot)
+    if (runRoot !== join(canonicalParent, basename(expectedRunRoot))) {
+      throw new ProtocolError(`Cowork Branch ${branchId} Run Root 包含符号链接或别名`)
+    }
+    state = assertRestorableCoworkState(await readJsonFile(join(runRoot, 'state.json')), {
+      runId,
+      branchId,
+    })
+
+    const controllerRevision = await trustedControllerRevision(repositoryRoot)
+    if (controllerRevision !== state.spec.controllerRevision) {
+      throw new ProtocolError('Cowork Branch 恢复时 Controller Revision 已变化', [
+        `state=${state.spec.controllerRevision}`,
+        `current=${controllerRevision}`,
+      ])
+    }
+    context = await createContext({ repositoryRoot, experimentPath, gatewayScope: runId })
+    context.repositoryRoot = repositoryRoot
+    context.runId = runId
+    context.runRoot = runRoot
+    const frozenBundle = await assertPopulationBundleMatches({
+      bundle: context.bundle,
+      repositoryRoot,
+      expectedDigest: expectedBundleDigest,
+    })
+    assertSecrets(requiredSecrets(context.bundle))
+    validateModelGatewayEnvironment(context.bundle.environment.modelGateway)
+
+    const expectedExperimentPath = relative(repositoryRoot, context.absoluteExperimentPath).replaceAll('\\', '/')
+    if (state.spec.experimentPath !== expectedExperimentPath
+        || state.spec.targetSourceRevision !== context.targetSourceRevision
+        || state.spec.updaterSourceRevision !== context.updaterSourceRevision
+        || state.spec.configDigest !== jsonDigest(publicBundleSnapshot(context.bundle))
+        || canonicalJsonDigest(state.spec.recipe) !== canonicalJsonDigest(context.bundle.recipe)) {
+      throw new ProtocolError(`Cowork Branch ${branchId} 状态与当前冻结实验不一致`)
+    }
+
+    const promptPath = join(runRoot, 'trusted-inputs', 'updater-prompt.md')
+    await assertPathKind(promptPath, 'Cowork 冻结 Updater Prompt', 'file')
+    if (await readFile(promptPath, 'utf8') !== frozenBundle.updaterPromptSource) {
+      throw new ProtocolError('Cowork 冻结 Updater Prompt 内容已变化')
+    }
+    context.updaterPromptPath = promptPath
+
+    environment = createEnvironmentRunner({
+      environment: context.bundle.environment,
+      benchmark: context.bundle.benchmark,
+      target: context.bundle.target,
+      solverDriver: context.solverDriver,
+      docker: context.docker,
+      runRoot,
+    })
+    const environmentStatus = await environment.preflight()
+    if (environmentStatus.sourceRevision !== state.spec.benchmarkSourceRevision) {
+      throw new ProtocolError('Cowork Branch 恢复时 Benchmark Source Revision 已变化')
+    }
+    await context.searchStrategy.preflight()
+    for (const instanceId of context.bundle.benchmark.allInstanceIds) await environment.taskLayout(instanceId)
+    await context.updaterDriver.ensureRuntime()
+
+    mutationCatalog = mutationCatalogFor(context.bundle.target)
+    const compatibilityPolicy = mutationPolicyFor(
+      context.bundle.target,
+      context.bundle.recipe.spec.moduleSearch.riskCeiling,
+    )
+    const [storedCatalog, storedPolicy] = await Promise.all([
+      readJsonFile(join(runRoot, 'mutation-catalog.json')),
+      readJsonFile(join(runRoot, 'mutation-policy.json')),
+    ])
+    if (canonicalJsonDigest(storedCatalog) !== canonicalJsonDigest(mutationCatalog)
+        || canonicalJsonDigest(storedPolicy) !== canonicalJsonDigest(compatibilityPolicy)) {
+      throw new ProtocolError('Cowork Branch 恢复时 Mutation 权限边界已变化')
+    }
+
+    const expectedSeeds = context.bundle.experiment.evolution.seeds.slice(
+      0,
+      context.bundle.experiment.evolution.trialsPerInstance,
+    )
+    if (canonicalJsonDigest(state.spec.seeds) !== canonicalJsonDigest(expectedSeeds)) {
+      throw new ProtocolError('Cowork Branch 恢复时 Trial Seeds 已变化')
+    }
+
+    materializedCandidates = new Map()
+    for (const record of state.spec.candidates) {
+      if (record.digest === null) {
+        if (record.status !== 'invalid-proposal') {
+          throw new ProtocolError(`Candidate ${record.id} 缺少 Digest`)
+        }
+        continue
+      }
+      if (typeof record.digest !== 'string' || !/^[0-9a-f]{64}$/u.test(record.digest)) {
+        throw new ProtocolError(`Candidate ${record.id} Digest 无效`)
+      }
+      const root = join(runRoot, 'candidates', record.id)
+      const workspace = join(root, 'workspace')
+      const manifest = await readJsonFile(join(root, 'manifest.json'))
+      if (manifest.metadata?.parentId !== record.parentId) {
+        throw new ProtocolError(`Candidate ${record.id} Parent 谱系不一致`)
+      }
+      await assertCandidateIntegrity({
+        candidateId: record.id,
+        workspace,
+        manifest,
+        sourceRevision: state.spec.targetSourceRevision,
+        expectedDigest: record.digest,
+        maximumFileBytes: context.bundle.target.mutation.limits.maximumFileBytes,
+        maximumTreeEntries: context.bundle.target.mutation.limits.maximumTreeEntries,
+        label: `恢复 Candidate ${record.id}`,
+      })
+      const semanticReport = await validateCandidate({ workspace, target: context.bundle.target })
+      if (!semanticReport.valid) {
+        throw new ProtocolError(`恢复 Candidate ${record.id} 语义检查失败`,
+          semanticReport.violations.map((item) => `${item.path}: ${item.reason}`))
+      }
+      materializedCandidates.set(record.id, {
+        id: record.id,
+        root,
+        workspace,
+        digest: record.digest,
+      })
+    }
+    champion = materializedCandidates.get(state.spec.championId)
+    if (!champion || !materializedCandidates.has(state.spec.baselineId)) {
+      throw new ProtocolError(`Cowork Branch ${branchId} 无法恢复 Baseline 或 Champion`)
+    }
+
+    peerEvidencePath = join(runRoot, 'public', 'evolution-log.jsonl')
+    const expectedEvidence = state.spec.searchHistory
+      .map((entry) => JSON.stringify({ branchId, ...entry }))
+      .join('\n') + (state.spec.searchHistory.length > 0 ? '\n' : '')
+    let currentEvidence = null
+    try {
+      await assertPathKind(peerEvidencePath, 'Cowork Evolution Log', 'file')
+      currentEvidence = await readFile(peerEvidencePath, 'utf8')
+    } catch (error) {
+      if (!(error instanceof ProtocolError) || !/\u4e0d\u5b58\u5728/u.test(error.message)) throw error
+    }
+    if (currentEvidence !== expectedEvidence) {
+      const recoveryRoot = join(runRoot, 'recovery')
+      await mkdir(recoveryRoot, { recursive: true, mode: 0o700 })
+      if (currentEvidence !== null) {
+        await rename(peerEvidencePath, join(
+          recoveryRoot,
+          `evolution-log-${new Date().toISOString().replace(/[:.]/gu, '-').toLowerCase()}-${randomUUID().slice(0, 8)}.jsonl`,
+        ))
+      }
+      await writeFile(peerEvidencePath, expectedEvidence, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+    }
+
+    startedAt = Date.now()
+    ledgerOffset = structuredClone(state.spec.ledger)
+    candidatesEvaluated = 0
+    await archiveIncompleteCoworkGeneration({ runRoot, state })
     return coworkBranchProjection({ branchId, state })
   }
 
@@ -980,6 +1337,7 @@ export function createCoworkBranchEvolutionDriver({
     const generationRoot = join(runRoot, 'generations', `generation-${generation}`)
     await mkdir(generationRoot, { recursive: true })
     const moduleSearch = context.bundle.recipe.spec.moduleSearch
+    const searchStrategyStateBefore = structuredClone(state.spec.searchStrategyState)
     let proposed
     if (moduleSearch.authority === 'strategy-directed') {
       proposed = await context.searchStrategy.propose({
@@ -1077,7 +1435,6 @@ export function createCoworkBranchEvolutionDriver({
         mutationPolicy: mutationLease,
       })
       materializedCandidates.set(proposal.id, proposal)
-      candidatesEvaluated += 1
       phase = 'selection'
       const baselineRecords = await environment.runCandidatePartition({
         candidateId: champion.id,
@@ -1095,6 +1452,7 @@ export function createCoworkBranchEvolutionDriver({
         seeds: state.spec.seeds,
         outputPath: resultPath(runRoot, generation, proposal.id, 'selection'),
       })
+      candidatesEvaluated += 1
       const evaluation = evaluateBenchmark({
         benchmark: context.bundle.benchmark,
         policy: context.bundle.policy,
@@ -1102,13 +1460,7 @@ export function createCoworkBranchEvolutionDriver({
         baselineRecords,
         candidateRecords,
         partitions: ['selection'],
-        evolutionLedger: buildLedger({
-          generations: generation,
-          candidatesEvaluated,
-          startedAt,
-          solverUsage: context.solverDriver.usage(),
-          updaterUsage: context.updaterDriver.usage(),
-        }),
+        evolutionLedger: ledger(generation),
       })
       await writeJsonFile(join(proposal.root, 'evaluation.json'), evaluation)
       const candidateEvaluation = createEvaluationSummary({
@@ -1152,7 +1504,14 @@ export function createCoworkBranchEvolutionDriver({
     } catch (error) {
       // Feedback/Selection/Verifier 出错属于实验基础设施或可信评测失败，不能伪装成
       // 一个“0 分 Candidate”。只有 Updater 自己产生的非法或越界提案才记 invalid。
-      if (phase !== 'update' || !(error instanceof CandidateMutationError)) throw error
+      if (phase !== 'update' || !(error instanceof CandidateMutationError)) {
+        // 保留失败尝试已经消耗的 Token/时间，但不增加 Generation 或
+        // Candidate 评测数。跨进程恢复后会从该 Ledger 继续累加，不会把失败成本“洗掉”。
+        state.spec.searchStrategyState = searchStrategyStateBefore
+        state.spec.ledger = ledger(state.spec.generationsCompleted)
+        await persist()
+        throw error
+      }
       rejection = { stage: 'update-and-diff', message: error.message, details: error.details ?? [] }
       const rejectedId = proposal?.id ?? `g${String(generation).padStart(3, '0')}-${state.spec.mutationLevel}`
       if (!state.spec.candidates.some((candidate) => candidate.id === rejectedId)) {
@@ -1185,13 +1544,7 @@ export function createCoworkBranchEvolutionDriver({
     state.spec.generationsCompleted = generation
     state.spec.lastCandidateId = historyEntry.proposalId
     state.spec.lastStepId = stepId
-    state.spec.ledger = buildLedger({
-      generations: generation,
-      candidatesEvaluated,
-      startedAt,
-      solverUsage: context.solverDriver.usage(),
-      updaterUsage: context.updaterDriver.usage(),
-    })
+    state.spec.ledger = ledger(generation)
     await appendFile(peerEvidencePath, `${JSON.stringify({
       branchId,
       ...historyEntry,
@@ -1230,6 +1583,7 @@ export function createCoworkBranchEvolutionDriver({
 
   return {
     initialize,
+    restore,
     async inspect() {
       if (!state) throw new ProtocolError(`Cowork Branch ${branchId} 尚未初始化`)
       return coworkBranchProjection({ branchId, state })
@@ -1650,38 +2004,162 @@ export async function runPopulationEvolution({
     configDigest: frozenBundle.digest,
     fingerprint: canonicalJsonDigest({ controllerRevision, configDigest: frozenBundle.digest }),
   }
-  const orchestrator = new PopulationOrchestrator({
-    loadedCampaign,
+  const release = await acquireCampaignLock({
     campaignsRoot: populationsRoot,
     campaignId: runId,
-    frozenConfig,
-    secretValues: secretValuesFromEnvironment(requiredSecrets(bundle)),
-    progress: (event) => onEvent({ stage: event.type, ...event, message: event.type }),
-    createBranch({ branchId, branchesRoot }) {
-      return createCoworkBranchEvolutionDriver({
-        repositoryRoot,
-        experimentPath,
-        runId: `${runId}-${branchId}`,
-        branchId,
-        runRootOverride: join(branchesRoot, branchId, 'run'),
-        expectedBundleDigest: frozenBundle.digest,
-        onEvent,
-      })
-    },
+    command: 'experiment run',
   })
-  await orchestrator.initialize()
-  const state = await orchestrator.run()
-  if (state.status === 'PAUSED_INFRASTRUCTURE') {
-    throw new ProtocolError('Population 因基础设施故障暂停，拒绝把本次运行报告为成功', [
-      `runRoot=${orchestrator.store.root}`,
-    ])
+  try {
+    const orchestrator = new PopulationOrchestrator({
+      loadedCampaign,
+      campaignsRoot: populationsRoot,
+      campaignId: runId,
+      frozenConfig,
+      secretValues: secretValuesFromEnvironment(requiredSecrets(bundle)),
+      progress: (event) => onEvent({ stage: event.type, ...event, message: event.type }),
+      createBranch({ branchId, branchesRoot }) {
+        return createCoworkBranchEvolutionDriver({
+          repositoryRoot,
+          experimentPath,
+          runId: `${runId}-${branchId}`,
+          branchId,
+          runRootOverride: join(branchesRoot, branchId, 'run'),
+          expectedBundleDigest: frozenBundle.digest,
+          onEvent,
+        })
+      },
+    })
+    await orchestrator.initialize()
+    const state = await orchestrator.run()
+    if (state.status === 'PAUSED_INFRASTRUCTURE') {
+      throw new ProtocolError('Population 因基础设施故障暂停，拒绝把本次运行报告为成功', [
+        `runRoot=${orchestrator.store.root}`,
+      ])
+    }
+    return {
+      runId,
+      runRoot: orchestrator.store.root,
+      championId: state.best.candidateId,
+      state,
+      population: true,
+    }
+  } finally {
+    await release()
   }
-  return {
-    runId,
-    runRoot: orchestrator.store.root,
-    championId: state.best.candidateId,
-    state,
-    population: true,
+}
+
+/** 从已冻结的 Population + Branch 检查点恢复 Cowork 实验。 */
+export async function resumePopulationEvolution({
+  repositoryRoot,
+  runDirectory,
+  onEvent = () => {},
+}) {
+  const requestedRunRoot = resolve(runDirectory)
+  await assertPathKind(requestedRunRoot, 'Population Run Root')
+  const runRoot = await realpath(requestedRunRoot)
+  const runId = safeRunId(basename(runRoot))
+  const parentState = await readJsonFile(join(runRoot, 'public', 'state.json'))
+  if (parentState?.kind !== 'PopulationCampaignState'
+      || parentState.campaignId !== runId
+      || parentState.status !== 'PAUSED_INFRASTRUCTURE'
+      || !Array.isArray(parentState.branches)
+      || parentState.branches.length === 0) {
+    throw new ProtocolError('Population Run 当前不是可恢复的 PAUSED_INFRASTRUCTURE')
+  }
+  if (parentState.branches.some(({ branchId }) => (
+    typeof branchId !== 'string' || !/^branch-[0-9]{3}$/u.test(branchId)
+  ))) {
+    throw new ProtocolError('Population Branch ID 无效')
+  }
+
+  const branchStates = await Promise.all(parentState.branches.map(async ({ branchId }) => (
+    assertRestorableCoworkState(await readJsonFile(
+      join(runRoot, 'branches', branchId, 'run', 'state.json'),
+    ), { runId: `${runId}-${branchId}`, branchId })
+  )))
+  const experimentPaths = new Set(branchStates.map((branchState) => branchState.spec.experimentPath))
+  if (experimentPaths.size !== 1) {
+    throw new ProtocolError('Population Branch 冻结的 Experiment Path 不一致')
+  }
+  const experimentPath = resolveInside(
+    repositoryRoot,
+    [...experimentPaths][0],
+    'Population Experiment Path',
+  )
+  const controllerRevision = await trustedControllerRevision(repositoryRoot)
+  if (branchStates.some((branchState) => branchState.spec.controllerRevision !== controllerRevision)) {
+    throw new ProtocolError('Population 恢复时 Controller Revision 与 Branch 冻结值不一致')
+  }
+
+  const bundle = await loadExperimentBundle(experimentPath, repositoryRoot)
+  const requestedRuntimeRoot = resolveInside(
+    repositoryRoot,
+    bundle.target.materialization.runtimeRoot,
+    'Target Runtime Root',
+  )
+  await assertPathKind(requestedRuntimeRoot, 'Target Runtime Root')
+  const runtimeRoot = await realpath(requestedRuntimeRoot)
+  const populationsRoot = join(runtimeRoot, 'populations')
+  const expectedRunRoot = join(await realpath(populationsRoot), runId)
+  if (runRoot !== expectedRunRoot) {
+    throw new ProtocolError('Population Run Root 不属于 Experiment 声明的受控 Runtime Root')
+  }
+
+  const frozenBundle = await capturePopulationBundle(bundle, repositoryRoot)
+  if (parentState.configDigest !== frozenBundle.digest) {
+    throw new ProtocolError('Population 恢复时 Bundle Digest 与父状态不一致')
+  }
+  const storedSnapshot = await readJsonFile(join(runRoot, 'public', 'config.snapshot.json'))
+  if (canonicalJsonDigest(storedSnapshot) !== canonicalJsonDigest(frozenBundle.snapshot)) {
+    throw new ProtocolError('Population 冻结 Config Snapshot 已变化')
+  }
+  const loadedCampaign = {
+    config: frozenBundle.snapshot,
+    recipe: bundle.recipe,
+    configDigest: frozenBundle.digest,
+    fingerprint: canonicalJsonDigest({ controllerRevision, configDigest: frozenBundle.digest }),
+  }
+
+  const release = await acquireCampaignLock({
+    campaignsRoot: populationsRoot,
+    campaignId: runId,
+    command: 'experiment resume',
+  })
+  try {
+    const orchestrator = new PopulationOrchestrator({
+      loadedCampaign,
+      campaignsRoot: populationsRoot,
+      campaignId: runId,
+      frozenConfig: frozenBundle.snapshot,
+      secretValues: secretValuesFromEnvironment(requiredSecrets(bundle)),
+      progress: (event) => onEvent({ stage: event.type, ...event, message: event.type }),
+      createBranch({ branchId, branchesRoot }) {
+        return createCoworkBranchEvolutionDriver({
+          repositoryRoot,
+          experimentPath,
+          runId: `${runId}-${branchId}`,
+          branchId,
+          runRootOverride: join(branchesRoot, branchId, 'run'),
+          expectedBundleDigest: frozenBundle.digest,
+          onEvent,
+        })
+      },
+    })
+    const state = await orchestrator.resume()
+    if (state.status === 'PAUSED_INFRASTRUCTURE') {
+      throw new ProtocolError('Population 再次因基础设施故障暂停，未计为评测失败', [
+        `runRoot=${orchestrator.store.root}`,
+      ])
+    }
+    return {
+      runId,
+      runRoot: orchestrator.store.root,
+      championId: state.best.candidateId,
+      state,
+      population: true,
+    }
+  } finally {
+    await release()
   }
 }
 

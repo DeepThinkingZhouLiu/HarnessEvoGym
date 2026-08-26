@@ -159,6 +159,8 @@ continues to provide child-only sealed tests, strict promotion and rollback,
 crash recovery, single-writer locking, FD-only credentials, and post-closure
 reports. Generic Experiments prove that MSA Minimal can reuse all five modes and
 one SearchStrategy across Cowork and text Reasoning. They fail closed into
-`PAUSED_INFRASTRUCTURE`, but cross-process resume and sealed final are not yet
-available, and Gateway request budgets remain Branch-scoped. The text tasks are
-an engineering smoke, not HLE; SWE-bench remains a contract stub.
+`PAUSED_INFRASTRUCTURE`. Cowork Populations support same-Controller-revision
+cross-process resume and one-time sealed final after closure. Resume revalidates
+the frozen Bundle and Candidates, archives incomplete artifacts, and retains the
+failed attempt's resource ledger. Gateway request budgets remain Branch-scoped.
+The text tasks are an engineering smoke, not HLE; SWE-bench remains a contract stub.

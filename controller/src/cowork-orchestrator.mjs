@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { appendFile, mkdir, open, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import {
+  copyRegularTree,
   diffSnapshots,
   enforceMutationPolicy,
   mutationPolicyFor,
@@ -37,6 +38,16 @@ import { resolveTargetSource } from './target-sources.mjs'
 import { PopulationOrchestrator } from './population-orchestrator.mjs'
 
 const MAXIMUM_STRATEGY_HISTORY_ENTRIES = 64
+
+class CandidateMutationError extends Error {
+  constructor(message, details = [], cause = null) {
+    super(message)
+    this.name = 'CandidateMutationError'
+    this.kind = 'candidate'
+    this.details = details
+    this.cause = cause
+  }
+}
 
 function safeRunId(value) {
   if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9._-]{2,119}$/u.test(value)) {
@@ -474,15 +485,23 @@ async function runUpdaterGeneration({
     spec: { ...policyReport, semanticChecks: semanticReport.checks },
   })
   if (!policyReport.valid) {
-    throw new ProtocolError('Updater 产生越界 Diff', policyReport.violations.map((item) => `${item.path}: ${item.reason}`))
+    throw new CandidateMutationError(
+      'Updater 产生越界 Diff',
+      policyReport.violations.map((item) => `${item.path}: ${item.reason}`),
+    )
   }
   if (!semanticReport.valid) {
-    throw new ProtocolError(
+    throw new CandidateMutationError(
       'Candidate Preset 语义检查失败',
       semanticReport.violations.map((item) => `${item.path}: ${item.reason}`),
     )
   }
-  const report = validateMutationReport(updaterResult.report, policyReport.changes)
+  let report
+  try {
+    report = validateMutationReport(updaterResult.report, policyReport.changes)
+  } catch (error) {
+    throw new CandidateMutationError(error.message, error.details ?? [], error)
+  }
   await writeJsonFile(join(root, 'mutation-report.json'), report)
   await writeCandidateManifest(join(root, 'manifest.json'), {
     candidateId: id,
@@ -1018,7 +1037,7 @@ export function createCoworkBranchEvolutionDriver({
     } catch (error) {
       // Feedback/Selection/Verifier 出错属于实验基础设施或可信评测失败，不能伪装成
       // 一个“0 分 Candidate”。只有 Updater 自己产生的非法或越界提案才记 invalid。
-      if (phase !== 'update') throw error
+      if (phase !== 'update' || !(error instanceof CandidateMutationError)) throw error
       rejection = { stage: 'update-and-diff', message: error.message, details: error.details ?? [] }
       const rejectedId = proposal?.id ?? `g${String(generation).padStart(3, '0')}-${state.spec.mutationLevel}`
       if (!state.spec.candidates.some((candidate) => candidate.id === rejectedId)) {

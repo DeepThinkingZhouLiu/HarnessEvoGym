@@ -451,6 +451,7 @@ async function runUpdaterGeneration({
       'mutation.regions': mutationPolicy.metadata.regions.join(', '),
       'mutation.writablePaths': mutationPolicy.spec.writable.map((value) => `- ${value}`).join('\n'),
       'mutation.readOnlyPaths': mutationPolicy.spec.readOnly.map((value) => `- ${value}`).join('\n'),
+      'mutation.semanticConstraints': JSON.stringify(mutationPolicy.spec.semanticConstraints, null, 2),
       'output.mutationReportPath': `.rsi-output/${context.bundle.updater.mutationReportName}`,
     },
     feedbackPacket,

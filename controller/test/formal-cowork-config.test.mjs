@@ -22,6 +22,10 @@ test('五种 Cowork RSI 配置使用同一正式起点、严格评测与总预�
     assert.equal(bundle.recipe.spec.moduleSearch.riskCeiling, 'l1')
     assert.equal(bundle.target.id, 'msa-minimal-cowork-rsi')
     assert.equal(bundle.target.solver.runtime.maximumSteps, 12)
+    assert.equal(
+      bundle.target.mutation.semanticChecks.profile.maximums.max_steps,
+      bundle.target.solver.runtime.maximumSteps,
+    )
     assert.equal(bundle.benchmark.id, 'cowork-skillsbench-poc-v1')
     assert.equal(bundle.benchmark.partitions.feedback.instanceIds.length, 3)
     assert.equal(bundle.benchmark.partitions.selection.instanceIds.length, 2)

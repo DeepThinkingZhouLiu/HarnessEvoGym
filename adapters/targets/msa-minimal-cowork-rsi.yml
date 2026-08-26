@@ -75,7 +75,8 @@ spec:
       profile:
         path: profiles/cowork.json
         maximums:
-          max_steps: 32
+          # 与可信 Solver Runtime 的 maximumSteps 对齐，拒绝不会实际生效的搜索提案。
+          max_steps: 12
           command_timeout_seconds: 600
           max_observation_chars: 131072
           max_output_tokens: 32768

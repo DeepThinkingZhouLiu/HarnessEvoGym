@@ -69,6 +69,8 @@ test('兼容计划选择风险上限内全部 Region 时权限与旧层级完全
     assert.deepEqual(new Set(lease.spec.writable), new Set(legacy.spec.writable))
     assert.deepEqual(new Set(lease.spec.extensions), new Set(legacy.spec.extensions))
     assert.equal(lease.kind, 'MutationLease')
+    assert.deepEqual(lease.spec.semanticConstraints, target.mutation.semanticChecks)
+    assert.notEqual(lease.spec.semanticConstraints, target.mutation.semanticChecks)
   }
 })
 

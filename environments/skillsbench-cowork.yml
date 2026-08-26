@@ -59,13 +59,9 @@ spec:
     pythonCommand: python
     shellCommand: bash
     arguments: []
-    # 上游脚本会安装固定版本的评分依赖；仅可信 Verifier 可选择性继承宿主代理。
-    # Ubuntu APT 源使用 HTTP，当前本机代理会显著拖慢 apt-get；保留 HTTPS 代理给 astral.sh，APT 直接出网。
-    proxyEnvironment:
-      - HTTPS_PROXY
-      - NO_PROXY
-      - https_proxy
-      - no_proxy
+    # 该白名单是 Verifier 继承宿主代理的唯一入口。当前 SkillsBench 使用 bridge 直连；
+    # Controller 会把未列入白名单的标准代理变量显式传空，覆盖 Docker 客户端的隐式代理。
+    proxyEnvironment: []
     # 可选本机工具缓存；未设置宿主变量时仍按上游脚本直连下载。
     dependencyEnvironment:
       UV_DOWNLOAD_URL: RSI_VERIFIER_UV_DOWNLOAD_URL

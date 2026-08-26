@@ -28,7 +28,7 @@ test('root Verifier 只读挂载 Solver 工作区并在退出时修复日志归�
       shellCommand: 'bash',
       arguments: [],
       outputCandidates: ['/logs/verifier/reward.txt'],
-      proxyEnvironment: ['HTTP_PROXY', 'HTTPS_PROXY'],
+      proxyEnvironment: [],
       dependencyEnvironment: { UV_DOWNLOAD_URL: 'RSI_TEST_VERIFIER_UV_DOWNLOAD_URL' },
       network: 'bridge',
       runAsCurrentUser: false,
@@ -68,10 +68,19 @@ test('root Verifier 只读挂载 Solver 工作区并在退出时修复日志归�
   assert.ok(runOptions.environment.PATH.startsWith('/opt/venv/bin:'))
   assert.equal(runOptions.environment.UV_DOWNLOAD_URL, 'http://host.docker.internal:17891')
   assert.equal(runOptions.hostGateway, true)
-  assert.deepEqual(
-    runOptions.inheritEnvironment,
-    ['HTTP_PROXY', 'HTTPS_PROXY'].filter((nameValue) => Boolean(process.env[nameValue])),
-  )
+  assert.deepEqual(runOptions.inheritEnvironment, [])
+  for (const name of [
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'ALL_PROXY',
+    'NO_PROXY',
+    'http_proxy',
+    'https_proxy',
+    'all_proxy',
+    'no_proxy',
+  ]) {
+    assert.equal(runOptions.environment[name], '', `${name} 必须显式传空`)
+  }
 })
 
 test('Verifier 缺少结构化评分证据时自动重试，不能把基础设施故障记成 0 分', async () => {

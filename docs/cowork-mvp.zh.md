@@ -91,7 +91,7 @@ Updater 使用统一 DSH Runtime，挂载关系如下：
 
 Verifier 与 Agent 分开启动。Solver 不挂载 Verifier；Verifier 能读 Trial 工作区和自己的评分脚本，但它的结果还要由 Controller 归一化、检查范围并参与 Gate。
 
-上游 Verifier 若需要临时下载固定版本依赖，可以按 Environment Adapter 的标准代理白名单继承宿主已设置的代理变量；该能力只属于可信 Verifier，不会打通 Solver/Updater 的 internal network。
+上游 Verifier 若需要临时下载固定版本依赖，可以按 Environment Adapter 的标准代理白名单继承宿主已设置的代理变量；该白名单是唯一继承入口，其余标准代理键会显式传空，以覆盖 Docker 客户端配置可能注入的代理。当前 SkillsBench Adapter 使用空白名单直接出网。该能力只属于可信 Verifier，不会打通 Solver/Updater 的 internal network。
 
 慢速环境还可以为可信 Verifier 映射固定版本的本机依赖缓存 URL；Controller 只接受 `UV_DOWNLOAD_URL`、`PIP_INDEX_URL`、`UV_INDEX_URL` 三个目标变量，并只为 Verifier 提供 `host.docker.internal`，Agent 仍无该入口。
 

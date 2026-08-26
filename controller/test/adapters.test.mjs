@@ -29,7 +29,7 @@ test('Cowork Experiment 分别固定 Target/Updater Source 和模型上限', asy
   assert.equal(bundle.experiment.models.updater.model, 'gpt-5.6-terra')
   assert.equal(bundle.environment.modelGateway.upstreamApiKeyEnvironment, 'RSI_PROVIDER_API_KEY')
   assert.equal(bundle.environment.modelGateway.maximumRequestsPerRun, 512)
-  assert.ok(bundle.environment.verifier.proxyEnvironment.includes('HTTPS_PROXY'))
+  assert.deepEqual(bundle.environment.verifier.proxyEnvironment, [])
   assert.equal(
     bundle.environment.verifier.dependencyEnvironment.UV_DOWNLOAD_URL,
     'RSI_VERIFIER_UV_DOWNLOAD_URL',

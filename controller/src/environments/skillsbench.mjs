@@ -40,6 +40,32 @@ const MAXIMUM_VERIFIER_REWARD_BYTES = 1024 * 1024
 const MAXIMUM_VERIFIER_EVIDENCE_BYTES = 4 * 1024 * 1024
 // `/opt/venv` 是部分固定 Task Image 在构建期创建的只读可信环境，不来自 Solver 提交物。
 const TRUSTED_VERIFIER_PATH = '/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+// Docker CLI 可能从 ~/.docker/config.json 隐式注入这些变量。未在 Adapter 白名单中的键
+// 必须显式传空，不能仅仅从 inheritEnvironment 中省略。
+const STANDARD_VERIFIER_PROXY_ENVIRONMENT = Object.freeze([
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'all_proxy',
+  'no_proxy',
+])
+
+function verifierProxyForwarding(verifier, hostEnvironment = process.env) {
+  const allowlist = new Set(verifier.proxyEnvironment ?? [])
+  const environment = {}
+  const inheritEnvironment = []
+  for (const name of STANDARD_VERIFIER_PROXY_ENVIRONMENT) {
+    if (allowlist.has(name) && hostEnvironment[name]) {
+      inheritEnvironment.push(name)
+    } else {
+      environment[name] = ''
+    }
+  }
+  return { environment, inheritEnvironment }
+}
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
@@ -473,6 +499,7 @@ export class SkillsBenchEnvironment {
             ? [[containerName, process.env[hostName]]]
             : []),
       )
+      const proxyForwarding = verifierProxyForwarding(this.environment.verifier)
       try {
         result = await this.docker.run({
           image,
@@ -507,11 +534,11 @@ export class SkillsBenchEnvironment {
             RSI_HOST_UID: String(typeof process.getuid === 'function' ? process.getuid() : ''),
             RSI_HOST_GID: String(typeof process.getgid === 'function' ? process.getgid() : ''),
             RSI_VERIFIER_WORKSPACE: this.environment.task.workspacePath,
+            ...proxyForwarding.environment,
             ...dependencyEnvironment,
           },
-          // 只有可信 Verifier 可以按 Adapter 白名单继承代理；Solver/Updater 仍在 internal network。
-          inheritEnvironment: (this.environment.verifier.proxyEnvironment ?? [])
-            .filter((nameValue) => Boolean(process.env[nameValue])),
+          // 只有可信 Verifier 可以按 Adapter 白名单继承代理；其余键已显式传空。
+          inheritEnvironment: proxyForwarding.inheritEnvironment,
           network: this.environment.verifier.network,
           // 仅可信 Verifier 可解析宿主工具缓存；Agent 容器从不启用此入口。
           hostGateway: true,

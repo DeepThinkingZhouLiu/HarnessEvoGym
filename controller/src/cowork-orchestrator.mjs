@@ -5,6 +5,7 @@ import {
   mkdir,
   open,
   readFile,
+  readdir,
   realpath,
   rename,
   stat,
@@ -135,6 +136,35 @@ async function trustedControllerRevision(repositoryRoot) {
     throw new ProtocolError('Controller 信任根必须先提交，再开始或继续实验', [dirty.stdout.trim()])
   }
   return value
+}
+
+async function assertControllerRevisionForFinal({
+  repositoryRoot,
+  frozenRevision,
+  currentRevision,
+  recoveryRequested,
+}) {
+  if (currentRevision === frozenRevision) return
+  if (!recoveryRequested) {
+    throw new ProtocolError('当前 Controller Revision 与 Run 冻结值不一致', [
+      `run=${frozenRevision ?? '(missing)'}`,
+      `current=${currentRevision}`,
+    ])
+  }
+  if (typeof frozenRevision !== 'string' || !/^[0-9a-f]{40}$/u.test(frozenRevision)) {
+    throw new ProtocolError('Run 缺少合法的冻结 Controller Revision')
+  }
+  const ancestry = await runProcess(
+    'git',
+    ['-C', repositoryRoot, 'merge-base', '--is-ancestor', frozenRevision, currentRevision],
+    { timeoutMs: 30_000, allowExitCodes: [0, 1] },
+  )
+  if (ancestry.exitCode !== 0) {
+    throw new ProtocolError('Final Recovery Controller 必须继承原进化 Controller Revision', [
+      `run=${frozenRevision}`,
+      `current=${currentRevision}`,
+    ])
+  }
 }
 
 async function pinnedSubmoduleRevision(repositoryRoot, sourcePath) {
@@ -729,6 +759,174 @@ export async function claimFinalAttempt(runRoot, { attemptId, startedAt }) {
     await handle.close()
   }
   return claimPath
+}
+
+export async function claimFinalRecoveryAttempt(runRoot, {
+  attemptId,
+  startedAt,
+  recoveredFromAttemptId,
+  evolutionControllerRevision,
+  finalizerControllerRevision,
+}) {
+  const claimPath = join(runRoot, 'final-recovery-attempt.json')
+  let handle
+  try {
+    handle = await open(claimPath, 'wx', 0o444)
+  } catch (error) {
+    if (error.code === 'EEXIST') {
+      throw new ProtocolError('Final Recovery Attempt 已被领取；禁止再次恢复')
+    }
+    throw new ProtocolError('无法原子领取 Final Recovery Attempt', [error.message])
+  }
+  try {
+    await handle.writeFile(`${JSON.stringify({
+      apiVersion: 'harness-rsi/v1alpha1',
+      kind: 'FinalRecoveryAttemptClaim',
+      metadata: { attemptId, startedAt },
+      spec: {
+        recoveredFromAttemptId,
+        evolutionControllerRevision,
+        finalizerControllerRevision,
+      },
+    }, null, 2)}\n`, 'utf8')
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  return claimPath
+}
+
+async function controllerEntry(pathValue, label) {
+  try {
+    const info = await lstat(pathValue)
+    if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile())) {
+      throw new ProtocolError(`${label} 必须是 Controller 创建的普通文件或目录`)
+    }
+    return info
+  } catch (error) {
+    if (error.code === 'ENOENT') return null
+    throw error
+  }
+}
+
+function finalTrialRoot(runRoot, generation, candidateId, partition, attemptId) {
+  const outputPath = resultPath(
+    runRoot,
+    generation,
+    candidateId,
+    `${partition}-final-${attemptId}`,
+  )
+  const executionId = createHash('sha256').update(resolve(outputPath)).digest('hex').slice(0, 12)
+  return join(runRoot, 'trials', executionId)
+}
+
+async function inspectFailedFinalArtifacts({
+  runRoot,
+  failedAttemptId,
+  baselineId,
+  championId,
+  generationsCompleted,
+}) {
+  if (typeof failedAttemptId !== 'string'
+      || !/^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/u.test(failedAttemptId)) {
+    throw new ProtocolError('待恢复的 Final Attempt ID 无效')
+  }
+  const generation = generationsCompleted + 1
+  if (!Number.isSafeInteger(generation) || generation < 1) {
+    throw new ProtocolError('待恢复的 Final 缺少合法轮次')
+  }
+  const candidateIds = [...new Set([
+    safeCandidateId(baselineId),
+    safeCandidateId(championId),
+  ])]
+  const finalTrialRoots = candidateIds.map((candidateId) => (
+    finalTrialRoot(runRoot, generation, candidateId, 'final', failedAttemptId)
+  ))
+  for (const pathValue of finalTrialRoots) {
+    assertInside(runRoot, pathValue, 'Final Recovery 密封证据路径')
+    if (await controllerEntry(pathValue, 'Final 试验产物')) {
+      throw new ProtocolError('失败的 Final Attempt 已接触 sealed final；禁止恢复')
+    }
+  }
+
+  const generationResults = join(runRoot, 'results', `generation-${generation}`)
+  const resultInfo = await controllerEntry(generationResults, 'Final Result 轮次')
+  const allowedFeedbackResults = new Set(candidateIds.map(
+    (candidateId) => `${candidateId}-feedback-final-${failedAttemptId}.jsonl`,
+  ))
+  if (resultInfo) {
+    if (!resultInfo.isDirectory()) throw new ProtocolError('Final Result 轮次必须是普通目录')
+    const entries = await readdir(generationResults, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isFile() || !allowedFeedbackResults.has(entry.name)) {
+        throw new ProtocolError('Final Result 轮次存在非 Feedback 产物；禁止恢复', [entry.name])
+      }
+    }
+  }
+
+  const feedbackTrialRoots = candidateIds.map((candidateId) => (
+    finalTrialRoot(runRoot, generation, candidateId, 'feedback', failedAttemptId)
+  ))
+  const sources = []
+  if (resultInfo) sources.push(generationResults)
+  for (const pathValue of feedbackTrialRoots) {
+    assertInside(runRoot, pathValue, 'Final Recovery Feedback 路径')
+    const info = await controllerEntry(pathValue, 'Final Feedback 试验产物')
+    if (info && !info.isDirectory()) {
+      throw new ProtocolError('Final Feedback 试验产物必须是普通目录')
+    }
+    if (info) sources.push(pathValue)
+  }
+  return { generation, sources: [...new Set(sources)].sort() }
+}
+
+/**
+ * 只归档失败 Final 的公开 Feedback 回放；只要发现 sealed final 证据就 fail closed。
+ */
+export async function archiveFailedFinalAttempt({
+  runRoot,
+  failedAttemptId,
+  baselineId,
+  championId,
+  generationsCompleted,
+  now = () => new Date(),
+}) {
+  const inspection = await inspectFailedFinalArtifacts({
+    runRoot,
+    failedAttemptId,
+    baselineId,
+    championId,
+    generationsCompleted,
+  })
+  if (inspection.sources.length === 0) return null
+
+  const archivedAt = now().toISOString()
+  const archiveId = `${archivedAt.replace(/[:.]/gu, '-').toLowerCase()}-${randomUUID().slice(0, 8)}`
+  const archiveBase = join(runRoot, 'final-recovery')
+  const archiveRoot = join(archiveBase, `${failedAttemptId}-${archiveId}`)
+  await mkdir(archiveBase, { recursive: true, mode: 0o700 })
+  await mkdir(archiveRoot, { recursive: false, mode: 0o700 })
+  const archived = []
+  for (const source of inspection.sources) {
+    const relativePath = relative(runRoot, source).replaceAll('\\', '/')
+    const destination = join(archiveRoot, relativePath)
+    assertInside(archiveRoot, destination, 'Final Recovery 归档路径')
+    await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
+    await rename(source, destination)
+    archived.push(relativePath)
+  }
+  const manifest = {
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'FinalRecoveryArchive',
+    metadata: { recoveredFromAttemptId: failedAttemptId, archivedAt },
+    spec: {
+      generation: inspection.generation,
+      sealedFinalAccessed: false,
+      archived,
+    },
+  }
+  await writeJsonFile(join(archiveRoot, 'manifest.json'), manifest)
+  return { root: archiveRoot, manifest }
 }
 
 async function assertCandidateIntegrity({
@@ -2211,7 +2409,11 @@ async function savePopulationFinalState(authorization, final, type, details = {}
   return next
 }
 
-async function loadPopulationFinalAuthorization({ repositoryRoot, populationRoot }) {
+async function loadPopulationFinalAuthorization({
+  repositoryRoot,
+  populationRoot,
+  recoverInfrastructure = false,
+}) {
   const state = await readJsonFile(join(populationRoot, 'public', 'state.json'))
   if (
     state?.apiVersion !== 'harness-rsi/v1alpha1' ||
@@ -2224,22 +2426,22 @@ async function loadPopulationFinalAuthorization({ repositoryRoot, populationRoot
   if (!['CLOSED', 'REPORTED'].includes(state.status)) {
     throw new ProtocolError('只有已关闭的 Population 可以执行 Final Evaluation')
   }
-  if (state.final !== null && state.final !== undefined) {
+  if (!recoverInfrastructure && state.final !== null && state.final !== undefined) {
     throw new ProtocolError('Population Final Partition 已经解封过；禁止重复访问')
+  }
+  if (recoverInfrastructure && (
+    state.final?.evaluated !== false
+    || typeof state.final?.attemptId !== 'string'
+    || typeof state.final?.failedAt !== 'string'
+    || state.final?.failure?.name !== 'FinalEvaluationError'
+  )) {
+    throw new ProtocolError('只能恢复已明确记录基础设施失败的 Population Final')
   }
   safeRunId(state.campaignId)
   if (typeof state.configDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(state.configDigest)
       || typeof state.configFingerprint !== 'string'
       || !/^[a-f0-9]{64}$/u.test(state.configFingerprint)) {
     throw new ProtocolError('Population 缺少可验证的冻结配置摘要')
-  }
-  const currentControllerRevision = await trustedControllerRevision(repositoryRoot)
-  const expectedFingerprint = canonicalJsonDigest({
-    controllerRevision: currentControllerRevision,
-    configDigest: state.configDigest,
-  })
-  if (expectedFingerprint !== state.configFingerprint) {
-    throw new ProtocolError('当前 Controller Revision 或 Population Bundle 与冻结指纹不一致')
   }
   const branchId = state.best?.branchId
   if (typeof branchId !== 'string' || !/^branch-[0-9]{3}$/u.test(branchId)) {
@@ -2275,11 +2477,20 @@ async function loadPopulationFinalAuthorization({ repositoryRoot, populationRoot
   if (branchState.spec.branchId !== branchId) {
     throw new ProtocolError('Population Best Branch 与子 Run 身份不一致')
   }
-  if (!['running', 'stopped', 'completed'].includes(branchState.metadata.status)) {
-    throw new ProtocolError(`Population Best Branch 不能执行 Final：${branchState.metadata.status}`)
-  }
-  if (branchState.spec.final !== null) {
-    throw new ProtocolError('Population Best Branch Final 已经解封过')
+  if (recoverInfrastructure) {
+    if (branchState.metadata.status !== 'final-failed'
+        || branchState.spec.final?.evaluated !== false
+        || branchState.spec.final?.attemptId !== state.final.attemptId
+        || typeof branchState.spec.final?.failedAt !== 'string') {
+      throw new ProtocolError('Population 与 Best Branch 的 Final 失败状态不一致')
+    }
+  } else {
+    if (!['running', 'stopped', 'completed'].includes(branchState.metadata.status)) {
+      throw new ProtocolError(`Population Best Branch 不能执行 Final：${branchState.metadata.status}`)
+    }
+    if (branchState.spec.final !== null) {
+      throw new ProtocolError('Population Best Branch Final 已经解封过')
+    }
   }
   if (branchState.spec.championId !== state.best.candidateId) {
     throw new ProtocolError('Population Best Candidate 与子 Run Champion 不一致')
@@ -2290,7 +2501,54 @@ async function loadPopulationFinalAuthorization({ repositoryRoot, populationRoot
   if (!champion || champion.digest !== state.best.digest) {
     throw new ProtocolError('Population Best Candidate Digest 与子 Run 不一致')
   }
-  return { root: populationRoot, store, state, branchId, runRoot, branchState }
+  const frozenControllerRevision = branchState.spec.controllerRevision
+  const expectedFingerprint = canonicalJsonDigest({
+    controllerRevision: frozenControllerRevision,
+    configDigest: state.configDigest,
+  })
+  if (expectedFingerprint !== state.configFingerprint) {
+    throw new ProtocolError('Population Bundle 与原 Controller Revision 的冻结指纹不一致')
+  }
+  const currentControllerRevision = await trustedControllerRevision(repositoryRoot)
+  await assertControllerRevisionForFinal({
+    repositoryRoot,
+    frozenRevision: frozenControllerRevision,
+    currentRevision: currentControllerRevision,
+    recoveryRequested: recoverInfrastructure,
+  })
+
+  let recovery = null
+  if (recoverInfrastructure) {
+    if (state.final.branchId !== branchId || state.final.candidateId !== state.best.candidateId) {
+      throw new ProtocolError('Population Final 失败记录与锁定 Champion 不一致')
+    }
+    const claim = await readJsonFile(join(populationRoot, 'final-attempt.json'))
+    if (claim?.apiVersion !== 'harness-rsi/v1alpha1'
+        || claim.kind !== 'FinalAttemptClaim'
+        || claim.metadata?.attemptId !== state.final.attemptId
+        || claim.metadata?.startedAt !== state.final.startedAt) {
+      throw new ProtocolError('原 Final Attempt Claim 与失败状态不一致')
+    }
+    if (await pathExists(join(store.reportRoot, 'final-evaluation.json'))) {
+      throw new ProtocolError('Final 报告已存在；禁止恢复')
+    }
+    recovery = {
+      failedFinal: structuredClone(branchState.spec.final),
+      recoveredFromAttemptId: state.final.attemptId,
+      evolutionControllerRevision: frozenControllerRevision,
+      finalizerControllerRevision: currentControllerRevision,
+    }
+  }
+  return {
+    root: populationRoot,
+    store,
+    state,
+    branchId,
+    runRoot,
+    branchState,
+    currentControllerRevision,
+    recovery,
+  }
 }
 
 async function finalizeCoworkRun({
@@ -2298,22 +2556,37 @@ async function finalizeCoworkRun({
   runRoot,
   state,
   population = null,
+  recovery = null,
   onEvent = () => {},
 }) {
   assertEvolutionRunState(state)
+  if (recovery !== null && population === null) {
+    throw new ProtocolError('Final Recovery 只支持有父层审计状态的 Population Run')
+  }
   if (population === null && state.metadata.status !== 'completed') {
     throw new ProtocolError('只有 completed Run 可以执行 Final Evaluation')
   }
-  if (state.spec.final !== null) throw new ProtocolError('Final Partition 已经解封过；禁止重复访问')
+  if (recovery === null && state.spec.final !== null) {
+    throw new ProtocolError('Final Partition 已经解封过；禁止重复访问')
+  }
+  if (recovery !== null && (
+    state.metadata.status !== 'final-failed'
+    || state.spec.final?.attemptId !== recovery.recoveredFromAttemptId
+  )) {
+    throw new ProtocolError('Final Recovery 与子 Run 失败状态不一致')
+  }
   safeRunId(state.metadata.id)
   const baselineId = safeCandidateId(state.spec.baselineId)
   const championId = safeCandidateId(state.spec.championId)
   const controllerRevision = await trustedControllerRevision(repositoryRoot)
-  if (controllerRevision !== state.spec.controllerRevision) {
+  if (recovery === null && controllerRevision !== state.spec.controllerRevision) {
     throw new ProtocolError('当前 Controller Revision 与 Run 冻结值不一致', [
       `run=${state.spec.controllerRevision ?? '(missing)'}`,
       `current=${controllerRevision}`,
     ])
+  }
+  if (recovery !== null && controllerRevision !== recovery.finalizerControllerRevision) {
+    throw new ProtocolError('Final Recovery 预授权的 Controller Revision 已变更')
   }
   const experimentPath = resolveInside(repositoryRoot, state.spec.experimentPath, 'Run Experiment Path')
   const context = await createContext({
@@ -2406,10 +2679,48 @@ async function finalizeCoworkRun({
 
   const finalAttemptId = randomUUID()
   const finalStartedAt = new Date().toISOString()
-  await claimFinalAttempt(population?.root ?? runRoot, {
-    attemptId: finalAttemptId,
-    startedAt: finalStartedAt,
-  })
+  const generation = state.spec.generationsCompleted + 1
+  let recoveryArchive = null
+  let finalAudit = {}
+  if (recovery === null) {
+    await claimFinalAttempt(population?.root ?? runRoot, {
+      attemptId: finalAttemptId,
+      startedAt: finalStartedAt,
+    })
+  } else {
+    // 领取 Recovery 前先证明上次尝试没有任何 sealed-final 产物。原 Claim 不删除，
+    // Recovery Claim 也是一次性的，因此并发或二次失败都不会导致反复解封。
+    await inspectFailedFinalArtifacts({
+      runRoot,
+      failedAttemptId: recovery.recoveredFromAttemptId,
+      baselineId,
+      championId,
+      generationsCompleted: state.spec.generationsCompleted,
+    })
+    await claimFinalRecoveryAttempt(population.root, {
+      attemptId: finalAttemptId,
+      startedAt: finalStartedAt,
+      recoveredFromAttemptId: recovery.recoveredFromAttemptId,
+      evolutionControllerRevision: recovery.evolutionControllerRevision,
+      finalizerControllerRevision: recovery.finalizerControllerRevision,
+    })
+    recoveryArchive = await archiveFailedFinalAttempt({
+      runRoot,
+      failedAttemptId: recovery.recoveredFromAttemptId,
+      baselineId,
+      championId,
+      generationsCompleted: state.spec.generationsCompleted,
+    })
+    finalAudit = {
+      recoveredFrom: recovery.failedFinal,
+      recoveredFromAttemptId: recovery.recoveredFromAttemptId,
+      evolutionControllerRevision: recovery.evolutionControllerRevision,
+      finalizerControllerRevision: recovery.finalizerControllerRevision,
+      recoveryArchive: recoveryArchive === null
+        ? null
+        : relative(runRoot, recoveryArchive.root).replaceAll('\\', '/'),
+    }
+  }
   if (population !== null) {
     await savePopulationFinalState(population, {
       evaluated: false,
@@ -2417,15 +2728,30 @@ async function finalizeCoworkRun({
       startedAt: finalStartedAt,
       branchId: population.branchId,
       candidateId: championId,
-    }, 'POPULATION_FINAL_STARTED', {
+      ...(recovery === null ? {} : {
+        recoveredFromAttemptId: recovery.recoveredFromAttemptId,
+        evolutionControllerRevision: recovery.evolutionControllerRevision,
+        finalizerControllerRevision: recovery.finalizerControllerRevision,
+        recoveryArchive: finalAudit.recoveryArchive,
+      }),
+    }, recovery === null ? 'POPULATION_FINAL_STARTED' : 'POPULATION_FINAL_RECOVERY_STARTED', {
       branchId: population.branchId,
       candidateId: championId,
+      ...(recovery === null ? {} : {
+        recoveredFromAttemptId: recovery.recoveredFromAttemptId,
+        evolutionControllerRevision: recovery.evolutionControllerRevision,
+        finalizerControllerRevision: recovery.finalizerControllerRevision,
+      }),
     })
   }
   state.metadata.status = 'finalizing'
-  state.spec.final = { evaluated: false, attemptId: finalAttemptId, startedAt: finalStartedAt }
+  state.spec.final = {
+    evaluated: false,
+    attemptId: finalAttemptId,
+    startedAt: finalStartedAt,
+    ...finalAudit,
+  }
 
-  const generation = state.spec.generationsCompleted + 1
   try {
     await writeJsonFile(join(runRoot, 'state.json'), state)
     const baselineFeedbackRecords = await environment.runCandidatePartition({
@@ -2490,6 +2816,7 @@ async function finalizeCoworkRun({
       completedAt: new Date().toISOString(),
       baselineId,
       candidateId: championId,
+      ...finalAudit,
       report: population === null
         ? relative(runRoot, reportPath).replaceAll('\\', '/')
         : `population://${population.state.campaignId}/report/final-evaluation.json`,
@@ -2505,6 +2832,12 @@ async function finalizeCoworkRun({
         branchId: population.branchId,
         baselineId,
         candidateId: championId,
+        ...(recovery === null ? {} : {
+          recoveredFromAttemptId: recovery.recoveredFromAttemptId,
+          evolutionControllerRevision: recovery.evolutionControllerRevision,
+          finalizerControllerRevision: recovery.finalizerControllerRevision,
+          recoveryArchive: finalAudit.recoveryArchive,
+        }),
         report: 'report/final-evaluation.json',
         metrics: report.rsiMetrics,
       }, 'POPULATION_FINAL_COMPLETED', {
@@ -2512,6 +2845,10 @@ async function finalizeCoworkRun({
         baselineId,
         candidateId: championId,
         report: 'report/final-evaluation.json',
+        ...(recovery === null ? {} : {
+          recoveredFromAttemptId: recovery.recoveredFromAttemptId,
+          finalizerControllerRevision: recovery.finalizerControllerRevision,
+        }),
       })
     }
     onEvent({ stage: 'finalized', message: `Final 报告已写入 ${reportPath}` })
@@ -2539,6 +2876,10 @@ async function finalizeCoworkRun({
         branchId: population.branchId,
         candidateId: championId,
         failure,
+        ...(recovery === null ? {} : {
+          recoveredFromAttemptId: recovery.recoveredFromAttemptId,
+          finalizerControllerRevision: recovery.finalizerControllerRevision,
+        }),
       })
     }
     throw error
@@ -2550,18 +2891,31 @@ async function finalizeCoworkRun({
   }
 }
 
-export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent = () => {} }) {
+export async function finalizeEvolution({
+  repositoryRoot,
+  runDirectory,
+  recoverInfrastructure = false,
+  onEvent = () => {},
+}) {
   const runRoot = await realpath(resolve(runDirectory))
   assertInside(resolve(repositoryRoot, '.rsi/runs'), runRoot, 'Evolution Run')
   if (await pathExists(join(runRoot, 'public', 'state.json'))) {
-    const population = await loadPopulationFinalAuthorization({ repositoryRoot, populationRoot: runRoot })
+    const population = await loadPopulationFinalAuthorization({
+      repositoryRoot,
+      populationRoot: runRoot,
+      recoverInfrastructure,
+    })
     return await finalizeCoworkRun({
       repositoryRoot,
       runRoot: population.runRoot,
       state: population.branchState,
       population,
+      recovery: population.recovery,
       onEvent,
     })
+  }
+  if (recoverInfrastructure) {
+    throw new ProtocolError('Final Recovery 只支持 Population Run')
   }
   const state = await readJsonFile(join(runRoot, 'state.json'))
   return await finalizeCoworkRun({ repositoryRoot, runRoot, state, onEvent })

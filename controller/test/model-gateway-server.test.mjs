@@ -414,6 +414,89 @@ test('Model Gateway 按 Solver/Updater 强制覆盖可信模型并分角色计�
   }
 })
 
+test('Model Gateway 在未下发 Header 前有限重试上游 502/503/504', async () => {
+  const providerKey = 'provider-key-for-retry-test'
+  const gatewayToken = 'a'.repeat(64)
+  let upstreamAttempts = 0
+  const upstream = http.createServer((request, response) => {
+    request.resume()
+    request.once('end', () => {
+      upstreamAttempts += 1
+      if (upstreamAttempts === 1) {
+        response.writeHead(503, { 'content-type': 'application/json' })
+        response.end('{"error":"overloaded"}')
+        return
+      }
+      if (upstreamAttempts === 2) {
+        response.writeHead(502, { 'content-type': 'application/json' })
+        response.end('{"error":"bad_gateway"}')
+        return
+      }
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end([
+        'data: {"choices":[{"delta":{"content":"recovered"}}]}',
+        '',
+        'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}',
+        '',
+        'data: [DONE]',
+        '',
+      ].join('\n'))
+    })
+  })
+  const upstreamPort = await listen(upstream)
+  const gatewayPort = await freePort()
+  const stderr = []
+  const child = spawn(process.execPath, [resolve(repositoryRoot, 'docker/model-gateway/server.mjs')], {
+    env: {
+      ...process.env,
+      GATEWAY_PORT: String(gatewayPort),
+      GATEWAY_TOKEN: gatewayToken,
+      UPSTREAM_API_KEY_ENV: 'TEST_UPSTREAM_KEY',
+      UPSTREAM_BASE_URL_ENV: 'TEST_UPSTREAM_URL',
+      GATEWAY_MAX_REQUESTS: '10',
+      GATEWAY_MAX_CONCURRENT_REQUESTS: '2',
+      TEST_UPSTREAM_KEY: providerKey,
+      TEST_UPSTREAM_URL: `http://127.0.0.1:${upstreamPort}/v1`,
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  })
+  child.stderr.on('data', (chunk) => stderr.push(chunk.toString('utf8')))
+  const gatewayUrl = `http://127.0.0.1:${gatewayPort}`
+
+  try {
+    await waitForGateway(gatewayUrl, child, stderr)
+    const proxied = await fetch(`${gatewayUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${gatewayToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'retry' }] }),
+    })
+    assert.equal(proxied.status, 200)
+    assert.match(await proxied.text(), /recovered/u)
+    assert.equal(upstreamAttempts, 3)
+
+    const usageResponse = await fetch(`${gatewayUrl}/rsi/usage`, {
+      headers: { authorization: `Bearer ${gatewayToken}` },
+    })
+    assert.deepEqual(await usageResponse.json(), {
+      acceptedRequests: 1,
+      activeRequests: 0,
+      usageResponses: 1,
+      unknownUsageResponses: 0,
+      inputTokens: 5,
+      outputTokens: 3,
+      cacheReadTokens: 0,
+      reasoningTokens: 0,
+    })
+  } finally {
+    child.kill('SIGTERM')
+    if (child.exitCode === null) await new Promise((resolveExit) => child.once('exit', resolveExit))
+    await new Promise((resolveClose) => upstream.close(resolveClose))
+  }
+})
+
 test('Model Gateway 在预缓冲、大量异步分块和慢客户端下原样转发 SSE', async () => {
   const providerKey = 'provider-key-for-stream-test'
   const legacyToken = 'a'.repeat(64)

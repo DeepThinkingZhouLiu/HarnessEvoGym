@@ -33,7 +33,7 @@ const HELP = `HarnessEvoGym Controller
   harness-rsi runtime build --experiment <experiment.json>
   harness-rsi experiment run --config <experiment.json> [--run-id <id>]
   harness-rsi experiment resume --run <population-run>
-  harness-rsi experiment finalize --run <single-run | population-run>
+  harness-rsi experiment finalize --run <single-run | population-run> [--recover-infrastructure]
   harness-rsi benchmark validate --config <benchmark.json> [--output <report.json>]
   harness-rsi evaluate compare \\
     --benchmark <benchmark.json> \\
@@ -63,7 +63,8 @@ const HELP = `HarnessEvoGym Controller
   - 本入口消费标准化 Solver Result，不直接执行候选仓库里的任何命令。
   - experiment run 只使用 feedback 与 selection，永远不会读取 final。
   - experiment resume 只恢复同一 Controller Revision 下的 Cowork Population 检查点。
-  - experiment finalize 是唯一允许解锁 Cowork sealed final 的入口，单 Run 或 Population 都只能执行一次。
+  - experiment finalize 是唯一允许解锁 Cowork sealed final 的入口。
+  - --recover-infrastructure 只能在 Population 上次失败且从未访问 sealed final 时使用，并且只能恢复一次。
   - Provider 密钥只从运行时环境变量读取，不写入 Experiment 或 .rsi 产物。
 `
 
@@ -205,10 +206,14 @@ async function evolveResumeCommand(args) {
 }
 
 async function evolveFinalizeCommand(args) {
-  const { options } = parseOptions(args, { valueOptions: new Set(['run', 'output']) })
+  const { options, flags } = parseOptions(args, {
+    valueOptions: new Set(['run', 'output']),
+    booleanFlags: new Set(['recover-infrastructure']),
+  })
   const result = await finalizeEvolution({
     repositoryRoot: REPOSITORY_ROOT,
     runDirectory: requiredPath(options, 'run'),
+    recoverInfrastructure: flags.has('recover-infrastructure'),
     onEvent: progress,
   })
   await emit({

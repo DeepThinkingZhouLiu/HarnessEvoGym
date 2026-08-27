@@ -316,6 +316,12 @@ for mode in single independent mutualism competition combined; do
   # Population 关闭并锁定全局最优 Branch 后，只解封一次 final。
   npm run rsi -- experiment finalize \
     --run ".rsi/runs/populations/cowork-rsi-linear-${mode}-001"
+
+  # 仅当 Final 因基础设施失败，且 Controller 证明尚未创建任何 sealed-final
+  # 产物时，可显式执行一次受审计恢复：
+  # npm run rsi -- experiment finalize \
+  #   --run ".rsi/runs/populations/cowork-rsi-linear-${mode}-001" \
+  #   --recover-infrastructure
 done
 
 unset RSI_PROVIDER_API_KEY
@@ -324,8 +330,12 @@ unset RSI_PROVIDER_API_KEY
 `experiment run` 进化期只读 feedback/selection。单 Champion 与通用 Population 都使用
 `experiment finalize` 做一次性 final 评测；Population 入口会核对父状态、
 `best-harness.json`、Best Branch Champion 和 Candidate Digest，然后仅比较该最优
-Champion 与冻结 H0。父目录中的 `final-attempt.json` 使并发或失败重试无法反复查看
-sealed final，报告写入 `report/final-evaluation.json`。
+Champion 与冻结 H0。父目录中的 `final-attempt.json` 使并发进程无法反复查看
+sealed final，报告写入 `report/final-evaluation.json`。如果第一次 Final 在仅回放公开
+feedback 时因上游 502/503/504 等基础设施故障失败，Controller 会在确认没有任何
+sealed-final 路径或结果后，允许显式的 `--recover-infrastructure` 恢复一次。原 Claim
+与失败事件始终保留，未完成的 feedback 证据会归档到 `final-recovery/`；一旦已接触
+sealed final，或 Recovery 自身再失败，都会永久拒绝再次解封。
 
 Reasoning 的 Synthetic Text 五 Mode 仍只是工程冒烟。HLE 正式实验必须先准备门控
 `cais/hle` 数据、sealed split、固定 MSA Source 与专用 Runtime；这些条件缺失时，
@@ -335,8 +345,10 @@ Reasoning 的 Synthetic Text 五 Mode 仍只是工程冒烟。HLE 正式实验�
 `PAUSED_INFRASTRUCTURE` 并让命令失败，绝不会冒充 0 分成功结束。Cowork Population 可以用
 `experiment resume --run <population-run>` 在同一个 Controller Revision 下继续；恢复时会重验冻结
 Bundle、Source、Candidate Digest 和 Mutation 边界，并把未完成轮次归档到 `recovery/`
-后重跑，失败尝试的 Token/时间仍计入 Ledger。修改 Controller 或冻结配置后必须使用
-新 Run ID。Model Gateway 的请求上限目前按 Branch 生效，还不是整个 Population 的全局费用上限。
+后重跑，失败尝试的 Token/时间仍计入 Ledger。普通进化恢复必须是同一 Controller
+Revision；只有上述“尚未访问 sealed final”的 Final Recovery 可以在显式参数下使用一个
+继承原 Revision 的新 Controller，并同时记录进化版本和 Finalizer 版本。修改冻结配置后仍必须
+使用新 Run ID。Model Gateway 的请求上限目前按 Branch 生效，还不是整个 Population 的全局费用上限。
 生产 HLE/PutnamBench 继续使用原有的恢复、
 sealed test 与 Final 链路，不能把这里的公开 Smoke 替代为正式评测。
 

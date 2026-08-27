@@ -172,7 +172,7 @@ Solver 工作区还有总目录项数（文件+目录）、总字节、单文件
 
 晋升使用 selection 上的配对差值，不比较两批无关任务。当前 POC Policy 要求记录与完成率完整、至少一题 Reward 提升、平均 Reward 不下降、没有 Reward 回退、没有安全违规。两道 selection 题样本太小，所以没有要求 Bootstrap 下界大于零；扩大正式集后应开启该 Gate。Solver 的完整 Usage 会写入逐题 `input_tokens`/`output_tokens`，Solver 与 Updater 总 Token 则进入 Evolution Ledger；没有可信费率表时 `costUsd` 继续为 `null`。
 
-Finalize 会用冻结 H0 与锁定 Champion 同时跑 feedback 和 final，报告 `rewardGeneralizationGap = feedback gain - final gain`。Final 报告不再产生晋升决策。真正开始回放前，Controller 会先重验配置摘要、Source Revision 和 Candidate Tree Digest；随后用原子 create-if-absent 写入 `final-attempt.json`，因此并发进程也只有一个能领取。实际评测成功会进入 `finalized`，中途失败会进入 `final-failed`，两种情况都禁止再次解封；如果进程崩溃，领取文件也会保守地保留。
+Finalize 会用冻结 H0 与锁定 Champion 同时跑 feedback 和 final，报告 `rewardGeneralizationGap = feedback gain - final gain`。Final 报告不再产生晋升决策。真正开始回放前，Controller 会先重验配置摘要、Source Revision 和 Candidate Tree Digest；随后用原子 create-if-absent 写入 `final-attempt.json`，因此并发进程也只有一个能领取。实际评测成功会进入 `finalized`，已接触 sealed final 后失败也会永久禁止重试。唯一例外是第一次尝试在公开 feedback 回放阶段因基础设施失败：用户可显式传入 `--recover-infrastructure`，Controller 只有在未发现任何 sealed-final 路径或结果、原 Claim 与父子失败状态完全一致时，才会发放一个原子的 `final-recovery-attempt.json`。原失败证据不删除，未完成 feedback 会归档；Recovery 再失败时不会有第三次机会。
 
 ## 失败与回滚
 
@@ -180,7 +180,7 @@ Finalize 会用冻结 H0 与锁定 Champion 同时跑 feedback 和 final，报�
 - Updater 零改动、越界、创建符号链接、改动过大：拒绝，不运行 selection。
 - Solver/Verifier 超时或报错：单题为 `error`，完成率 Gate 默认失败。
 - Candidate Reward 提升不足或发生回退：拒绝，Champion 指针保持不变。
-- Final 已执行：拒绝再次解封，不允许用 Final 反复挑 Candidate。
+- Final 已执行：默认拒绝再次解封；只有未接触 sealed final 的失败 Population 可以执行一次受审计恢复，不允许用 Final 反复挑 Candidate。
 - Source/SkillsBench Checkout 与冻结 SHA 不一致：Preflight 失败，不开始实验。
 
 拒绝不会修改父 Candidate。每代提案都在新目录中，调试证据保留在 `.rsi/`，可以审计但不会进入 Git。

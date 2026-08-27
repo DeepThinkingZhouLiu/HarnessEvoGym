@@ -16,6 +16,8 @@ const rawBaseUrl = process.env[baseUrlEnvironment] ?? ''
 const maximumRequests = Number(process.env.GATEWAY_MAX_REQUESTS ?? '512')
 const maximumConcurrentRequests = Number(process.env.GATEWAY_MAX_CONCURRENT_REQUESTS ?? '8')
 const maximumRequestBytes = 32 * 1024 * 1024
+const maximumUpstreamAttempts = 3
+const retryableUpstreamStatuses = new Set([502, 503, 504])
 
 if (!Number.isInteger(listenPort) || listenPort < 1024 || listenPort > 65535) {
   throw new Error('model-gateway: GATEWAY_PORT 必须是 1024-65535 的整数')
@@ -516,27 +518,54 @@ const server = http.createServer((request, response) => {
       headers['content-type'] = 'application/json'
       headers['content-length'] = String(payload.length)
     }
-    const upstream = transport.request(target, { method: 'POST', headers }, (upstreamResponse) => {
-      usageDelegated = true
-      response.writeHead(
-        upstreamResponse.statusCode ?? 502,
-        filteredHeaders(upstreamResponse.headers, responseHeaderAllowlist),
-      )
-      const usageMeter = createSseUsageMeter(counters)
-      pipeline(upstreamResponse, usageMeter, response, (error) => {
-        if (error && !response.destroyed) response.destroy(error)
+    let currentUpstream = null
+    let retryTimer = null
+    response.once('close', () => {
+      if (!response.writableEnded) currentUpstream?.destroy()
+      if (retryTimer !== null) clearTimeout(retryTimer)
+    })
+
+    const forward = (attempt) => {
+      if (response.destroyed || response.writableEnded) return
+      const upstream = transport.request(target, { method: 'POST', headers }, (upstreamResponse) => {
+        const status = upstreamResponse.statusCode ?? 502
+        if (retryableUpstreamStatuses.has(status) && attempt < maximumUpstreamAttempts) {
+          // 只有在还没向 Candidate 发送 Header 时才重试；中间 5xx 的 Body 不下发、也不计为一次
+          // 独立逻辑请求。这样不会重播已经部分交付的 Completion。
+          let retryScheduled = false
+          const scheduleRetry = () => {
+            if (retryScheduled || response.destroyed || response.writableEnded) return
+            retryScheduled = true
+            retryTimer = setTimeout(() => {
+              retryTimer = null
+              forward(attempt + 1)
+            }, attempt * 250)
+          }
+          upstreamResponse.once('end', scheduleRetry)
+          upstreamResponse.once('error', scheduleRetry)
+          upstreamResponse.resume()
+          return
+        }
+        usageDelegated = true
+        response.writeHead(
+          status,
+          filteredHeaders(upstreamResponse.headers, responseHeaderAllowlist),
+        )
+        const usageMeter = createSseUsageMeter(counters)
+        pipeline(upstreamResponse, usageMeter, response, (error) => {
+          if (error && !response.destroyed) response.destroy(error)
+        })
       })
-    })
-    upstream.setTimeout(20 * 60 * 1000, () => upstream.destroy(new Error('upstream timeout')))
-    upstream.on('error', (error) => {
-      recordUnknownUsage()
-      if (!response.headersSent) send(response, 502, { error: 'upstream_failure' })
-      else response.destroy(error)
-    })
-    response.on('close', () => {
-      if (!response.writableEnded) upstream.destroy()
-    })
-    upstream.end(payload)
+      currentUpstream = upstream
+      upstream.setTimeout(20 * 60 * 1000, () => upstream.destroy(new Error('upstream timeout')))
+      upstream.on('error', (error) => {
+        recordUnknownUsage()
+        if (!response.headersSent) send(response, 502, { error: 'upstream_failure' })
+        else response.destroy(error)
+      })
+      upstream.end(payload)
+    }
+    forward(1)
   })
 })
 

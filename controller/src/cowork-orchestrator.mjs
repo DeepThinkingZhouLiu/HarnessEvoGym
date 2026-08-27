@@ -810,11 +810,17 @@ async function controllerEntry(pathValue, label) {
 }
 
 function finalTrialRoot(runRoot, generation, candidateId, partition, attemptId) {
+  if (!['feedback', 'final'].includes(partition)) {
+    throw new ProtocolError(`Final Recovery Partition 无效：${partition}`)
+  }
+  const resultPartition = partition === 'feedback'
+    ? `feedback-final-${attemptId}`
+    : `final-${attemptId}`
   const outputPath = resultPath(
     runRoot,
     generation,
     candidateId,
-    `${partition}-final-${attemptId}`,
+    resultPartition,
   )
   const executionId = createHash('sha256').update(resolve(outputPath)).digest('hex').slice(0, 12)
   return join(runRoot, 'trials', executionId)

@@ -43,11 +43,14 @@ test('Final Recovery Claim 保留原 Attempt 和前后 Controller Revision，且
 })
 
 function trialRoot(runRoot, candidateId, partition, attemptId) {
+  const resultPartition = partition === 'feedback'
+    ? `feedback-final-${attemptId}`
+    : `final-${attemptId}`
   const outputPath = resolve(
     runRoot,
     'results',
     'generation-5',
-    `${candidateId}-${partition}-final-${attemptId}.jsonl`,
+    `${candidateId}-${resultPartition}.jsonl`,
   )
   const executionId = createHash('sha256').update(outputPath).digest('hex').slice(0, 12)
   return join(runRoot, 'trials', executionId)

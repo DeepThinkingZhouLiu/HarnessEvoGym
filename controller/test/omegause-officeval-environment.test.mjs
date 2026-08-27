@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
+import { promisify } from 'node:util'
 
 import { readConfigFile } from '../src/config.mjs'
 import {
@@ -15,6 +17,7 @@ import {
 import { validateBenchmark } from '../src/protocol.mjs'
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
+const execFileAsync = promisify(execFile)
 
 function digest(value) {
   return createHash('sha256').update(value).digest('hex')
@@ -145,4 +148,39 @@ test('OmegaUse Verifier 只读取隔离 Submission，并在无网络容器中评
     'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
     'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy',
   ]) assert.equal(invocation.environment[name], '')
+})
+
+test('OmegaUse Verifier Runner 可以加载包含 dataclass 的官方评分器', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rsi-officeval-dataclass-'))
+  const submission = join(root, 'submission')
+  const output = join(root, 'result.json')
+  const verifier = join(root, 'officeval_090_verifier.py')
+  await mkdir(submission)
+  await writeFile(verifier, `
+from dataclasses import dataclass
+
+@dataclass
+class Score:
+    value: float
+
+def evaluate(path):
+    score = Score(1.0)
+    return {
+        "id": "090", "file_name": "answer.xlsx", "status": "ok", "error": None,
+        "dim1_pass": True, "dim1_reason": "", "dim2_items": [],
+        "total_score": score.value, "max_score": 1.0,
+    }
+`, { encoding: 'utf8' })
+
+  await execFileAsync('python3', [
+    resolve(repositoryRoot, 'docker/omegause-officeval/run-verifier.py'),
+    '--verifier', verifier,
+    '--submission', submission,
+    '--output', output,
+    '--expected-id', 'officeval_090',
+  ])
+
+  const result = JSON.parse(await readFile(output, 'utf8'))
+  assert.equal(result.status, 'ok')
+  assert.equal(result.total_score, 1)
 })

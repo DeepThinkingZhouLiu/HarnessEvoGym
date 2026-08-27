@@ -41,7 +41,15 @@ def _load_verifier(path: Path):
     if spec is None or spec.loader is None:
         raise RuntimeError("无法创建 Verifier Module Spec")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # dataclasses 等标准库会在装饰器执行期间通过 cls.__module__ 回查
+    # sys.modules。动态加载模块必须先登记，否则包含 @dataclass 的上游
+    # OfficeVal Verifier 会在 import 阶段失败。
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(spec.name, None)
+        raise
     if not callable(getattr(module, "evaluate", None)):
         raise RuntimeError("Verifier 缺少 evaluate(directory) 函数")
     return module

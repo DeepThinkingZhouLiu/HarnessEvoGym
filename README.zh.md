@@ -4,7 +4,7 @@
 
 一个把 **“优化谁”、“在哪里做题”、“怎么进化”** 拆开配置的 Harness
 自进化实验平台。当前已经能用同一个 Controller 组合 MSA Minimal Target、
-SkillsBench Cowork 环境或文本 Reasoning 冒烟环境，并运行
+OmegaUse-OfficeVal Cowork 环境或文本 Reasoning 冒烟环境，并运行
 `single / independent / mutualism / competition / combined` 五种种群模式。
 
 平台的核心公式是：
@@ -61,10 +61,24 @@ SearchStrategy 只管“搜哪里”，Updater 仍是完整 Coding Agent，自�
 
 | 场景 / 对象          | 已实现的组合                                               | 用途                                      |
 |----------------------|--------------------------------------------------------------|-------------------------------------------|
-| Cowork               | MSA Minimal + Cowork Seed + SkillsBench                      | 真实 Office/PDF/PPTX/XLSX 任务与 Verifier |
+| Cowork               | MSA Minimal + Cowork Seed + OmegaUse-OfficeVal               | 真实 Word/PPT/Excel 交付任务与加权 Rubric |
 | Reasoning 工程冒烟   | MSA Minimal + Reasoning Seed + Synthetic Text Reasoning       | 证明真实模型、变异、评分与五种 Mode 链路      |
 | Reasoning 正式路径   | MSA + HLE，或 DSH + PutnamBench                         | 保留 HZY 原有生产链路，需专用数据和运行时       |
 | 未来 Target          | DSH、PI Agent 或其他 Harness + 自己的 Seed/Catalog/Driver | 新增 Adapter 即可，不改 Population 算法          |
+
+Cowork 现在接的是更符合 Office Agent 场景的
+`baidu-frontier-research/OmegaUse-OfficeVal`。上游共 100 道任务；当前 Linux
+运行链使用 91 道静态 Verifier 任务，排除 9 道依赖 Windows Office COM
+的题。固定划分是 `55 feedback / 18 selection / 18 sealed final`：
+feedback 可以向 Updater 返回详细失败信息，selection 只用聚合分数决定是否晋升，
+final 在 Champion 锁定后只解封一次。另有 3 道题的 Word/PPT/Excel Smoke，
+三道题都从正式 feedback 集中取，只证明链路能跑，不消费正式验证集和测试集。
+
+Solver 只能看到任务说明和原始 Office 文件；Rubric、Verifier 和
+sealed final 不会挂载给 Solver/Updater。Solver 产出的变更文件会被复制到
+独立 Submission，再交给无网络、只读根文件系统的 Verifier 容器评分。
+Reward 是通过 Dim1 格式门槛后的加权 Dim2 得分，并归一化到 `[0,1]`，
+不再是只有 0/1 的 Skill 命中信号。
 
 新 Experiment 通过 `spec.recipe` 进入通用 Population。旧 Cowork Experiment 不写
 Recipe 时仍保留原来的单 Champion 目录和行为；旧 Reasoning Campaign 仍可以使用
@@ -183,7 +197,7 @@ HZY 原有 HLE/PutnamBench 生产 Campaign 仍位于 `benchmarks/hle-text-math/`
 当前 `msa-minimal` Cowork Adapter 把 `maximumSteps` 固定为 `1`，只用于低成本验证
 五种 Mode 的真实模型闭环；Candidate Profile 即使把 `max_steps` 调高也不会生效。
 已提供的 `msa-minimal-cowork-rsi` 则开放与 Profile 一致的 12 步上限，用于
-3/2/3 SkillsBench 受控 RSI 实验；不要直接拿 Smoke 分数做能力结论。
+55/18/18 OmegaUse-OfficeVal 受控 RSI 实验；不要直接拿 3 题 Smoke 分数做能力结论。
 该限制对本轮只开放 L1 的实验是可信硬上限；若未来开放可修改 `agent.py/run.py` 的
 L2/L3 并把 Candidate 视为主动恶意代码，还应在 Model Gateway 增加每个 Solver Session
 的独立请求硬配额。
@@ -199,10 +213,11 @@ L2/L3 并把 Candidate 视为主动恶意代码，还应在 Model Gateway 增加
 - `experiments/cowork-msa-rsi-linear-competition.json`
 - `experiments/cowork-msa-rsi-linear-combined.json`
 
-五份配置共用同一 H0、Terra Solver/Updater、3 道 feedback、2 道 selection、
-3 道 sealed final 与严格 Reward Gate。这是一套“流程完整、可变异预算对齐”的受控
-RSI 实验，但目前每题只有 1 个 Trial，题集也很小，**不等于统计意义上的正式
-Benchmark 结论**。多 Branch Mode 还会多做一次 H0 基线评测，所以最终比较时必须同时
+五份配置共用同一 H0、Terra Solver/Updater、55 道 feedback、18 道 selection、
+18 道 sealed final 与同一 Reward Gate。这是一套“流程完整、可变异预算对齐”的正式
+配置起点，但当前每题仍只有 1 个 Trial，**不等于统计显著的 Benchmark
+结论**。正式对外比较应将 Trial 提高到至少 3，预注册随机种子和 Gate。
+多 Branch Mode 还会多做一次 H0 基线评测，所以最终比较时必须同时
 报告 Solver/Updater Token 和墙钟时间，不能只看最终分数。
 
 ### 模式与 Budget
@@ -288,15 +303,16 @@ MSA Minimal Reasoning Target
 export RSI_PROVIDER_BASE_URL=https://provider.example/v1
 read -rsp 'Provider API Key: ' RSI_PROVIDER_API_KEY && export RSI_PROVIDER_API_KEY
 
-# Progressive Synthetic Reasoning：不需要 SkillsBench。
+# Progressive Synthetic Reasoning：不需要外部 Office 数据。
 npm run rsi -- runtime build \
   --experiment experiments/reasoning-msa-progressive-strict-smoke.json
 npm run rsi -- experiment run \
   --config experiments/reasoning-msa-progressive-strict-smoke.json \
   --run-id reasoning-progressive-strict-001
 
-# Cowork 额外需要本地 SkillsBench 根目录。
-export RSI_SKILLSBENCH_ROOT=/absolute/path/to/skillsbench
+# Cowork 需要固定版本的 OmegaUse Dataset 和 Evaluator Checkout。
+export RSI_OFFICEVAL_DATASET_ROOT=/absolute/path/to/OmegaUse-OfficeVal-Dataset
+export RSI_OFFICEVAL_EVALUATOR_ROOT=/absolute/path/to/OmegaUse-OfficeVal
 npm run rsi -- runtime build \
   --experiment experiments/cowork-msa-smoke-single.json
 npm run rsi -- experiment run \

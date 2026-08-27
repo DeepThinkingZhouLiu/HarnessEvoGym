@@ -17,7 +17,7 @@ combine population coordination with module search.
 
 | Composition                 | Branch execution                 | Environment isolation                                      | Search                         |
 |-----------------------------|----------------------------------|------------------------------------------------------------|--------------------------------|
-| MSA Cowork + SkillsBench    | Generic Cowork Branch Driver     | Task images, separate Verifier, Docker internal network    | Recipe + SearchStrategy        |
+| MSA Cowork + OfficeVal      | Generic Cowork Branch Driver     | Office runtime, offline Verifier, Docker internal network  | Recipe + SearchStrategy        |
 | MSA Text Reasoning smoke    | Same Cowork Branch Driver        | Pinned text tasks, exact verifier, Docker internal network | Same Recipe + SearchStrategy   |
 | HZY Reasoning production    | Compatibility Reasoning Driver   | Distinct UIDs, bubblewrap, Unix gateway, sealed broker     | Legacy config mapped to modes  |
 

@@ -9,7 +9,7 @@ import { ProtocolError } from '../protocol.mjs'
 
 export const MSA_COWORK_CONTAINER_PATHS = Object.freeze({
   candidate: '/candidate',
-  benchmarkSkills: '/benchmark-skills',
+  environmentAssets: '/environment-assets',
   solverOutput: '/solver-output',
 })
 
@@ -275,7 +275,7 @@ export async function runMsaMinimalCoworkSolver({
   provider,
   candidateWorkspace,
   taskWorkspace,
-  benchmarkSkills,
+  environmentAssets,
   sessionRoot,
   modelAccess,
   task,
@@ -286,16 +286,16 @@ export async function runMsaMinimalCoworkSolver({
   validateModel({ model, provider })
   const gateway = modelGatewayAccess({ modelAccess, provider })
   const workspaceInContainer = safeContainerWorkspace(containerWorkspace)
-  const [candidate, workspace, skills, output] = await Promise.all([
+  const [candidate, workspace, assets, output] = await Promise.all([
     existingDirectory(candidateWorkspace, 'MSA Candidate Workspace'),
     existingDirectory(taskWorkspace, 'MSA Task Workspace'),
-    existingDirectory(benchmarkSkills, 'MSA Benchmark Skills'),
+    existingDirectory(environmentAssets, 'MSA Environment Assets'),
     emptyOutputDirectory(sessionRoot),
   ])
   assertDisjoint([
     { path: candidate, label: 'MSA Candidate Workspace' },
     { path: workspace, label: 'MSA Task Workspace' },
-    { path: skills, label: 'MSA Benchmark Skills' },
+    { path: assets, label: 'MSA Environment Assets' },
     { path: output, label: 'MSA Solver Session 输出目录' },
   ])
 
@@ -331,7 +331,7 @@ export async function runMsaMinimalCoworkSolver({
     mounts: [
       { source: candidate, target: MSA_COWORK_CONTAINER_PATHS.candidate, readOnly: true },
       { source: workspace, target: workspaceInContainer, readOnly: false },
-      { source: skills, target: MSA_COWORK_CONTAINER_PATHS.benchmarkSkills, readOnly: true },
+      { source: assets, target: MSA_COWORK_CONTAINER_PATHS.environmentAssets, readOnly: true },
       { source: output, target: MSA_COWORK_CONTAINER_PATHS.solverOutput, readOnly: false },
     ],
     environment: {
@@ -342,7 +342,7 @@ export async function runMsaMinimalCoworkSolver({
       RSI_MODEL_GATEWAY_MODEL: model.model,
       RSI_MODEL_GATEWAY_MAX_TOKENS: String(model.maxTokens),
       RSI_SOLVER_MAX_STEPS: String(runtimeMaximumSteps(runtime)),
-      RSI_BENCHMARK_SKILLS_ROOT: MSA_COWORK_CONTAINER_PATHS.benchmarkSkills,
+      RSI_ENVIRONMENT_ASSETS_ROOT: MSA_COWORK_CONTAINER_PATHS.environmentAssets,
       HTTP_PROXY: '',
       HTTPS_PROXY: '',
       ALL_PROXY: '',

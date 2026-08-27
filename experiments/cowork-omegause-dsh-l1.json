@@ -1,28 +1,26 @@
 {
   "apiVersion": "harness-rsi/v1alpha1",
   "kind": "EvolutionExperiment",
-  "metadata": {
-    "id": "cowork-skillsbench-dsh-l2-poc"
-  },
+  "metadata": { "id": "cowork-omegause-dsh-l1-smoke" },
   "spec": {
     "adapters": {
       "target": "adapters/targets/deepseek-harness.yml",
       "updater": "adapters/updaters/deepseek-harness.yml",
-      "environment": "environments/skillsbench-cowork.yml",
+      "environment": "environments/omegause-officeval.yml",
       "provider": "adapters/providers/zcloud-openai.yml",
       "strategy": "adapters/strategies/linear-hill-climb.yml"
     },
-    "benchmark": "benchmarks/cowork-skillsbench-poc/benchmark.json",
-    "policy": "evaluation/policies/cowork-rsi-poc.json",
+    "benchmark": "benchmarks/cowork-omegause-officeval-smoke/benchmark.json",
+    "policy": "evaluation/policies/cowork-rsi-smoke.json",
     "models": {
       "solver": { "provider": "zcloud-openai", "model": "gpt-5.6-terra", "maxTokens": 8192 },
       "updater": { "provider": "zcloud-openai", "model": "gpt-5.6-terra", "maxTokens": 8192 }
     },
     "evolution": {
-      "mutationLevel": "l2",
+      "mutationLevel": "l1",
       "generations": 1,
       "trialsPerInstance": 1,
-      "seeds": [20260824]
+      "seeds": [20260827]
     }
   }
 }

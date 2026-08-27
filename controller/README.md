@@ -16,7 +16,7 @@ Controller 是 RSI 系统的可信、确定性控制平面。Updater 负责开�
 | `src/process.mjs`              | 超时、输出上限、密钥脱敏的子进程协议                        |
 | `src/factories.mjs`            | 按 Adapter Protocol 解析 Solver/Updater/Environment Driver  |
 | `src/runtimes/dsh.mjs`         | DSH Runtime 构建、Solver 与 Updater Session                 |
-| `src/environments/skillsbench.mjs` | SkillsBench Task、Workspace、Verifier 与 Reward         |
+| `src/environments/omegause-officeval.mjs` | OfficeVal Task、Submission、Verifier 与 Reward |
 | `src/model-gateway.mjs`        | Reasoning Responses/Unix-socket 网关与凭据隔离          |
 | `src/cowork-model-gateway.mjs` | Cowork Docker 内部网、一次性令牌、Usage 与清理    |
 | `src/feedback.mjs`             | feedback-only 脱敏反馈包                                    |
@@ -53,14 +53,19 @@ Updater 内部不拆成固定的 `failure-analyzer`、`mutation-proposer` 或 `c
 ```bash
 npm run rsi -- adapter validate --config adapters/targets/deepseek-harness.yml
 npm run rsi -- adapter validate --config adapters/strategies/linear-hill-climb.yml
-npm run rsi -- experiment validate --config experiments/cowork-skillsbench-dsh-l1.json
-npm run rsi -- experiment preflight --config experiments/cowork-skillsbench-dsh-l1.json
-npm run rsi -- runtime build --experiment experiments/cowork-skillsbench-dsh-l1.json
-npm run rsi -- experiment run --config experiments/cowork-skillsbench-dsh-l1.json --run-id <id>
+npm run rsi -- experiment validate --config experiments/cowork-msa-smoke-single.json
+npm run rsi -- experiment preflight --config experiments/cowork-msa-smoke-single.json
+npm run rsi -- runtime build --experiment experiments/cowork-msa-smoke-single.json
+npm run rsi -- experiment run --config experiments/cowork-msa-smoke-single.json --run-id <id>
 npm run rsi -- experiment finalize --run .rsi/runs/<id>
 ```
 
-`experiment validate` 不访问 Docker 或外部 Task Checkout；`preflight` 会分别检查已提交的 Controller 信任根、Target/Updater Gitlink 与干净 Revision、SkillsBench SHA、任务文件、Docker 和网关所需环境变量。DSH/SkillsBench 的干净性检查也包含 Git 已忽略文件，避免它们悄悄进入镜像或 Verifier。`experiment run` 永远不运行 final；`experiment finalize` 在配置、主仓/Source Revision 和 Candidate 完整性重验后，会原子创建 `final-attempt.json` 再解封，并发进程也只有一个能消耗唯一 Attempt。领取后无论成功、失败还是崩溃都不会默认重试。
+`experiment validate` 不访问 Docker 或外部 Task Checkout；`preflight` 会检查
+已提交的 Controller 信任根、Target/Updater Source、OmegaUse Source Manifest、
+Dataset/Evaluator Revision、题目文件 SHA-256、Docker 和网关所需环境变量。
+`experiment run` 永远不运行 final；`experiment finalize` 在配置、主仓/Source Revision
+和 Candidate 完整性重验后，会原子创建 `final-attempt.json` 再解封，
+并发进程也只有一个能消耗唯一 Attempt。
 
 ## 失败语义
 
@@ -76,9 +81,9 @@ npm run rsi -- experiment finalize --run .rsi/runs/<id>
 `ModelProviderAdapter` 统一声明上游协议、凭据环境变量名、兼容参数与模型目录；Experiment 分别选择 Solver/Updater 的模型。DSH Runtime 将它翻译为 `llm-pi-ai` 配置。其他 Agent Runtime 未来应读同一 Provider Adapter，不复制凭据管理逻辑。
 
 Solver、Updater 和 Environment 的“实现创建”已通过 `factories.mjs` 中带版本的 Driver
-Registry 隔离，不再在主编排循环写协议分支。但当前 Cowork Adapter 校验、Source 预检和
-Materializer 仍只实现 DSH + SkillsBench。真正接 pi-agent 时，还需同时补它的 Adapter
-Schema、Source/Materialization 生命周期和 Driver 注册，不是只注册一个函数就能运行。
+Registry 隔离，不再在主编排循环写协议分支。当前已跑通 MSA Minimal +
+OmegaUse-OfficeVal；真正接 pi-agent 时，还需同时补它的 Adapter Schema、
+Source/Materialization 生命周期和 Driver 注册，不是只注册一个函数就能运行。
 
 Driver 能执行和挂载工作区，因此必须作为受审查的 Controller 代码；只做搜索决策的外部
 Strategy 才可以使用沙箱镜像。

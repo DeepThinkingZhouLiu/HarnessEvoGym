@@ -5,7 +5,7 @@ English | [中文](README.zh.md)
 An executable Harness self-evolution platform that configures **what to evolve**,
 **where to evaluate it**, and **how to search** as independent components. The
 same trusted Controller can now combine an MSA Minimal Target with either a real
-SkillsBench Cowork environment or a synthetic text-Reasoning connectivity
+OmegaUse-OfficeVal Cowork environment or a synthetic text-Reasoning connectivity
 environment and run all five population modes.
 
 The central composition is:
@@ -63,10 +63,23 @@ does not hard-code causal analysis; it enforces permissions and objective gates.
 
 | Scenario / object             | Implemented composition                                      | Purpose                                      |
 |-------------------------------|--------------------------------------------------------------|----------------------------------------------|
-| Cowork                        | MSA Minimal + Cowork Seed + SkillsBench                      | Real Office/PDF/PPTX/XLSX tasks and verifier |
+| Cowork                        | MSA Minimal + Cowork Seed + OmegaUse-OfficeVal               | Real Word/PPT/Excel tasks and weighted rubrics |
 | Reasoning engineering smoke   | MSA Minimal + Reasoning Seed + synthetic text reasoning      | Real model/mutation/scoring/five-mode wiring |
 | Production Reasoning          | MSA + HLE, or DSH + PutnamBench                              | Preserved HZY production path                |
 | Future Target                 | DSH, PI Agent, or another Harness + its Seed/Catalog/Driver   | Add adapters without changing Population     |
+
+The Cowork path now uses `baidu-frontier-research/OmegaUse-OfficeVal`. Its 100
+upstream tasks are frozen by a source manifest. The Linux path supports 91 static
+verifiers and excludes nine Windows Office COM tasks. The registered split is
+55 feedback/train, 18 aggregate-only selection/validation, and 18 one-time sealed
+final/test tasks. A separate three-task Word/PPT/Excel smoke uses only IDs from
+the formal feedback partition, so it does not consume validation or test data.
+
+Solver sees only the instruction and original Office inputs. Rubrics, verifier
+code, and sealed-final data are never mounted into Solver or Updater. Changed
+artifacts are copied into a separate submission and scored by an offline,
+read-only-root verifier container. Reward is the Dim1-gated weighted Dim2 score
+normalized into `[0,1]`, not merely a binary skill hit.
 
 Experiments with `spec.recipe` use the generic Population path. Old Cowork
 experiments without a Recipe retain their single-Champion layout, while old HZY
@@ -187,6 +200,20 @@ an appropriate budget instead of interpreting smoke rewards as results. This is
 a trusted hard cap for the current L1-only runs. If L2/L3 can mutate
 `agent.py`/`run.py` and Candidates are treated as actively hostile, add a
 per-Solver-session request quota at the Model Gateway as an additional boundary.
+The `msa-minimal-cowork-rsi` Target instead allows the profile's full 12-step loop
+for the registered 55/18/18 OfficeVal experiment; the three-task smoke must not be
+reported as a capability result.
+
+### Fair five-mode linear RSI configurations
+
+`recipes/population-fair-linear/*.yml` gives every mode the same total mutable
+Candidate budget of four, uses `linear-hill-climb`, and opens only MSA Cowork L1.
+The five `experiments/cowork-msa-rsi-linear-<mode>.json` files share one H0,
+Terra Solver/Updater settings, 55 feedback tasks, 18 selection tasks, 18 sealed
+final tasks, and one promotion policy. This is a complete registered experiment
+starting point, but the current one trial per task is not a statistical benchmark
+claim. A publishable comparison should use at least three preregistered trials and
+report Solver/Updater tokens and wall time alongside reward.
 
 ### Mode and Budget
 
@@ -237,11 +264,12 @@ npm run rsi -- experiment validate \
   --config experiments/reasoning-msa-progressive-strict-smoke.json
 ```
 
-Real Cowork runs also require the SkillsBench checkout and runtime Provider
+Real Cowork runs also require pinned OmegaUse Dataset/Evaluator checkouts and runtime Provider
 variables. Do not store the real key in shell history or the repository:
 
 ```bash
-export RSI_SKILLSBENCH_ROOT=/absolute/path/to/skillsbench
+export RSI_OFFICEVAL_DATASET_ROOT=/absolute/path/to/OmegaUse-OfficeVal-Dataset
+export RSI_OFFICEVAL_EVALUATOR_ROOT=/absolute/path/to/OmegaUse-OfficeVal
 export RSI_PROVIDER_BASE_URL=https://provider.example/v1
 read -rsp 'Provider API Key: ' RSI_PROVIDER_API_KEY && export RSI_PROVIDER_API_KEY
 
@@ -254,18 +282,17 @@ npm run rsi -- experiment run \
 unset RSI_PROVIDER_API_KEY
 ```
 
-`experiment run` reads only feedback/selection while evolving. Generic
-Population smoke runs currently do not unseal final; legacy single-Champion
-Cowork runs retain one-time `experiment finalize`. These tiny datasets prove
-engineering connectivity, not statistical significance.
+`experiment run` reads only feedback/selection while evolving. Both generic
+Population and legacy single-Champion Cowork paths use one-time
+`experiment finalize` after locking the best Candidate. The three-task smoke
+proves engineering connectivity, not statistical significance.
 
-The current generic Population boundary is explicit: infrastructure failures
-become `PAUSED_INFRASTRUCTURE` and fail the command instead of masquerading as a
-zero-score success, but cross-process resume is not yet exposed by the CLI. Use
-a new run ID after fixing the fault. Gateway request limits are currently scoped
-per Branch rather than being a Population-wide cost ceiling. Production
-HLE/PutnamBench therefore keeps its existing recovery, sealed-test, and final
-paths; the public smoke suite is not a substitute for a production benchmark.
+Infrastructure failures become `PAUSED_INFRASTRUCTURE` and fail the command
+instead of masquerading as a zero-score success. `experiment resume` continues
+the same Population after the fault is repaired. Gateway request limits are
+currently scoped per Branch rather than as one Population-wide cost ceiling.
+Production HLE/PutnamBench retains its dedicated runtime and sealed broker; the
+public smoke suite is not a substitute for a production benchmark.
 
 For one campaign, call
 `scripts/resume-hle-short-updater-root.mjs evolve start` with explicit config,

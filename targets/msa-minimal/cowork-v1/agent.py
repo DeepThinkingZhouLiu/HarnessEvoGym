@@ -70,9 +70,9 @@ class Agent:
         profile_root = root / "profiles"
         self.config = json.loads((profile_root / f"{profile}.json").read_text(encoding="utf-8"))
         prompt = (profile_root / f"{profile}.md").read_text(encoding="utf-8")
-        benchmark_root = Path(os.environ.get("RSI_BENCHMARK_SKILLS_ROOT", "/benchmark-skills"))
+        environment_root = Path(os.environ.get("RSI_ENVIRONMENT_ASSETS_ROOT", "/environment-assets"))
         skill_text = _load_skills(
-            [root / "skills", benchmark_root],
+            [root / "skills", environment_root],
             int(self.config["maximum_skill_files"]),
             int(self.config["maximum_skill_chars"]),
         )

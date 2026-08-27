@@ -16,7 +16,7 @@ Environment 定义题目与评分，EvolutionRecipe 组合五种 Population Mode
 
 | 组合                         | Branch 执行层                    | 环境与隔离                                                   | 搜索形式                         |
 |------------------------------|----------------------------------|--------------------------------------------------------------|----------------------------------|
-| MSA Cowork + SkillsBench     | 通用 Cowork Branch Driver         | Task 镜像、独立 Verifier、Docker internal network              | Recipe + SearchStrategy          |
+| MSA Cowork + OfficeVal      | 通用 Cowork Branch Driver         | Office 镜像、无网独立 Verifier、Docker internal network        | Recipe + SearchStrategy          |
 | MSA Text Reasoning smoke     | 同一 Cowork Branch Driver          | 固定文本题、受信精确匹配、Docker internal network                | 同一 Recipe + SearchStrategy      |
 | HZY Reasoning production    | 兼容 Reasoning Branch Driver       | 宿主独立 UID、bubblewrap、Unix gateway、sealed broker              | 旧 Campaign 配置映射到五种 Mode       |
 

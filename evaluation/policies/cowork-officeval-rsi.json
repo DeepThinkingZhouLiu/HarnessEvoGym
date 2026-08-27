@@ -1,22 +1,13 @@
 {
   "apiVersion": "harness-rsi/v1alpha1",
   "kind": "EvaluationPolicy",
-  "metadata": {
-    "id": "cowork-rsi-poc-v1"
-  },
+  "metadata": { "id": "cowork-officeval-rsi-v1" },
   "spec": {
     "decisionPartition": "selection",
     "primaryMetric": "mean-reward",
-    "bootstrap": {
-      "samples": 5000,
-      "confidence": 0.95,
-      "seed": 20260824
-    },
+    "bootstrap": { "samples": 10000, "confidence": 0.95, "seed": 20260827 },
     "gates": {
-      "coverage": {
-        "minimumRecords": 1,
-        "minimumCompletion": 1
-      },
+      "coverage": { "minimumRecords": 1, "minimumCompletion": 1 },
       "quality": {
         "minimumNetResolved": 0,
         "minimumDeltaResolvedRate": -1,
@@ -24,20 +15,18 @@
         "requirePositivePairedCiLowerBound": false,
         "minimumMeanRewardDelta": 0,
         "minimumRewardImproved": 1,
-        "maximumRewardRegressions": 0,
+        "maximumRewardRegressions": 3,
         "requirePositiveRewardCiLowerBound": false
       },
       "cost": {
         "maximumRelativeInferenceCostIncrease": null,
         "maximumEvolutionCostUsd": null
       },
-    "performance": {
-      "maximumRelativeLatencyIncrease": null,
-      "maximumRelativeTokenIncrease": null
-    },
-      "safety": {
-        "maximumPolicyViolations": 0
-      }
+      "performance": {
+        "maximumRelativeLatencyIncrease": null,
+        "maximumRelativeTokenIncrease": null
+      },
+      "safety": { "maximumPolicyViolations": 0 }
     }
   }
 }

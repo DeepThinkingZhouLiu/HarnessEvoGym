@@ -6,7 +6,7 @@
 
 ```json
 {
-  "instance_id": "xlsx-recover-data",
+  "instance_id": "officeval_060",
   "status": "unresolved",
   "reward": 0.75,
   "trial_rewards": [0.5, 1.0],
@@ -20,7 +20,7 @@
 }
 ```
 
-`reward` 必须位于 `[0,1]`，并等于 `trial_rewards` 的均值。v1 没有 Reward 时继续兼容：`resolved=1`，其他状态为 0。只有 feedback 记录允许携带详细 `feedback`；selection/final 一旦出现逐题反馈会被协议层拒绝。当前 Cowork POC 的八个上游 Verifier 实际只返回 0/1，因此连续 Reward 是接口能力，不是这批题已经具备的细粒度标签。
+`reward` 必须位于 `[0,1]`，并等于 `trial_rewards` 的均值。v1 没有 Reward 时继续兼容：`resolved=1`，其他状态为 0。只有 feedback 记录允许携带详细 `feedback`；selection/final 一旦出现逐题反馈会被协议层拒绝。OmegaUse-OfficeVal 先检查 Dim1 交付格式，再将加权 Dim2 Rubric 得分归一化成连续 Reward。
 
 ## 指标
 
@@ -42,8 +42,8 @@ Policy 还能检查记录覆盖、完成率、Token/延迟涨幅、推理费用�
 
 ```bash
 npm run rsi -- evaluate compare \
-  --benchmark benchmarks/cowork-skillsbench-poc/benchmark.json \
-  --policy evaluation/policies/cowork-rsi-poc.json \
+  --benchmark benchmarks/cowork-omegause-officeval-linux-v1/benchmark.json \
+  --policy evaluation/policies/cowork-officeval-rsi.json \
   --baseline <baseline-selection.jsonl> \
   --candidate <candidate-selection.jsonl> \
   --run-id <run-id> \
@@ -56,7 +56,7 @@ npm run rsi -- evaluate compare \
 
 ## 小样本解释
 
-当前 selection 只有两题，Policy 仅要求至少一题 Reward 提升、均值不下降且无回退，没有要求 Bootstrap 下界大于零。这是工程 Smoke Gate，不是统计显著性声明。扩大正式 selection 后，应增加 Trial，并启用 `requirePositiveRewardCiLowerBound` 或预先注册更合适的统计准则。
+OfficeVal 正式 selection 有 18 题，当前 Policy 仍主要用于工程闭环：要求至少一题 Reward 提升、均值不下降，但允许少量 Reward 回退，且未启用 Bootstrap 下界门槛。对外声称统计结论前，应把每题 Trial 提高到至少 3，并预注册允许回退数、置信区间 Gate 和种子。
 
 `evaluation/policies/strict-mean-reward-improvement.json` 是给渐进风险扩展示例使用的
 严格配对 Gate：要求至少一题 Reward 严格提升、均值不下降、Reward 和

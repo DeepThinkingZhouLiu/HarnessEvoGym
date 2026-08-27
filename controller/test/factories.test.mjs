@@ -14,7 +14,7 @@ import {
 test('Driver Registry 暴露带版本的内置协议', () => {
   const protocols = registeredDriverProtocols()
   assert.deepEqual(protocols.environment, [
-    'skillsbench-docker-v1',
+    'omegause-officeval-docker-v1',
     'text-reasoning-deterministic-v1',
   ])
   assert.deepEqual(protocols.solver, ['dsh-headless-docker-v1', 'msa-minimal-docker-v1'])

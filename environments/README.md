@@ -4,10 +4,12 @@
 
 Environment 把“什么叫做更好”接入 RSI 闭环，但不把最终裁判权交给 Solver 或 Updater。
 
-`skillsbench-cowork.yml` 已接入 Cowork 执行链：它固定 SkillsBench Revision、任务镜像、
-Workspace 预算、Verifier 证据和 `[0,1]` Reward 范围。Solver/Updater 只连接 Run 级 Docker
-internal network，真实 Provider Key 只存在 Model Gateway；Verifier 独立运行，其结构化
-证据缺失会记为基础设施错误，不会偷偷转成零分。
+`omegause-officeval.yml` 已接入 Cowork 执行链：它固定 Dataset/Evaluator
+Revision、100 道题及所有输入与 Verifier 的 SHA-256、Workspace 预算和
+`[0,1]` 连续 Reward。Linux 路径支持 91 道静态 Verifier 任务，排除 9 道
+Windows Office COM 任务。Solver/Updater 只连接 Run 级 Docker internal network，
+真实 Provider Key 只存在 Model Gateway；Verifier 在无网络独立容器中运行，
+运行器或代码完整性失败会记为基础设施错误，不会偷偷转成零分。
 
 一个 Environment Adapter 至少需要描述：
 

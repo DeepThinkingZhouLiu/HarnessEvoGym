@@ -458,6 +458,7 @@ export async function preflightExperiment({ repositoryRoot, experimentPath, requ
   }
   const temporaryRunRoot = resolve(repositoryRoot, '.rsi/preflight')
   const environment = createEnvironmentRunner({
+    repositoryRoot,
     environment: context.bundle.environment,
     benchmark: context.bundle.benchmark,
     target: context.bundle.target,
@@ -1183,7 +1184,7 @@ function assertRestorableCoworkState(value, { runId, branchId }) {
 
 /**
  * Cowork 的单 Branch 执行面。Population 只通过通用 BranchEvolutionDriver 调它，
- * 不读取 SkillsBench、Overlay、SearchStrategy 或 Candidate Store 的内部字段。
+ * 不读取具体 Environment、Overlay、SearchStrategy 或 Candidate Store 的内部字段。
  */
 export function createCoworkBranchEvolutionDriver({
   repositoryRoot,
@@ -1264,6 +1265,7 @@ export function createCoworkBranchEvolutionDriver({
     context.runRoot = runRoot
     startedAt = Date.now()
     environment = createEnvironmentRunner({
+      repositoryRoot,
       environment: context.bundle.environment,
       benchmark: context.bundle.benchmark,
       target: context.bundle.target,
@@ -1416,6 +1418,7 @@ export function createCoworkBranchEvolutionDriver({
     context.updaterPromptPath = promptPath
 
     environment = createEnvironmentRunner({
+      repositoryRoot,
       environment: context.bundle.environment,
       benchmark: context.bundle.benchmark,
       target: context.bundle.target,
@@ -1863,6 +1866,7 @@ export async function runEvolution({
   const startedAt = Date.now()
 
   const environment = createEnvironmentRunner({
+    repositoryRoot,
     environment: context.bundle.environment,
     benchmark: context.bundle.benchmark,
     target: context.bundle.target,
@@ -1870,7 +1874,7 @@ export async function runEvolution({
     docker: context.docker,
     runRoot,
   })
-  onEvent({ stage: 'preflight', message: '校验 Docker、DSH Source 与 SkillsBench Revision' })
+  onEvent({ stage: 'preflight', message: '校验 Docker、Target Source 与 Environment Revision' })
   const environmentStatus = await environment.preflight()
   await context.searchStrategy.preflight()
   for (const instanceId of context.bundle.benchmark.allInstanceIds) await environment.taskLayout(instanceId)
@@ -2626,6 +2630,7 @@ async function finalizeCoworkRun({
     })
   }
   const environment = createEnvironmentRunner({
+    repositoryRoot,
     environment: context.bundle.environment,
     benchmark: context.bundle.benchmark,
     target: context.bundle.target,

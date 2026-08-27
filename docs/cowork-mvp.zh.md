@@ -1,209 +1,177 @@
-# Cowork RSI L1/L2 MVP 运行与扩展说明
+# OmegaUse-OfficeVal Cowork RSI 运行说明
 
 [English](cowork-mvp.md) | 中文
 
-## 目标与边界
+## 目标
 
-这条链路回答一个具体问题：**给 DeepSeek Harness 接上 Cowork 任务、客观评分和受控反馈后，它能否用另一个 DSH Session 改进自己的 Cowork Preset，并在没有给 Updater 看过的任务上稳定提升？**
+这条链路用于验证：MSA Minimal Harness 能否读取真实 Office 任务，在隔离工作区产出
+Word、PowerPoint 或 Excel 文件；Updater 能否根据训练题反馈修改 Candidate，并由独立
+Verifier 在验证题上决定是否晋升。它不再使用 SkillsBench，也不把“是否会加载某个
+Skill”当成最终任务指标。
 
-H0、每代 Candidate 和 Champion 都是独立 Overlay。L1/L2 不修改 DSH 上游仓库；只有以后开放 L3 时，才需要完整源码实例、构建产物和更重的回归隔离。
+当前组合是：
+
+```text
+MSA Minimal Target
+  + OmegaUse-OfficeVal Environment
+  + 55/18/18 Benchmark
+  + EvolutionRecipe / SearchStrategy
+  + 通用 Population Controller
+```
+
+## 一条任务怎么执行
+
+```text
+固定 Source Manifest
+-> 校验 Dataset/Evaluator Revision 与每个文件 SHA-256
+-> 只把任务说明和原始 Office 输入交给 Solver
+-> MSA 在一次性工作区内调用 Bash/Python/LibreOffice 生成交付文件
+-> Controller 只提取新增或修改的普通文件，形成独立 Submission
+-> 无网络 Verifier 容器读取 Submission 和受信评分代码
+-> Dim1 格式门槛 + 加权 Dim2 Rubric
+-> 归一化为 [0,1] Reward
+-> feedback 返回详细证据；selection/final 只保留聚合信号
+```
+
+Solver 看不到 Rubric、Verifier 源码、验证集逐题反馈或 sealed final。Updater 只能读
+feedback 题的失败证据，并且只能修改本轮 MutationLease 开放的 Candidate 文件。
 
 ## 模块职责
 
-| 模块                                      | 负责什么                                             | 不负责什么                         |
-|-------------------------------------------|------------------------------------------------------|------------------------------------|
-| `controller/src/cowork-orchestrator.mjs`  | Cowork 一轮/多轮编排、状态、谱系、晋升、一次性 Final | 开放式失败归因                     |
-| `controller/src/candidate.mjs`            | 复制、快照、哈希、Diff、Mutation Report 校验         | 判断改动是否提高任务能力           |
-| `controller/src/path-policy.mjs`          | L1/L2 Glob、扩展名和只读优先级                       | 解释 Target 的业务语义             |
-| `controller/src/factories.mjs`            | 按协议选择 Solver/Updater/Environment Driver         | 写死某个 Benchmark 的分支           |
-| `controller/src/runtimes/dsh.mjs`         | DSH 设置、Solver/Updater 容器协议                    | SkillsBench 任务布局                |
-| `controller/src/environments/skillsbench.mjs` | 构建任务、工作区、Verifier、Reward 归一化        | 决定 Candidate 是否晋升            |
-| `controller/src/cowork-model-gateway.mjs` | Run 级内部网络、一次性令牌与网关生命周期             | 决定 Agent 如何解题                 |
-| `controller/src/evaluator.mjs`            | 配对指标、Bootstrap、冻结 Gate                       | 相信 Candidate 自报分数             |
-| `controller/src/feedback.mjs`             | 只从 feedback 生成脱敏证据                           | 把 selection/final 泄漏给 Updater  |
-| Target Adapter                            | DSH Overlay、运行时和每层可写路径                    | 写死其他 Agent 的目录               |
-| Updater Adapter                           | 独立 Updater Source、Runtime、Prompt 与报告协议       | 决定 Target 的可写边界               |
-| Model Provider Adapter                    | 上游协议、凭据变量名、兼容参数和模型目录             | 保存真实 API Key                     |
-| Environment Adapter                       | SkillsBench Revision、任务布局、Docker 与 Verifier   | 写死到 Controller 核心              |
-| Experiment                                | 把 Target、Updater、Environment、Benchmark、Policy 组合 | 修改任一信任根                   |
+| 模块                                                | 职责                                                        |
+|-----------------------------------------------------|-------------------------------------------------------------|
+| `omegause-officeval.mjs`                           | 数据预检、任务工作区、Submission、Verifier 与 Reward        |
+| `msa-minimal-cowork.mjs`                           | 把 MSA Candidate 挂入 Office 运行镜像并执行 Solver           |
+| `cowork-model-gateway.mjs`                         | 隔离真实 Provider Key、固定模型/Token、分角色计量            |
+| `candidate.mjs`                                    | Candidate 复制、摘要、Diff Guard 与 Mutation Report          |
+| `evaluator.mjs`                                    | Champion/Candidate 配对指标与冻结晋升 Gate                   |
+| `cowork-orchestrator.mjs`                          | Branch 单步进化、晋升、回滚和一次性 Final                    |
+| `population-orchestrator.mjs`                      | 五种 Mode、同步 Wave、经验共享和竞争预算                     |
+| Target Adapter                                      | MSA H0 Seed、启动协议、L1/L2/L3 Region 与语义 Validator      |
+| Environment Adapter                                 | OfficeVal Source、工作区/Verifier 容器资源与反馈预算          |
+| Benchmark / Policy                                  | 训练/验证/测试 ID、主指标和晋升条件                           |
 
-## 一代数据流
+## 数据固定与划分
 
-```text
-Champion Workspace（只读给 Solver）
--> feedback Trial 工作区
--> Verifier Reward + Solver Answer + Artifact
--> Feedback Packet（只含 feedback）
--> DSH Updater（Source 只读，Candidate 可写）
--> Candidate Snapshot/Diff/Mutation Report
--> Diff Guard
-   -> 违规：Reject，Champion 不动
-   -> 合法：Champion 与 Candidate 跑 selection
--> Evaluation Policy
-   -> 全部 Gate 通过：Promote
-   -> 任一 Gate 失败：Reject，Champion 不动
-```
+上游数据是 `baidu-frontier-research/OmegaUse-OfficeVal`。仓库提交
+`benchmarks/omegause-officeval/source-manifest.json`，固定：
 
-Updater 本身就是 Analyzer：它在一个 Session 中看多道题的证据、读上游接口、形成假设并修改 Candidate。Controller 不把它拆成固定 `failure-analyzer`、`mutation-proposer` 等规则服务。第二代开始还会看到历代假设、改动文件和 selection 聚合 Gate，避免重复已失败搜索；逐题 selection 证据始终不进入 Packet。历史条数与 JSON 字节数由 Environment Adapter 限制，防止无限挤占上下文。
+- Dataset Revision：`cd6ba6d8fb83b3fb551e24eebc20e1fb0bd154a5`。
+- Evaluator Revision：`ffbeecb8752447c8e40b594a0eeb1db7236ecb36`。
+- 100 道任务的 instruction、rubric、输入文件、Verifier 和共享评分文件摘要。
+- Linux 排除的 9 道 Windows Office COM 任务。
 
-Feedback Packet 会给它 feedback 题的任务要求、Reward、Solver 答复、Verifier 证据、运行错误、产物和延迟。Controller 会先从可信 `ctrf.json` 提取断言总数和失败测试，再附上原始运行日志，避免依赖安装输出挤掉真正的失败原因。文本按每题总字节预算截断，产物列表另受条目数和 JSON 字节预算限制，并明确记录省略数量。它不会收到 selection/final 的任务要求、回答或 Verifier 文本。
+正式 Linux split 位于
+`benchmarks/cowork-omegause-officeval-linux-v1/benchmark.json`：
 
-## Candidate 实例
+| Partition                   | 数量 | Updater 可见性   | 用途                         |
+|----------------------------|-----:|------------------|------------------------------|
+| `feedback` / train         |   55 | 详细反馈         | 归因、修改 Candidate         |
+| `selection` / validation  |   18 | 仅聚合           | 决定 Candidate 是否晋升      |
+| `final` / test            |   18 | 一次性 sealed    | Champion 锁定后的最终报告    |
 
-H0 模板在 `targets/deepseek-harness/cowork-rsi/`。Controller 会把它复制到：
+三个 Partition 完全互斥。3 题 Smoke 使用 `officeval_060 / 090 / 003`，三者都来自
+正式 feedback 集，分别覆盖 PPT、Excel 和 Word；Smoke 只是低成本连通性测试，不会提前
+查看正式 validation/test。
 
-```text
-.rsi/runs/<run-id>/candidates/h0/workspace/
-.rsi/runs/<run-id>/candidates/g001-l1/workspace/
-.rsi/runs/<run-id>/candidates/g002-l1/workspace/
-```
+## 隔离边界
 
-每个目录都有独立 `manifest.json`，记录 Source Revision、父 Candidate、所有文件的 SHA-256 和整棵树的 Digest。Solver 只读挂载 Candidate 中的 `cowork-rsi` Preset；Updater 只修改某个提案 Candidate，不修改 Champion。
+每个 Run 创建独立 Docker internal network。Solver 和 Updater 没有公网路由，只能通过
+一次性角色 Token 调用 Model Gateway；Gateway 持有真实 Provider Key，并强制覆盖请求里的
+模型、`max_tokens` 和多候选参数。
 
-## L1 与 L2 如何强制
+Office 任务运行时统一提供 LibreOffice Writer/Calc/Impress、Python Office 库、字体、
+PDF/ZIP 工具。Candidate 和 Environment Assets 只读挂载，任务工作区和 Session 输出可写。
+Solver 结束后，Controller 会检查目录项、总字节、单文件、变更文件数、符号链接和特殊文件；
+越界产物不会进入 Verifier。
 
-一轮只有一个 `MutationPolicy`。Target Adapter 把 DSH 的层级翻译为具体路径：
+Verifier 是另一个容器，使用：
 
-- L1 只允许 Preset YAML、Skill Markdown/JSON/YAML/TXT，不允许任何可执行代码或可执行位。
-- L2 在 L1 上增加 `skills/**/scripts/**` 下的 Python、JavaScript、MJS 和 Shell。
-- `.rsi-context`、`.rsi-output`、`.git`、`.env`、credential/secret 路径永久只读。
-- 零改动提案直接拒绝，不允许靠 selection 的随机波动“空手晋升”。
-- 符号链接、特殊文件、超大文件、过多目录项、过多改动文件和总改动字节超限都拒绝。
-- Candidate Skill 必须使用 `cowork-*` 前缀，且目录名必须与 frontmatter `name` 一致，避免遮蔽题目自带 Skill。
+- `network=none`，并显式清空所有标准代理环境变量。
+- 只读根文件系统、无额外 capability。
+- Submission 与评分代码只读，日志目录单独可写。
+- 每题 Verifier 和共享文件在 staging 后重新校验 SHA-256。
 
-Docker 挂载减少可见面，最终 Diff Guard 才是确定性的最后一道门。即使 Agent 声称自己没有越界，也以 Controller 重算结果为准。
+上游 Verifier 正常返回 `status:error`，例如 Candidate 没有生成目标文件，属于合法零分；
+Verifier 无法导入、进程异常、输出协议损坏或摘要漂移属于基础设施失败，整个 Branch
+fail-closed，不会伪装成 Candidate 的零分。
 
-## 四种 Docker 角色
-
-Solver 运行在每个 SkillsBench Task 的派生镜像中。原 Task 镜像提供 Office/Python 等任务依赖，`docker/dsh-runtime/Dockerfile` 从固定 Submodule SHA 完整安装依赖并构建 DSH，再把同一构建产物注入任务镜像。任务镜像会校验 SkillsBench Revision/Task 标签，派生镜像还会校验 DSH Source Revision、Runtime 定义摘要和 Task 镜像 ID。
-
-**修改 Candidate Preset 不需要重新构建镜像。** Candidate 是运行时只读 Bind Mount；Task/SkillsBench Revision、DSH Source、Runtime Dockerfile/包装脚本或基础 Task 镜像身份改变时，缓存校验会触发重建。Task 自带 Skill 也不会烘焙进 Candidate，而是在单题运行时从固定 Checkout 只读挂载。
-
-Updater 使用统一 DSH Runtime，挂载关系如下：
+## 配置入口
 
 ```text
-/candidate                         Candidate，可写
-/candidate/.rsi-context/upstream   DSH Source，只读
-/candidate/.rsi-context/*.json     feedback 与 policy，只读
-/candidate/.rsi-output/            独立可写目录；Session 后只接受约定的 Mutation Report 普通文件
-/dsh-home                          本 Session 临时状态，可写
+environments/omegause-officeval.yml
+benchmarks/omegause-officeval/source-manifest.json
+benchmarks/cowork-omegause-officeval-smoke/benchmark.json
+benchmarks/cowork-omegause-officeval-linux-v1/benchmark.json
+evaluation/policies/cowork-officeval-rsi.json
+adapters/targets/msa-minimal.yml
+adapters/targets/msa-minimal-cowork-rsi.yml
+experiments/cowork-msa-smoke-<mode>.json
+experiments/cowork-msa-rsi-linear-<mode>.json
 ```
 
-Verifier 与 Agent 分开启动。Solver 不挂载 Verifier；Verifier 能读 Trial 工作区和自己的评分脚本，但它的结果还要由 Controller 归一化、检查范围并参与 Gate。
+`msa-minimal` 把 Solver 单题最多限制为 1 步，用于便宜的工程 Smoke；
+`msa-minimal-cowork-rsi` 允许 12 步，用于正式 55/18/18 配置。两者共用相同 Source
+和 Cowork CandidateSeed，但预算目的不同。
 
-上游 Verifier 若需要临时下载固定版本依赖，可以按 Environment Adapter 的标准代理白名单继承宿主已设置的代理变量；该白名单是唯一继承入口，其余标准代理键会显式传空，以覆盖 Docker 客户端配置可能注入的代理。当前 SkillsBench Adapter 使用空白名单直接出网。该能力只属于可信 Verifier，不会打通 Solver/Updater 的 internal network。
-
-慢速环境还可以为可信 Verifier 映射固定版本的本机依赖缓存 URL；Controller 只接受 `UV_DOWNLOAD_URL`、`PIP_INDEX_URL`、`UV_INDEX_URL` 三个目标变量，并只为 Verifier 提供 `host.docker.internal`，Agent 仍无该入口。
-
-第四个角色是 Model Gateway。每个 Run 都会创建一张新的 Docker internal network，Solver/Updater 只接入这张无外网路由的网络。网关同时接入 internal network 和配置的出口网络，持有真正的 Provider Key，只接受一次性 Bearer Token，并且只代理固定上游的 `POST /chat/completions`。Environment Adapter 还设置 Run 级总请求数和并发上限，防止 Agent 绕过正常 Loop 无限调用。网关解析上游流式响应末尾的 Usage，并在每次 Solver/Updater Session 前后做计数器差分；只要其中一个响应缺少合法 Usage，本 Session 的 Token 字段就保持未知。真实 Key 与一次性 Token 都通过子进程环境继承，不写进 Docker 命令参数；Run 结束后容器和 internal network 会清理。
-
-## 配置和入口
-
-静态配置：
-
-```text
-adapters/targets/deepseek-harness.yml
-adapters/updaters/deepseek-harness.yml
-adapters/providers/zcloud-openai.yml
-environments/skillsbench-cowork.yml
-benchmarks/cowork-skillsbench-poc/benchmark.json
-evaluation/policies/cowork-rsi-poc.json
-experiments/cowork-skillsbench-dsh-l1.json
-experiments/cowork-skillsbench-dsh-l2.json
-```
-
-命令职责：
+## 命令
 
 ```bash
-# 只校验配置引用和协议
-npm run rsi -- experiment validate --config experiments/cowork-skillsbench-dsh-l1.json
+npm install
+export RSI_OFFICEVAL_DATASET_ROOT=/absolute/path/to/OmegaUse-OfficeVal-Dataset
+export RSI_OFFICEVAL_EVALUATOR_ROOT=/absolute/path/to/OmegaUse-OfficeVal
+export RSI_PROVIDER_BASE_URL=https://your-provider.example/v1
+read -rsp 'Provider API Key: ' RSI_PROVIDER_API_KEY && export RSI_PROVIDER_API_KEY
 
-# 再检查 Submodule Gitlink、SkillsBench SHA、八道题布局、Docker 和凭据环境变量
-npm run rsi -- experiment preflight --config experiments/cowork-skillsbench-dsh-l1.json
-
-# 可选：提前构建固定 DSH Runtime 与 Model Gateway；Task 派生镜像仍按需构建
-npm run rsi -- runtime build --experiment experiments/cowork-skillsbench-dsh-l1.json
-
-# 只使用 feedback/selection 做一轮进化
+npm run check
+npm test
+npm run rsi -- experiment validate \
+  --config experiments/cowork-msa-smoke-single.json
+npm run rsi -- experiment preflight \
+  --config experiments/cowork-msa-smoke-single.json
+npm run rsi -- runtime build \
+  --experiment experiments/cowork-msa-smoke-single.json
 npm run rsi -- experiment run \
-  --config experiments/cowork-skillsbench-dsh-l1.json \
-  --run-id cowork-l1-smoke-001
+  --config experiments/cowork-msa-smoke-single.json \
+  --run-id cowork-officeval-smoke-001
+npm run rsi -- experiment finalize \
+  --run .rsi/runs/populations/cowork-officeval-smoke-001
 
-# Champion 锁定后，一次性回放 feedback 并评测 sealed final
-npm run rsi -- experiment finalize --run .rsi/runs/cowork-l1-smoke-001
+unset RSI_PROVIDER_API_KEY
 ```
 
-`preflight --skip-secrets` 只适合检查数据和 Docker 布局，真正运行仍会强制要求网关声明的 Provider 环境变量。Controller 信任根路径必须先提交，Run 会冻结主仓 SHA，Finalize 也必须在该 SHA 上执行；如果中间只改了文档，也需先 checkout 回运行时提交再做 Final，这是为了保守保证 Evaluator 没被替换。Solver/Updater Adapter 中同名字段表达“DSH 期待哪些变量”，实际收到的是内部地址和一次性令牌，不是真实 Provider 凭据。
+`experiment run` 只使用 feedback 和 selection。Population 关闭并锁定
+`best-harness.json` 后，`experiment finalize` 才能一次性解封 final；父状态、
+Candidate Digest、配置摘要和 Source Revision 都会重验。若 Final 已接触 sealed 数据，
+无论成功或失败都不能重新运行。
 
-上游连接只在 `ModelProviderAdapter` 配一次：协议、Base URL/API Key 的环境变量名、兼容参数和允许使用的模型目录都由它统一声明，真实凭据仍只在运行时注入。Solver 与 Updater 在 Experiment 中分别选择 `provider`、`model` 和 `maxTokens`；当前低成本 POC 两个角色都使用 `gpt-5.6-terra`，并固定为 8192 Token。DSH Runtime 会把这份通用配置翻译到其 `llm-pi-ai` OpenAI Chat Completions Adapter；后续接 pi-agent 时，只增加对应 Runtime 翻译，不复制凭据配置。
+## Reward 与晋升
 
-## Verifier 接口
-
-Environment Adapter 会按顺序寻找 instruction、Dockerfile 和 verifier。Python/Shell Verifier 默认无参数运行，同时收到：
+OfficeVal Verifier 先做 Dim1 交付合法性检查，再按多个 Dim2 Rubric 项给出加权分数。
+Controller 使用：
 
 ```text
-WORKSPACE=/root
-OUTPUT_DIR=/logs
-LOG_DIR=/logs
+reward = dim1_pass ? clamp(total_score / max_score, 0, 1) : 0
 ```
 
-如果某一版本的 SkillsBench Verifier 需要参数，可在 `spec.verifier.arguments` 使用 `{{workspace}}`、`{{outputDir}}` 和 `{{script}}`。Reward 可以来自配置列出的 JSON/TXT 文件，或 stdout 最后一段数字/JSON；支持 `reward`、`score`、`total_reward` 和嵌套 `result`。Reward 产物必须是不超过 1 MiB 的普通文件，符号链接或超大文件会让 Trial 安全失败，Controller 不会跟随它读取其他宿主路径。当前固定 SkillsBench Revision 把结果写到 `/logs/verifier/reward.txt`，八道 POC 题都是 0/1，但 Runner 已支持 `[0,1]` 连续值。超范围结果会记录安全违规并按零分处理。
+因此 Candidate 可以从 0.35 提升到 0.60，系统能看到局部进步。正式 selection 使用
+18 道配对任务；当前 Policy 要求完整覆盖、平均 Reward 不下降、至少一题提升、策略违规
+为零，同时暂时允许最多 3 道 Reward 回退。这个 Gate 是可运行的工程默认值，不是已经
+预注册的论文统计准则。
 
-Solver 工作区还有总目录项数（文件+目录）、总字节、单文件、改动文件数和改动字节上限。超限时不把产物交给 Verifier，该 Trial 记为 `error` 和安全违规。
+如果要发布正式 Benchmark 结论，还应：
 
-## 评测逻辑
+- 每题至少运行 3 个预注册 seed，而不是当前 1 个 Trial。
+- 为五种 Mode 使用完全一致的 Candidate 预算、模型、Token 和任务。
+- 在看 final 之前预注册回退上限、置信区间 Gate 和停止规则。
+- 同时报告最终 Reward、泛化差、Solver/Updater Token、墙钟时间和全部失败 Run。
+- Final 一旦解封，不得根据结果继续修改 Candidate 后重测同一测试集。
 
-单题结果是 `solver-result-jsonl-v2`：
+## 当前边界
 
-```json
-{
-  "instance_id": "xlsx-recover-data",
-  "status": "unresolved",
-  "reward": 0.75,
-  "trial_rewards": [0.5, 1.0],
-  "trial_seeds": [20260824, 20260825],
-  "seed_controlled": false,
-  "input_tokens": 12000,
-  "output_tokens": 3000,
-  "latency_ms": 180000,
-  "policy_violations": []
-}
-```
-
-晋升使用 selection 上的配对差值，不比较两批无关任务。当前 POC Policy 要求记录与完成率完整、至少一题 Reward 提升、平均 Reward 不下降、没有 Reward 回退、没有安全违规。两道 selection 题样本太小，所以没有要求 Bootstrap 下界大于零；扩大正式集后应开启该 Gate。Solver 的完整 Usage 会写入逐题 `input_tokens`/`output_tokens`，Solver 与 Updater 总 Token 则进入 Evolution Ledger；没有可信费率表时 `costUsd` 继续为 `null`。
-
-Finalize 会用冻结 H0 与锁定 Champion 同时跑 feedback 和 final，报告 `rewardGeneralizationGap = feedback gain - final gain`。Final 报告不再产生晋升决策。真正开始回放前，Controller 会先重验配置摘要、Source Revision 和 Candidate Tree Digest；随后用原子 create-if-absent 写入 `final-attempt.json`，因此并发进程也只有一个能领取。实际评测成功会进入 `finalized`，已接触 sealed final 后失败也会永久禁止重试。唯一例外是第一次尝试在公开 feedback 回放阶段因基础设施失败：用户可显式传入 `--recover-infrastructure`，Controller 只有在未发现任何 sealed-final 路径或结果、原 Claim 与父子失败状态完全一致时，才会发放一个原子的 `final-recovery-attempt.json`。原失败证据不删除，未完成 feedback 会归档；Recovery 再失败时不会有第三次机会。
-
-## 失败与回滚
-
-- Updater 没有写 Mutation Report、报告路径与真实 Diff 不一致：拒绝该 Candidate。
-- Updater 零改动、越界、创建符号链接、改动过大：拒绝，不运行 selection。
-- Solver/Verifier 超时或报错：单题为 `error`，完成率 Gate 默认失败。
-- Candidate Reward 提升不足或发生回退：拒绝，Champion 指针保持不变。
-- Final 已执行：默认拒绝再次解封；只有未接触 sealed final 的失败 Population 可以执行一次受审计恢复，不允许用 Final 反复挑 Candidate。
-- Source/SkillsBench Checkout 与冻结 SHA 不一致：Preflight 失败，不开始实验。
-
-拒绝不会修改父 Candidate。每代提案都在新目录中，调试证据保留在 `.rsi/`，可以审计但不会进入 Git。
-
-## 扩大成正式实验
-
-1. 先确认所有任务许可证和可重分发边界；不要把第三方 Task Skill 复制进本仓 Candidate。
-2. 扩大 manifest，保持 feedback、selection、final 互斥；final 在 Champion 锁定前不得运行。
-3. 把 `trialsPerInstance` 提高到至少 3，并提供同样数量的不重复 seeds。
-4. L1 和 L2 分别从同一个 H0 开始，使用相同模型、题目、Trial 数和预算。
-5. 按实际 Provider 费率接入 Cost Adapter 后再启用美元成本 Gate；可以按预注册阈值启用现有 Token 涨幅 Gate，未知值不能记为零。
-6. 保留现有 Agent internal network + Model Gateway，并在网关外层增加 DNS/IP Allowlist；同时固定镜像 Digest、Task Source 和 Verifier 依赖。
-7. 报告每代完整谱系、所有回退、总 Solver/Updater 调用和 Final 一次性状态，不只挑最好的一次。
-
-## 接入其他 Agent 或 Benchmark
-
-换 Solver/Updater 时新增独立 Source Adapter 和 Runtime 实现，不改 SkillsBench Evaluator；Target Source 与 Updater Source 会分别固定和验 SHA。换 Benchmark 时新增 Environment Adapter，不改 Candidate/Diff/谱系逻辑。这是当前接口拆分的核心：
-
-```text
-通用 Controller
-  -> Target Adapter（谁被改、哪些路径可改）
-  -> Updater Adapter（谁来改、如何启动）
-  -> Model Provider Adapter（接哪个上游、可选哪些模型）
-  -> Environment Adapter（在哪里做题、如何得到客观 Reward）
-  -> Evaluation Policy（什么条件下允许晋升）
-```
+- Linux 路径暂不执行 9 道需要 Windows Office COM 的题；若要覆盖它们，需要独立
+  Windows Worker/Verifier Adapter，不能在 Linux 上假装运行。
+- 三题 Smoke 只证明 Dataset -> MSA -> Office 文件 -> Verifier -> Reward 的链路连通。
+- 单个 seed 的 55/18/18 配置可以做研发实验，但不能单独支撑统计显著性声明。
+- PI Agent 仍需自己的 Source/Seed/Runtime/Validator Adapter；不会因为换了 Benchmark
+  就自动可运行。

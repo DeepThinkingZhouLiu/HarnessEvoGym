@@ -30,12 +30,13 @@ test('五种 Cowork RSI 配置使用同一正式起点、严格评测与总预�
       bundle.target.mutation.semanticChecks.profile.maximums.max_output_tokens,
       bundle.experiment.models.solver.maxTokens,
     )
-    assert.equal(bundle.benchmark.id, 'cowork-skillsbench-poc-v1')
-    assert.equal(bundle.benchmark.partitions.feedback.instanceIds.length, 3)
-    assert.equal(bundle.benchmark.partitions.selection.instanceIds.length, 2)
-    assert.equal(bundle.benchmark.partitions.final.instanceIds.length, 3)
+    assert.equal(bundle.environment.id, 'omegause-officeval')
+    assert.equal(bundle.benchmark.id, 'cowork-omegause-officeval-linux-v1')
+    assert.equal(bundle.benchmark.partitions.feedback.instanceIds.length, 55)
+    assert.equal(bundle.benchmark.partitions.selection.instanceIds.length, 18)
+    assert.equal(bundle.benchmark.partitions.final.instanceIds.length, 18)
     assert.equal(bundle.benchmark.partitions.final.visibility, 'sealed')
-    assert.equal(bundle.policy.id, 'cowork-rsi-poc-v1')
+    assert.equal(bundle.policy.id, 'cowork-officeval-rsi-v1')
     assert.equal(bundle.experiment.models.solver.model, 'gpt-5.6-terra')
     assert.equal(bundle.experiment.models.updater.model, 'gpt-5.6-terra')
   }

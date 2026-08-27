@@ -30,7 +30,7 @@ test('Cowork Experiment 与 Future Reasoning Campaign 可在同一 CLI 分别校
     'experiment',
     'validate',
     '--config',
-    'experiments/cowork-skillsbench-dsh-l1.json',
+    'experiments/cowork-omegause-dsh-l1.json',
   ]))
   assert.equal(experiment.kind, 'ExperimentValidationReport')
   assert.equal(experiment.mutationLevel, 'l1')

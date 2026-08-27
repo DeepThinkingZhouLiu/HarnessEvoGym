@@ -16,7 +16,7 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
 async function targetAndCatalog() {
   const bundle = await loadExperimentBundle(
-    resolve(repositoryRoot, 'experiments/cowork-skillsbench-dsh-l2.json'),
+    resolve(repositoryRoot, 'experiments/cowork-omegause-dsh-l2.json'),
     repositoryRoot,
   )
   return { target: bundle.target, catalog: mutationCatalogFor(bundle.target) }

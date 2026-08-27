@@ -1,11 +1,7 @@
 FROM python:3.12-slim-bookworm
 
-ARG OFFICEVAL_RUNTIME_REVISION=unknown
 ARG DEBIAN_MIRROR=https://mirrors.aliyun.com/debian
 ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
-
-LABEL io.harness-rsi.runtime="omegause-officeval-linux-v1" \
-      io.harness-rsi.officeval-runtime-revision="${OFFICEVAL_RUNTIME_REVISION}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -41,6 +37,12 @@ RUN python -m pip install --no-cache-dir --index-url "${PYPI_INDEX_URL}" \
       pypdfium2==4.30.1 \
       python-docx==1.2.0 \
       python-pptx==1.0.2
+
+# 运行时摘要只影响轻量的最终元数据层。更新 Verifier Runner 时，不应让
+# LibreOffice 和 Python 依赖安装层因版本标签变化而全部失去缓存。
+ARG OFFICEVAL_RUNTIME_REVISION=unknown
+LABEL io.harness-rsi.runtime="omegause-officeval-linux-v1" \
+      io.harness-rsi.officeval-runtime-revision="${OFFICEVAL_RUNTIME_REVISION}"
 
 COPY docker/omegause-officeval/run-verifier.py /opt/harness-rsi/run-officeval-verifier.py
 

@@ -95,11 +95,15 @@ class Agent:
     def parse(reply: str) -> tuple[str, str] | None:
         final = FINAL_PATTERN.search(reply)
         if final:
-            return "final", final.group(1).strip()
+            content = final.group(1).strip()
+            if content:
+                return "final", content
         for pattern in BASH_PATTERNS:
             action = pattern.search(reply)
             if action:
-                return "bash", action.group(1).strip()
+                content = action.group(1).strip()
+                if content:
+                    return "bash", content
         return None
 
     def run(self, task: str, workspace: Path) -> str:

@@ -46,6 +46,7 @@ import { runProcess, secretValuesFromEnvironment } from './process.mjs'
 import { createSearchStrategyDriver } from './search-strategy.mjs'
 import { resolveTargetSource } from './target-sources.mjs'
 import { PopulationOrchestrator } from './population-orchestrator.mjs'
+import { PopulationStore } from './population-store.mjs'
 import { acquireCampaignLock } from './campaign-lock.mjs'
 
 const MAXIMUM_STRATEGY_HISTORY_ENTRIES = 64

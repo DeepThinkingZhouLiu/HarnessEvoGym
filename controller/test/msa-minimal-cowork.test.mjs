@@ -403,6 +403,30 @@ test('MSA Cowork Candidate Profile 不能抬高 Controller 下发的步数上限
   assert.match(result.answer, /exhausted its step budget/u)
 })
 
+test('MSA Cowork Candidate 不把空 Final 或空 Bash 当成有效动作', async () => {
+  const seedRoot = resolve(repositoryRoot, 'targets/msa-minimal/cowork-v1')
+  const script = [
+    'import json, sys, types',
+    `sys.path.insert(0, ${JSON.stringify(seedRoot)})`,
+    'sys.modules["model"] = types.SimpleNamespace(query=lambda *args: "unused")',
+    'sys.modules["tools"] = types.SimpleNamespace(run_bash=lambda *args: "unused")',
+    'from agent import Agent',
+    'print(json.dumps({',
+    '  "empty_final": Agent.parse("<final>   </final>"),',
+    '  "empty_bash": Agent.parse("<bash>\\n\\t</bash>"),',
+    '  "valid_final": Agent.parse("<final>done</final>"),',
+    '}))',
+  ].join('\n')
+  const { stdout } = await executeFile('python3', ['-c', script], {
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+  })
+  const result = JSON.parse(stdout)
+
+  assert.equal(result.empty_final, null)
+  assert.equal(result.empty_bash, null)
+  assert.deepEqual(result.valid_final, ['final', 'done'])
+})
+
 test('MSA Cowork Chat Client 对正常结束的空流最多重试两次', async (context) => {
   const seedRoot = resolve(repositoryRoot, 'targets/msa-minimal/cowork-v1')
   let requests = 0

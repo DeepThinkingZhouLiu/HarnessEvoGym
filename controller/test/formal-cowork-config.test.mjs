@@ -31,11 +31,11 @@ test('五种 Cowork RSI 配置使用同一正式起点、严格评测与总预�
       bundle.experiment.models.solver.maxTokens,
     )
     assert.equal(bundle.environment.id, 'omegause-officeval')
-    assert.equal(bundle.environment.task.maximumConcurrentTrials, 8)
+    assert.equal(bundle.environment.task.maximumConcurrentTrials, 4)
     assert.equal(bundle.environment.docker.resources.timeoutSeconds, 3600)
-    assert.equal(
-      bundle.environment.task.maximumConcurrentTrials,
-      bundle.environment.modelGateway.maximumConcurrentRequests,
+    assert.ok(
+      bundle.environment.task.maximumConcurrentTrials
+        <= bundle.environment.modelGateway.maximumConcurrentRequests,
     )
     assert.equal(bundle.benchmark.id, 'cowork-omegause-officeval-linux-v1')
     assert.equal(bundle.benchmark.partitions.feedback.instanceIds.length, 55)

@@ -10,6 +10,7 @@ import { promisify } from 'node:util'
 
 import { readConfigFile } from '../src/config.mjs'
 import {
+  concurrentMap,
   OmegaUseOfficeValEnvironment,
   normalizeOmegaUseVerifierReward,
   validateOmegaUseSourceManifest,
@@ -18,6 +19,20 @@ import { validateBenchmark } from '../src/protocol.mjs'
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const execFileAsync = promisify(execFile)
+
+test('OmegaUse 受控并发不超过上限且保持 Benchmark 顺序', async () => {
+  let active = 0
+  let maximumActive = 0
+  const result = await concurrentMap([30, 5, 20, 1], 2, async (value) => {
+    active += 1
+    maximumActive = Math.max(maximumActive, active)
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, value))
+    active -= 1
+    return value
+  })
+  assert.equal(maximumActive, 2)
+  assert.deepEqual(result, [30, 5, 20, 1])
+})
 
 function digest(value) {
   return createHash('sha256').update(value).digest('hex')

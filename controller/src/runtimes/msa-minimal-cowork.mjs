@@ -431,6 +431,7 @@ export function createMsaMinimalCoworkSolverDriver({
   modelGateway,
 }) {
   const measuredUsage = usageAccumulator()
+  let usageBatch = null
   return {
     id: target.solver.protocol,
     cacheKey: `msa-${sourceRevision.slice(0, 12)}`,
@@ -448,7 +449,7 @@ export function createMsaMinimalCoworkSolverDriver({
     },
     async run(options) {
       if (!modelGateway) throw new ProtocolError('MSA Solver 运行必须使用隔离 Model Gateway')
-      const before = await modelGateway.usage('solver')
+      const before = usageBatch === null ? await modelGateway.usage('solver') : null
       let result
       let operationError
       try {
@@ -467,6 +468,10 @@ export function createMsaMinimalCoworkSolverDriver({
       } catch (error) {
         operationError = error
       }
+      if (usageBatch !== null) {
+        if (operationError) throw operationError
+        return result
+      }
       try {
         const usage = diffModelUsage(before, await modelGateway.usage('solver'))
         addUsage(measuredUsage, usage)
@@ -479,6 +484,19 @@ export function createMsaMinimalCoworkSolverDriver({
       }
       if (operationError) throw operationError
       return result
+    },
+    async beginUsageBatch() {
+      if (!modelGateway) throw new ProtocolError('MSA Solver Usage Batch 需要 Model Gateway')
+      if (usageBatch !== null) throw new ProtocolError('MSA Solver Usage Batch 不能嵌套')
+      usageBatch = { before: await modelGateway.usage('solver') }
+    },
+    async endUsageBatch() {
+      if (usageBatch === null) throw new ProtocolError('MSA Solver Usage Batch 尚未开始')
+      const { before } = usageBatch
+      usageBatch = null
+      const usage = diffModelUsage(before, await modelGateway.usage('solver'))
+      addUsage(measuredUsage, usage)
+      return usage
     },
     usage() {
       return publicUsage(measuredUsage)

@@ -107,6 +107,13 @@ test('Environment Adapter 拒绝互相矛盾的工作区预算', async () => {
   assert.throws(() => validateEnvironmentAdapter(config), /子上限不能超过对应总上限/u)
 })
 
+test('OmegaUse Environment 并发 Trial 不能超过可审计上限', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval.yml'))
+  assert.equal(validateEnvironmentAdapter(config).task.maximumConcurrentTrials, 8)
+  config.spec.task.maximumConcurrentTrials = 9
+  assert.throws(() => validateEnvironmentAdapter(config), /maximumConcurrentTrials/u)
+})
+
 test('Environment Adapter 拒绝与可信评分挂载冲突的工作区', async () => {
   const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval.yml'))
   config.spec.task.workspacePath = '/logs/submission'

@@ -319,6 +319,59 @@ test('MSA Solver Driver 提供 Factory 所需接口并累计隔离网关 Usage',
   ])
 })
 
+test('MSA Solver Driver 并发 Batch 只对网关 Usage 做一次总差分', async () => {
+  const fixture = await trialFixture('rsi-msa-cowork-batch-')
+  const snapshots = [
+    {
+      acceptedRequests: 0, usageResponses: 0, unknownUsageResponses: 0,
+      inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, reasoningTokens: 0,
+      activeRequests: 0,
+    },
+    {
+      acceptedRequests: 2, usageResponses: 2, unknownUsageResponses: 0,
+      inputTokens: 40, outputTokens: 10, cacheReadTokens: 0, reasoningTokens: 0,
+      activeRequests: 0,
+    },
+  ]
+  const gatewayCalls = []
+  const modelGateway = {
+    async access(role) {
+      gatewayCalls.push(['access', role])
+      return modelAccess
+    },
+    async usage(role) {
+      gatewayCalls.push(['usage', role])
+      return snapshots.shift()
+    },
+  }
+  const docker = {
+    async run() {
+      await writeFile(join(fixture.sessionRoot, 'answer.txt'), 'done\n')
+      await writeFile(join(fixture.sessionRoot, 'agent.jsonl'), `${JSON.stringify({ type: 'model' })}\n`)
+      return { stderr: '', durationMs: 1, outputTruncated: false }
+    },
+  }
+  const driver = createMsaMinimalCoworkSolverDriver({
+    target: { solver: { protocol: 'msa-minimal-docker-v1', runtime } },
+    provider,
+    docker,
+    repositoryRoot,
+    sourceRevision,
+    sourcePath: 'sources/msa-minimal-harness',
+    modelGateway,
+  })
+
+  await driver.beginUsageBatch()
+  const result = await driver.run({
+    image: 'office-task:fixture-msa', model, ...fixture, task: 'fixture task',
+    name: 'msa-cowork-batch-fixture', timeoutMs: 1000,
+  })
+  assert.equal(result.modelUsage, undefined)
+  await driver.endUsageBatch()
+  assert.equal(driver.usage().totalTokens, 50)
+  assert.deepEqual(gatewayCalls.map(([action]) => action), ['usage', 'access', 'usage'])
+})
+
 test('MSA Cowork CandidateSeed Python 可解析，Chat Client 可读取 SSE', async (context) => {
   const seedRoot = resolve(repositoryRoot, 'targets/msa-minimal/cowork-v1')
   const pythonFiles = ['agent.py', 'model.py', 'run.py'].map((name) => join(seedRoot, name))

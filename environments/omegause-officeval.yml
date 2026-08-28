@@ -19,6 +19,8 @@ spec:
   task:
     workspacePath: /workspace
     environmentAssets: environments/omegause-officeval-assets
+    # 每道题的 Workspace、Solver 和 Verifier 完全隔离；并发上限与 Model Gateway 对齐。
+    maximumConcurrentTrials: 8
     workspaceLimits:
       maximumFiles: 10000
       maximumBytes: 1073741824
@@ -40,7 +42,7 @@ spec:
       cpus: 4
       memory: 8g
       pids: 512
-      timeoutSeconds: 1200
+      timeoutSeconds: 3600
 
   modelGateway:
     image: harness-rsi/model-gateway:v1

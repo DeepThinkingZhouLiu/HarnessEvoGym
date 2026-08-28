@@ -734,31 +734,84 @@ export class OmegaUseOfficeValEnvironment {
     })
     await assertPathKind(candidate, `Candidate ${candidateId} Workspace`)
     const executionId = sha256(resolve(outputPath)).slice(0, 12)
-    const records = []
-    for (const instanceId of partitionSpec.instanceIds) {
-      const layout = await this.taskLayout(instanceId)
-      const trials = []
-      for (const [trialIndex, seed] of seeds.entries()) {
-        trials.push(await this.runTrial({
-          candidateId,
-          candidateWorkspace: candidate,
-          layout,
-          model,
-          partition,
-          seed,
-          trialIndex,
-          executionId,
-        }))
-      }
-      records.push(recordForTask({
-        layout,
-        partition,
-        trials,
-        runRoot: this.runRoot,
-        feedbackLimit: this.environment.feedback.maximumTextBytesPerCase,
-      }))
+    // 各 Task 有独立 Workspace/容器；并发执行后仍按 Benchmark 固定顺序回收。
+    await this.ensureRuntime()
+    await this.solverDriver.beginUsageBatch?.()
+    let records
+    let runError
+    try {
+      records = await concurrentMap(
+        partitionSpec.instanceIds,
+        this.environment.task.maximumConcurrentTrials ?? 1,
+        async (instanceId) => {
+          const layout = await this.taskLayout(instanceId)
+          const trials = []
+          for (const [trialIndex, seed] of seeds.entries()) {
+            trials.push(await this.runTrial({
+              candidateId,
+              candidateWorkspace: candidate,
+              layout,
+              model,
+              partition,
+              seed,
+              trialIndex,
+              executionId,
+            }))
+          }
+          return recordForTask({
+            layout,
+            partition,
+            trials,
+            runRoot: this.runRoot,
+            feedbackLimit: this.environment.feedback.maximumTextBytesPerCase,
+          })
+        },
+      )
+    } catch (error) {
+      runError = error
     }
+    try {
+      await this.solverDriver.endUsageBatch?.()
+    } catch (error) {
+      if (!runError) throw error
+      runError.details = [...(runError.details ?? []), `Solver Usage Batch 收尾失败：${error.message}`]
+    }
+    if (runError) throw runError
     await writeJsonLines(outputPath, records)
     return validateResultRecords(records, this.benchmark, `${candidateId}/${partition}`)
   }
+}
+
+export async function concurrentMap(values, maximumConcurrency, operation) {
+  if (!Array.isArray(values) || !Number.isSafeInteger(maximumConcurrency)
+      || maximumConcurrency < 1 || maximumConcurrency > 8 || typeof operation !== 'function') {
+    throw new ProtocolError('OmegaUse 并发执行参数无效')
+  }
+  const results = new Array(values.length)
+  const failures = []
+  let cursor = 0
+  async function worker() {
+    while (cursor < values.length) {
+      const index = cursor
+      cursor += 1
+      try {
+        results[index] = await operation(values[index], index)
+      } catch (error) {
+        failures.push({ index, error })
+      }
+    }
+  }
+  await Promise.all(Array.from(
+    { length: Math.min(maximumConcurrency, values.length) },
+    () => worker(),
+  ))
+  if (failures.length > 0) {
+    failures.sort((left, right) => left.index - right.index)
+    const first = failures[0].error
+    if (failures.length > 1) {
+      first.details = [...(first.details ?? []), `同批共 ${failures.length} 个 Trial 失败`]
+    }
+    throw first
+  }
+  return results
 }

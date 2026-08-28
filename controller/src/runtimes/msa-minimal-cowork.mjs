@@ -461,6 +461,7 @@ export function createMsaMinimalCoworkSolverDriver({
             model: options.model.model,
             maxTokens: options.model.maxTokens,
             maxTokensField: provider.compatibility?.maxTokensField ?? 'max_tokens',
+            reasoningEffort: options.model.reasoningEffort ?? null,
           }),
         })
       } catch (error) {

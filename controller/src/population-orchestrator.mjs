@@ -340,6 +340,55 @@ export class PopulationOrchestrator {
     return state
   }
 
+  /** 只固化 H0 评测，不启动 Updater，也不消耗进化 Budget。 */
+  async freezeBaseline() {
+    const state = await this.#readState()
+    if (state.status === 'PAUSED_INFRASTRUCTURE') {
+      throw new ProtocolError('Population Baseline 因基础设施故障暂停')
+    }
+    if (state.status !== 'EVOLVING' || state.epoch !== 0
+        || state.budget.consumed !== 0 || state.inFlightWave !== undefined) {
+      throw new ProtocolError('Population 只能在 H0 评测后、第一轮进化前固化 Baseline')
+    }
+    const frozenAt = iso(this.clock)
+    const baseline = redactSecrets({
+      apiVersion: 'harness-rsi/v1alpha1',
+      kind: 'PopulationBaselineReport',
+      campaignId: state.campaignId,
+      mode: state.mode,
+      frozenAt,
+      configFingerprint: state.configFingerprint,
+      ...(state.configDigest === undefined ? {} : { configDigest: state.configDigest }),
+      budgetConsumed: 0,
+      best: structuredClone(state.best),
+      branches: state.branches.map((branch) => ({
+        branchId: branch.branchId,
+        incumbent: structuredClone(branch.incumbent),
+      })),
+    }, this.secretValues)
+    const baselinePath = await this.store.writeBaselineSummary(baseline)
+    const frozen = {
+      ...state,
+      status: 'BASELINE_FROZEN',
+      updatedAt: frozenAt,
+      baseline: { path: 'public/baseline-summary.json', frozenAt },
+      events: [...state.events, event(state, 'POPULATION_BASELINE_FROZEN', frozenAt, {
+        branchId: state.best.branchId,
+        candidateId: state.best.candidateId,
+        primaryMetric: state.best.primaryMetric,
+        primaryValue: state.best.primaryValue,
+      })],
+    }
+    await this.store.saveState(frozen)
+    this.progress({
+      type: 'population-baseline-frozen',
+      branchId: frozen.best.branchId,
+      primaryMetric: frozen.best.primaryMetric,
+      primaryValue: frozen.best.primaryValue,
+    })
+    return { state: frozen, baseline, baselinePath }
+  }
+
   async #pauseInfrastructure(state, failures, phase) {
     const pausedAt = iso(this.clock)
     const publicFailures = redactSecrets(failures.map(({ branchId, error }) => ({
@@ -372,6 +421,9 @@ export class PopulationOrchestrator {
     let state = await this.#readState()
     if (state.status === 'PAUSED_INFRASTRUCTURE') {
       throw new ProtocolError('Population 当前暂停；请使用 evolve resume')
+    }
+    if (state.status === 'BASELINE_FROZEN') {
+      throw new ProtocolError('Population 已固化为 H0 Baseline，不能在同一 Run 中继续进化')
     }
     let completedWaves = 0
     while (state.status === 'EVOLVING' && completedWaves < waveLimit) {

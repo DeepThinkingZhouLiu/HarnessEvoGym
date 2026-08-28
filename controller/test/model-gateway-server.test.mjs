@@ -304,18 +304,21 @@ test('Model Gateway 按 Solver/Updater 强制覆盖可信模型并分角色计�
     await waitForGateway(gatewayUrl, child, stderr)
     assert.equal((await configure({
       role: 'solver', model: 'trusted-solver', maxTokens: 111, maxTokensField: 'max_tokens',
+      reasoningEffort: 'high',
     }, solverToken)).status, 401)
     assert.equal((await request('/chat/completions', solverToken, {
       method: 'POST', body: JSON.stringify({ model: 'attacker' }),
     })).status, 503)
     assert.equal((await configure({
       role: 'solver', model: 'trusted-solver', maxTokens: 111, maxTokensField: 'max_tokens',
+      reasoningEffort: 'high',
     })).status, 200)
     assert.equal((await configure({
       role: 'updater', model: 'trusted-updater', maxTokens: 222, maxTokensField: 'max_completion_tokens',
     })).status, 200)
     assert.equal((await configure({
       role: 'solver', model: 'changed-model', maxTokens: 111, maxTokensField: 'max_tokens',
+      reasoningEffort: 'high',
     })).status, 409)
 
     const solverResponse = await request('/chat/completions', solverToken, {
@@ -329,6 +332,8 @@ test('Model Gateway 按 Solver/Updater 强制覆盖可信模型并分角色计�
         stream_options: { include_usage: false },
         best_of: 99,
         num_return_sequences: 99,
+        reasoning: { effort: 'low' },
+        reasoning_effort: 'low',
         messages: [{ role: 'user', content: 'solver' }],
       }),
     })
@@ -368,6 +373,7 @@ test('Model Gateway 按 Solver/Updater 强制覆盖可信模型并分角色计�
       {
         model: 'trusted-solver',
         max_tokens: 111,
+        reasoning_effort: 'high',
         n: 1,
         stream: true,
         stream_options: { include_usage: true },
@@ -377,6 +383,7 @@ test('Model Gateway 按 Solver/Updater 强制覆盖可信模型并分角色计�
         model: 'trusted-solver',
         max_tokens: 111,
         messages: [{ role: 'user', content: 'renewed-solver' }],
+        reasoning_effort: 'high',
         n: 1,
         stream: true,
         stream_options: { include_usage: true },

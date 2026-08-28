@@ -16,6 +16,7 @@ const USAGE_SNAPSHOT_FIELDS = [...USAGE_COUNTER_FIELDS, 'activeRequests']
 const AGENT_ROLES = new Set(['solver', 'updater'])
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u
 const MAX_TOKENS_FIELDS = new Set(['max_tokens', 'max_completion_tokens'])
+const REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 const ROLE_TOKEN_PATTERN = /^[0-9a-f]{64}$/u
 
 function validateUsageSnapshot(value) {
@@ -108,10 +109,15 @@ function normalizeRolePolicy(role, policy) {
   if (!MAX_TOKENS_FIELDS.has(policy.maxTokensField)) {
     throw new ProtocolError(`${role} Model Gateway Policy maxTokensField 无效`)
   }
+  if (policy.reasoningEffort !== null && policy.reasoningEffort !== undefined
+      && !REASONING_EFFORTS.has(policy.reasoningEffort)) {
+    throw new ProtocolError(`${role} Model Gateway Policy reasoningEffort 无效`)
+  }
   return Object.freeze({
     model: policy.model,
     maxTokens: policy.maxTokens,
     maxTokensField: policy.maxTokensField,
+    reasoningEffort: policy.reasoningEffort ?? null,
   })
 }
 

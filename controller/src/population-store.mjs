@@ -54,6 +54,7 @@ export class PopulationStore {
     this.statePath = join(this.publicRoot, 'state.json')
     this.eventsPath = join(this.publicRoot, 'events.jsonl')
     this.configPath = join(this.publicRoot, 'config.snapshot.json')
+    this.baselinePath = join(this.publicRoot, 'baseline-summary.json')
   }
 
   async initialize({ config, state }) {
@@ -111,6 +112,11 @@ export class PopulationStore {
         `${state.events.map((event) => JSON.stringify(event)).join('\n')}\n`,
       )
     }
+  }
+
+  async writeBaselineSummary(summary) {
+    await atomicJson(this.baselinePath, summary)
+    return this.baselinePath
   }
 
   async writeReport({ summary, markdown, bestHarness, patch }) {

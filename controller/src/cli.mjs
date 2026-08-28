@@ -9,6 +9,7 @@ import {
   finalizeEvolution,
   preflightExperiment,
   resumePopulationEvolution,
+  runConfiguredBaseline,
   runConfiguredEvolution,
 } from './cowork-orchestrator.mjs'
 import {
@@ -31,6 +32,7 @@ const HELP = `HarnessEvoGym Controller
   harness-rsi experiment validate --config <experiment.json>
   harness-rsi experiment preflight --config <experiment.json> [--skip-secrets]
   harness-rsi runtime build --experiment <experiment.json>
+  harness-rsi experiment baseline --config <experiment.json> [--run-id <id>]
   harness-rsi experiment run --config <experiment.json> [--run-id <id>]
   harness-rsi experiment resume --run <population-run>
   harness-rsi experiment finalize --run <single-run | population-run> [--recover-infrastructure]
@@ -62,6 +64,7 @@ const HELP = `HarnessEvoGym Controller
   - final Partition 标记为 sealed，必须显式提供 --allow-sealed。
   - 本入口消费标准化 Solver Result，不直接执行候选仓库里的任何命令。
   - experiment run 只使用 feedback 与 selection，永远不会读取 final。
+  - experiment baseline 只评测 H0 selection，不启动 Updater，不消耗进化预算。
   - experiment resume 只恢复同一 Controller Revision 下的 Cowork Population 检查点。
   - experiment finalize 是唯一允许解锁 Cowork sealed final 的入口。
   - --recover-infrastructure 只能在 Population 上次失败且从未访问 sealed final 时使用，并且只能恢复一次。
@@ -185,6 +188,27 @@ async function evolveRunCommand(args) {
     runRoot: result.runRoot,
     championId: result.championId,
     status: result.population ? result.state.status : result.state.metadata.status,
+  }, options.get('output'))
+}
+
+async function baselineRunCommand(args) {
+  const { options } = parseOptions(args, { valueOptions: new Set(['config', 'run-id', 'output']) })
+  const result = await runConfiguredBaseline({
+    repositoryRoot: REPOSITORY_ROOT,
+    experimentPath: requiredPath(options, 'config'),
+    ...(options.get('run-id') ? { runId: options.get('run-id') } : {}),
+    onEvent: progress,
+  })
+  await emit({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'BaselineRunReport',
+    runId: result.runId,
+    runRoot: result.runRoot,
+    baselinePath: result.baselinePath,
+    baselineId: result.state.best.candidateId,
+    status: result.state.status,
+    primary: result.state.best.evaluation.primary,
+    budgetConsumed: result.state.budget.consumed,
   }, options.get('output'))
 }
 
@@ -322,6 +346,7 @@ async function main() {
   if (group === 'adapter' && action === 'validate') return await validateAdapterCommand(args)
   if (group === 'experiment' && action === 'validate') return await validateExperimentCommand(args)
   if (group === 'experiment' && action === 'preflight') return await preflightExperimentCommand(args)
+  if (group === 'experiment' && action === 'baseline') return await baselineRunCommand(args)
   if (group === 'experiment' && action === 'run') return await evolveRunCommand(args)
   if (group === 'experiment' && action === 'resume') return await evolveResumeCommand(args)
   if (group === 'experiment' && action === 'finalize') return await evolveFinalizeCommand(args)

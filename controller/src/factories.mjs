@@ -106,6 +106,7 @@ function modelRolePolicy(model, provider) {
     model: model.model,
     maxTokens: model.maxTokens,
     maxTokensField: provider.compatibility.maxTokensField,
+    reasoningEffort: model.reasoningEffort ?? null,
   }
 }
 

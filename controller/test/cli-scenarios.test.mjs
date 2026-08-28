@@ -21,6 +21,7 @@ async function runCli(args) {
 test('CLI 用不冲突的命名空间同时暴露 Reasoning 与 Cowork', async () => {
   const help = await runCli(['--help'])
   assert.match(help, /experiment run --config/u)
+  assert.match(help, /experiment baseline --config/u)
   assert.match(help, /evolve start\|run\|resume/u)
   assert.doesNotMatch(help, /evolve run --experiment/u)
 })

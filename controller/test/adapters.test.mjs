@@ -51,6 +51,13 @@ test('旧 Cowork Experiment 不声明 Strategy 时保持线性策略兼容', asy
   assert.equal(defaultSearchStrategyAdapter().id, 'linear-hill-climb')
 })
 
+test('Evolution Experiment 只接受可审计的模型思考深度', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'experiments/cowork-msa-rsi-linear-single.json'))
+  assert.equal(validateExperiment(config).models.solver.reasoningEffort, 'high')
+  config.spec.models.solver.reasoningEffort = 'untrusted-auto'
+  assert.throws(() => validateExperiment(config), /reasoningEffort 无效/u)
+})
+
 test('DSH Driver 同时接受旧协议名和带版本协议名', async () => {
   const target = await readConfigFile(resolve(repositoryRoot, 'adapters/targets/deepseek-harness.yml'))
   assert.equal(validateTargetAdapter(target).solver.protocol, 'dsh-headless-docker')

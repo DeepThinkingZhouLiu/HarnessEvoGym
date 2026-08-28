@@ -26,7 +26,12 @@ const provider = {
   },
   models: [{ id: 'fixture-terra' }],
 }
-const model = { provider: provider.id, model: 'fixture-terra', maxTokens: 2048 }
+const model = {
+  provider: provider.id,
+  model: 'fixture-terra',
+  maxTokens: 2048,
+  reasoningEffort: 'high',
+}
 const modelAccess = {
   network: 'fixture-run-model-net',
   environment: {
@@ -308,6 +313,7 @@ test('MSA Solver Driver 提供 Factory 所需接口并累计隔离网关 Usage',
       model: 'fixture-terra',
       maxTokens: 2048,
       maxTokensField: 'max_tokens',
+      reasoningEffort: 'high',
     }],
     ['usage', 'solver'],
   ])

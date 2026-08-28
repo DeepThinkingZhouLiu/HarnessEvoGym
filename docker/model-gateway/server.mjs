@@ -237,12 +237,17 @@ function validatedRolePolicy(value) {
   if (typeof value.model !== 'string' || !MODEL_ID_PATTERN.test(value.model)) return null
   if (!Number.isSafeInteger(value.maxTokens) || value.maxTokens < 1 || value.maxTokens > 1_000_000) return null
   if (!MAX_TOKENS_FIELDS.has(value.maxTokensField)) return null
-  if (Object.keys(value).some((key) => !['role', 'model', 'maxTokens', 'maxTokensField'].includes(key))) return null
+  if (value.reasoningEffort !== null && value.reasoningEffort !== undefined
+      && !['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(value.reasoningEffort)) return null
+  if (Object.keys(value).some((key) => ![
+    'role', 'model', 'maxTokens', 'maxTokensField', 'reasoningEffort',
+  ].includes(key))) return null
   return {
     role: value.role,
     model: value.model,
     maxTokens: value.maxTokens,
     maxTokensField: value.maxTokensField,
+    reasoningEffort: value.reasoningEffort ?? null,
   }
 }
 
@@ -259,8 +264,11 @@ function trustedRequestBody(rawBody, policy) {
   delete output.max_completion_tokens
   delete output.max_output_tokens
   delete output.maxTokens
+  delete output.reasoning
+  delete output.reasoning_effort
   for (const field of AMPLIFICATION_FIELDS) delete output[field]
   output[policy.maxTokensField] = policy.maxTokens
+  if (policy.reasoningEffort !== null) output.reasoning_effort = policy.reasoningEffort
   // 受信角色只能请求一个、必然返回 Usage 的流式 Completion。
   // 覆盖而不信任 Agent 提交的同名字段，避免放大生成数或绕过计量。
   output.n = 1

@@ -294,6 +294,21 @@ test('a capped invocation still closes and reports when its last wave exhausts t
   assert.equal(report.summary.budget.unused, 0)
 })
 
+test('H0 Baseline 固化不调用 Updater 也不消耗进化预算', async () => {
+  const context = await fixture('single', { total: 4 })
+  await context.orchestrator.initialize()
+  const result = await context.orchestrator.freezeBaseline()
+  assert.equal(result.state.status, 'BASELINE_FROZEN')
+  assert.equal(result.state.epoch, 0)
+  assert.equal(result.state.budget.consumed, 0)
+  assert.equal(result.state.events.at(-1).type, 'POPULATION_BASELINE_FROZEN')
+  assert.equal(context.branchesById.get('branch-001').calls, 0)
+  assert.equal(result.baseline.kind, 'PopulationBaselineReport')
+  assert.equal(result.baseline.best.candidateId, 'baseline')
+  assert.deepEqual(JSON.parse(await readFile(result.baselinePath, 'utf8')), result.baseline)
+  await assert.rejects(() => context.orchestrator.run(), /BASELINE_FROZEN|Population/u)
+})
+
 test('Population Final 状态只输出允许字段，不反射 sealed 错误细节', async () => {
   const context = await fixture('single', { total: 1 })
   await context.orchestrator.initialize()

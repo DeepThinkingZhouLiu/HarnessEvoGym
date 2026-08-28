@@ -39,6 +39,8 @@ test('五种 Cowork RSI 配置使用同一正式起点、严格评测与总预�
     assert.equal(bundle.policy.id, 'cowork-officeval-rsi-v1')
     assert.equal(bundle.experiment.models.solver.model, 'gpt-5.6-terra')
     assert.equal(bundle.experiment.models.updater.model, 'gpt-5.6-terra')
+    assert.equal(bundle.experiment.models.solver.reasoningEffort, 'high')
+    assert.equal(bundle.experiment.models.updater.reasoningEffort, 'high')
   }
 })
 

@@ -2188,10 +2188,14 @@ export async function runPopulationEvolution({
   experimentPath,
   runId = createRunId('cowork-population'),
   onEvent = () => {},
+  baselineOnly = false,
 }) {
   safeRunId(runId)
   const controllerRevision = await trustedControllerRevision(repositoryRoot)
   const bundle = await loadExperimentBundle(resolve(experimentPath), repositoryRoot)
+  if (baselineOnly && bundle.recipe.spec.population.concurrency.n_branches !== 1) {
+    throw new ProtocolError('公共 H0 Baseline 只能使用单 Branch Recipe，避免重复评测同一 Candidate')
+  }
   const requestedRuntimeRoot = resolveInside(
     repositoryRoot,
     bundle.target.materialization.runtimeRoot,
@@ -2238,8 +2242,11 @@ export async function runPopulationEvolution({
         })
       },
     })
-    await orchestrator.initialize()
-    const state = await orchestrator.run()
+    const initialized = await orchestrator.initialize()
+    const baselineResult = baselineOnly && initialized.status !== 'PAUSED_INFRASTRUCTURE'
+      ? await orchestrator.freezeBaseline()
+      : null
+    const state = baselineResult === null ? await orchestrator.run() : baselineResult.state
     if (state.status === 'PAUSED_INFRASTRUCTURE') {
       throw new ProtocolError('Population 因基础设施故障暂停，拒绝把本次运行报告为成功', [
         `runRoot=${orchestrator.store.root}`,
@@ -2251,6 +2258,9 @@ export async function runPopulationEvolution({
       championId: state.best.candidateId,
       state,
       population: true,
+      ...(baselineResult === null
+        ? {}
+        : { baseline: baselineResult.baseline, baselinePath: baselineResult.baselinePath }),
     }
   } finally {
     await release()
@@ -2378,6 +2388,15 @@ export async function runConfiguredEvolution(options) {
   return experiment.experiment.recipePath === null
     ? await runEvolution(options)
     : await runPopulationEvolution(options)
+}
+
+/** 只跑单 Branch H0 selection，不调用 Updater、不进入进化轮次。 */
+export async function runConfiguredBaseline(options) {
+  const experiment = await loadExperimentBundle(resolve(options.experimentPath), options.repositoryRoot)
+  if (experiment.experiment.recipePath === null) {
+    throw new ProtocolError('H0 Baseline 命令需要显式 EvolutionRecipe 以固化完整实验身份')
+  }
+  return await runPopulationEvolution({ ...options, baselineOnly: true })
 }
 
 function assertEvolutionRunState(state) {

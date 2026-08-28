@@ -1038,6 +1038,13 @@ export function validateEnvironmentAdapter(input) {
 
 function validateModel(value, label) {
   const model = expectObject(value, label)
+  const reasoningEffort = model.reasoningEffort === undefined
+    ? null
+    : expectText(model.reasoningEffort, `${label}.reasoningEffort`)
+  if (reasoningEffort !== null
+      && !['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(reasoningEffort)) {
+    throw new ProtocolError(`${label}.reasoningEffort 无效`)
+  }
   return {
     provider: expectText(model.provider, `${label}.provider`),
     model: expectText(model.model, `${label}.model`),
@@ -1046,6 +1053,7 @@ function validateModel(value, label) {
       min: 1,
       max: 1_000_000,
     }),
+    reasoningEffort,
   }
 }
 

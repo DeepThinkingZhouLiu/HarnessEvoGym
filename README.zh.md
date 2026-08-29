@@ -86,7 +86,9 @@ HZY 原有 Runtime。这是兼容层，不是两套新算法。
 
 Model Gateway 给 Controller、Solver 和 Updater 分配不同令牌。Solver/Updater 即使在
 请求体里伪造 `model` 或 `max_tokens`，网关也会用 Experiment 冻结值覆盖；
-两个角色的 Usage 也分开计量。
+两个角色的 Usage 也分开计量。OmegaUse 正式环境把上游额外重试固定为 5 次：仅对
+429/502/503/504、连接中断和上游超时重试，并且只允许发生在响应 Header/Body 下发前；
+已经开始返回的流绝不会重播，同一模型逻辑请求在 Usage 中仍只计一次。
 
 Population 启动时还会对展开后的 Experiment、Recipe、Adapter、Benchmark、Policy 和
 Updater Prompt 摘要生成统一 `configDigest`。每个 Branch 在创建运行目录和调用模型前
@@ -361,7 +363,10 @@ Reasoning 的 Synthetic Text 五 Mode 仍只是工程冒烟。HLE 正式实验�
 `PAUSED_INFRASTRUCTURE` 并让命令失败，绝不会冒充 0 分成功结束。Cowork Population 可以用
 `experiment resume --run <population-run>` 在同一个 Controller Revision 下继续；恢复时会重验冻结
 Bundle、Source、Candidate Digest 和 Mutation 边界，并把未完成轮次归档到 `recovery/`
-后重跑，失败尝试的 Token/时间仍计入 Ledger。普通进化恢复必须是同一 Controller
+后重跑。OmegaUse 会进一步按题读取原子提交的 `committed-result.json`：已经完成的题目
+（包括合法 0 分）直接复用，只运行没有完成的题目；半成品会先移入 `recovery/trial-attempts/`
+保留审计证据。基础设施失败不会在同一命令里自动重跑整题，必须由用户显式执行 Resume，
+失败尝试的 Token/时间仍计入 Ledger。普通进化恢复必须是同一 Controller
 Revision；只有上述“尚未访问 sealed final”的 Final Recovery 可以在显式参数下使用一个
 继承原 Revision 的新 Controller，并同时记录进化版本和 Finalizer 版本。修改冻结配置后仍必须
 使用新 Run ID。Model Gateway 的请求上限目前按 Branch 生效，还不是整个 Population 的全局费用上限。

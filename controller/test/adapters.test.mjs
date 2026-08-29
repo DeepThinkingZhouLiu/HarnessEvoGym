@@ -29,6 +29,7 @@ test('Cowork Experiment 分别固定 Target/Updater Source 和模型上限', asy
   assert.equal(bundle.experiment.models.updater.model, 'gpt-5.6-terra')
   assert.equal(bundle.environment.modelGateway.upstreamApiKeyEnvironment, 'RSI_PROVIDER_API_KEY')
   assert.equal(bundle.environment.modelGateway.maximumRequestsPerRun, 4096)
+  assert.equal(bundle.environment.modelGateway.maximumUpstreamRetries, 5)
   assert.equal(bundle.environment.protocol, 'omegause-officeval-docker-v1')
   assert.equal(bundle.environment.verifier.timeoutSeconds, 300)
   assert.equal(bundle.environment.feedback.maximumHistoryEntries, 10)
@@ -112,6 +113,12 @@ test('OmegaUse Environment 并发 Trial 不能超过可审计上限', async () =
   assert.equal(validateEnvironmentAdapter(config).task.maximumConcurrentTrials, 4)
   config.spec.task.maximumConcurrentTrials = 9
   assert.throws(() => validateEnvironmentAdapter(config), /maximumConcurrentTrials/u)
+})
+
+test('Environment Adapter 将上游模型额外重试限制在 0..5 次', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval.yml'))
+  config.spec.modelGateway.maximumUpstreamRetries = 6
+  assert.throws(() => validateEnvironmentAdapter(config), /maximumUpstreamRetries/u)
 })
 
 test('Environment Adapter 拒绝与可信评分挂载冲突的工作区', async () => {

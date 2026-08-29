@@ -60,6 +60,11 @@ export async function buildModelGatewayImage({ config, docker, repositoryRoot })
 }
 
 export function validateModelGatewayEnvironment(config) {
+  if (!Number.isSafeInteger(config.maximumUpstreamRetries ?? 2)
+      || (config.maximumUpstreamRetries ?? 2) < 0
+      || (config.maximumUpstreamRetries ?? 2) > 5) {
+    throw new ProtocolError('Model Gateway maximumUpstreamRetries 必须是 0..5 的整数')
+  }
   const apiKey = process.env[config.upstreamApiKeyEnvironment]
   const baseUrl = process.env[config.upstreamBaseUrlEnvironment]
   if (!apiKey || !baseUrl) {
@@ -182,6 +187,7 @@ export class ModelGateway {
           UPSTREAM_BASE_URL_ENV: this.config.upstreamBaseUrlEnvironment,
           GATEWAY_MAX_REQUESTS: String(this.config.maximumRequestsPerRun),
           GATEWAY_MAX_CONCURRENT_REQUESTS: String(this.config.maximumConcurrentRequests),
+          GATEWAY_MAX_UPSTREAM_RETRIES: String(this.config.maximumUpstreamRetries ?? 2),
         },
         secretEnvironment: {
           GATEWAY_TOKEN: tokens.legacy,

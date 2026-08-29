@@ -53,6 +53,8 @@ spec:
     egressNetwork: bridge
     maximumRequestsPerRun: 4096
     maximumConcurrentRequests: 8
+    # 首次上游请求失败后，Model Gateway 最多再尝试 5 次。
+    maximumUpstreamRetries: 5
     resources:
       cpus: 1
       memory: 512m

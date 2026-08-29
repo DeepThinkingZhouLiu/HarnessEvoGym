@@ -78,7 +78,9 @@ feedback 题的失败证据，并且只能修改本轮 MutationLease 开放的 C
 
 每个 Run 创建独立 Docker internal network。Solver 和 Updater 没有公网路由，只能通过
 一次性角色 Token 调用 Model Gateway；Gateway 持有真实 Provider Key，并强制覆盖请求里的
-模型、`max_tokens` 和多候选参数。
+模型、`max_tokens` 和多候选参数。正式 OmegaUse 配置允许 Gateway 在还没有向 Agent 下发
+任何响应时，对 429/502/503/504、连接中断和上游超时最多额外重试 5 次；如果流已经开始，
+则立即 fail-closed，绝不重播部分 Completion。
 
 Office 任务运行时统一提供 LibreOffice Writer/Calc/Impress、Python Office 库、字体、
 PDF/ZIP 工具。Candidate 和 Environment Assets 只读挂载，任务工作区和 Session 输出可写。
@@ -144,6 +146,12 @@ unset RSI_PROVIDER_API_KEY
 `best-harness.json` 后，`experiment finalize` 才能一次性解封 final；父状态、
 Candidate Digest、配置摘要和 Source Revision 都会重验。若 Final 已接触 sealed 数据，
 无论成功或失败都不能重新运行。
+
+进化期若因 Provider、Docker 或 Verifier 基础设施异常暂停，使用
+`experiment resume --run <population-run>` 显式恢复。OmegaUse 以“Candidate + Partition +
+Task + 全部 Seed”为一个题目断点，评分完成后原子写入 `committed-result.json`；Resume 会
+复用已提交结果（包括 0 分），只补跑未完成题。半成品目录会归档到
+`recovery/trial-attempts/`，同一条失败命令不会自动重跑整题。
 
 ## Reward 与晋升
 

@@ -15,9 +15,10 @@ const apiKey = process.env[apiKeyEnvironment] ?? ''
 const rawBaseUrl = process.env[baseUrlEnvironment] ?? ''
 const maximumRequests = Number(process.env.GATEWAY_MAX_REQUESTS ?? '512')
 const maximumConcurrentRequests = Number(process.env.GATEWAY_MAX_CONCURRENT_REQUESTS ?? '8')
+const maximumUpstreamRetries = Number(process.env.GATEWAY_MAX_UPSTREAM_RETRIES ?? '2')
 const maximumRequestBytes = 32 * 1024 * 1024
-const maximumUpstreamAttempts = 3
-const retryableUpstreamStatuses = new Set([502, 503, 504])
+const maximumRetryDelayMs = 60_000
+const retryableUpstreamStatuses = new Set([429, 502, 503, 504])
 
 if (!Number.isInteger(listenPort) || listenPort < 1024 || listenPort > 65535) {
   throw new Error('model-gateway: GATEWAY_PORT 必须是 1024-65535 的整数')
@@ -37,6 +38,11 @@ if (!Number.isInteger(maximumRequests) || maximumRequests < 1) {
 }
 if (!Number.isInteger(maximumConcurrentRequests) || maximumConcurrentRequests < 1) {
   throw new Error('model-gateway: GATEWAY_MAX_CONCURRENT_REQUESTS 必须是正整数')
+}
+if (!Number.isInteger(maximumUpstreamRetries)
+    || maximumUpstreamRetries < 0
+    || maximumUpstreamRetries > 5) {
+  throw new Error('model-gateway: GATEWAY_MAX_UPSTREAM_RETRIES 必须是 0..5 的整数')
 }
 
 const upstreamBase = new URL(rawBaseUrl)
@@ -99,6 +105,26 @@ function filteredHeaders(headers, allowlist) {
 function send(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
   response.end(`${JSON.stringify(body)}\n`)
+}
+
+function retryAfterMilliseconds(value) {
+  const raw = Array.isArray(value) ? value[0] : value
+  if (typeof raw !== 'string' || raw.trim().length === 0) return null
+  const seconds = Number(raw)
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(maximumRetryDelayMs, Math.ceil(seconds * 1000))
+  }
+  const at = Date.parse(raw)
+  if (!Number.isFinite(at)) return null
+  return Math.min(maximumRetryDelayMs, Math.max(0, at - Date.now()))
+}
+
+function retryDelayMilliseconds(retryNumber, headers = {}) {
+  const requested = retryAfterMilliseconds(headers['retry-after'])
+  if (requested !== null) return requested
+  const exponential = Math.min(maximumRetryDelayMs, 250 * (2 ** Math.max(0, retryNumber - 1)))
+  const jitter = Math.floor(Math.random() * 251)
+  return Math.min(maximumRetryDelayMs, exponential + jitter)
 }
 
 function emptyUsage() {
@@ -535,22 +561,25 @@ const server = http.createServer((request, response) => {
 
     const forward = (attempt) => {
       if (response.destroyed || response.writableEnded) return
+      let retryScheduled = false
+      const scheduleRetry = (upstreamHeaders = {}) => {
+        if (retryScheduled || response.destroyed || response.writableEnded) return false
+        if (attempt > maximumUpstreamRetries || response.headersSent) return false
+        retryScheduled = true
+        retryTimer = setTimeout(() => {
+          retryTimer = null
+          forward(attempt + 1)
+        }, retryDelayMilliseconds(attempt, upstreamHeaders))
+        return true
+      }
       const upstream = transport.request(target, { method: 'POST', headers }, (upstreamResponse) => {
         const status = upstreamResponse.statusCode ?? 502
-        if (retryableUpstreamStatuses.has(status) && attempt < maximumUpstreamAttempts) {
-          // 只有在还没向 Candidate 发送 Header 时才重试；中间 5xx 的 Body 不下发、也不计为一次
-          // 独立逻辑请求。这样不会重播已经部分交付的 Completion。
-          let retryScheduled = false
-          const scheduleRetry = () => {
-            if (retryScheduled || response.destroyed || response.writableEnded) return
-            retryScheduled = true
-            retryTimer = setTimeout(() => {
-              retryTimer = null
-              forward(attempt + 1)
-            }, attempt * 250)
-          }
-          upstreamResponse.once('end', scheduleRetry)
-          upstreamResponse.once('error', scheduleRetry)
+        if (retryableUpstreamStatuses.has(status) && attempt <= maximumUpstreamRetries) {
+          // 只有在尚未向 Agent 下发 Header/Body 时才能重试，避免重播部分 Completion。
+          // 429 遵守有界 Retry-After；其余故障使用指数退避和抖动。
+          const retry = () => scheduleRetry(upstreamResponse.headers)
+          upstreamResponse.once('end', retry)
+          upstreamResponse.once('error', retry)
           upstreamResponse.resume()
           return
         }
@@ -567,6 +596,7 @@ const server = http.createServer((request, response) => {
       currentUpstream = upstream
       upstream.setTimeout(20 * 60 * 1000, () => upstream.destroy(new Error('upstream timeout')))
       upstream.on('error', (error) => {
+        if (scheduleRetry()) return
         recordUnknownUsage()
         if (!response.headersSent) send(response, 502, { error: 'upstream_failure' })
         else response.destroy(error)

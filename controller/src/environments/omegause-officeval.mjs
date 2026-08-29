@@ -17,6 +17,11 @@ import { assertPathKind, resolveInside } from '../config.mjs'
 import { safeDockerName } from '../docker.mjs'
 import { ProtocolError, validateResultRecords } from '../protocol.mjs'
 import { runProcess } from '../process.mjs'
+import {
+  commitTrialCheckpoint,
+  inspectTrialCheckpoint,
+  quarantineTrialTask,
+} from '../trial-checkpoint-store.mjs'
 
 const INSTANCE_ID = /^officeval_[0-9]{3}$/u
 const MANIFEST_API_VERSION = 'harness-rsi/omegause-officeval-manifest-v1'
@@ -436,6 +441,7 @@ export class OmegaUseOfficeValEnvironment {
     this.sourceRevision = null
     this.baseImage = null
     this.solverImage = null
+    this.runtimeRevision = null
   }
 
   async preflight() {
@@ -555,6 +561,7 @@ export class OmegaUseOfficeValEnvironment {
     })
     this.baseImage = tag
     this.solverImage = runtime.image
+    this.runtimeRevision = digest
     return { baseImage: tag, solverImage: runtime.image }
   }
 
@@ -725,58 +732,166 @@ export class OmegaUseOfficeValEnvironment {
     }
   }
 
-  async runCandidatePartition({ candidateId, candidateWorkspace, model, partition, seeds, outputPath }) {
+  async runCandidatePartition({
+    candidateId,
+    candidateDigest,
+    candidateWorkspace,
+    model,
+    partition,
+    seeds,
+    outputPath,
+  }) {
     if (!this.manifest) throw new ProtocolError('必须先执行 OmegaUse-OfficeVal preflight')
     const partitionSpec = this.benchmark.partitions[partition]
     if (!partitionSpec) throw new ProtocolError(`Benchmark 不存在 Partition：${partition}`)
+    if (typeof candidateDigest !== 'string' || !/^[0-9a-f]{64}$/u.test(candidateDigest)) {
+      throw new ProtocolError(`Candidate ${candidateId} 缺少可用于 Trial Checkpoint 的完整 Digest`)
+    }
     const candidate = await realpath(resolve(candidateWorkspace)).catch((error) => {
       throw new ProtocolError(`Candidate Workspace 不存在：${candidateWorkspace}`, [error.message])
     })
     await assertPathKind(candidate, `Candidate ${candidateId} Workspace`)
     const executionId = sha256(resolve(outputPath)).slice(0, 12)
-    // 各 Task 有独立 Workspace/容器；并发执行后仍按 Benchmark 固定顺序回收。
     await this.ensureRuntime()
-    await this.solverDriver.beginUsageBatch?.()
-    let records
-    let runError
-    try {
-      records = await concurrentMap(
-        partitionSpec.instanceIds,
-        this.environment.task.maximumConcurrentTrials ?? 1,
-        async (instanceId) => {
-          const layout = await this.taskLayout(instanceId)
-          const trials = []
-          for (const [trialIndex, seed] of seeds.entries()) {
-            trials.push(await this.runTrial({
-              candidateId,
-              candidateWorkspace: candidate,
-              layout,
-              model,
-              partition,
-              seed,
-              trialIndex,
-              executionId,
-            }))
+    const plans = await concurrentMap(
+      partitionSpec.instanceIds,
+      this.environment.task.maximumConcurrentTrials ?? 1,
+      async (instanceId) => {
+        const layout = await this.taskLayout(instanceId)
+        const taskRoot = join(
+          this.runRoot,
+          'trials',
+          executionId,
+          safeSegment(candidateId, 'Candidate ID'),
+          partition,
+          layout.instanceId,
+        )
+        assertInside(this.runRoot, taskRoot, 'OmegaUse Task Trial')
+        const identity = {
+          executionId,
+          environment: {
+            id: this.environment.id,
+            protocol: this.environment.protocol,
+            sourceRevision: this.sourceRevision,
+            runtimeRevision: this.runtimeRevision,
+          },
+          solver: {
+            id: this.solverDriver.id,
+            cacheKey: this.solverDriver.cacheKey ?? null,
+          },
+          candidate: { id: candidateId, digest: candidateDigest },
+          partition,
+          instanceId,
+          seeds: [...seeds],
+          model: {
+            provider: model.provider,
+            model: model.model,
+            maxTokens: model.maxTokens,
+            reasoningEffort: model.reasoningEffort ?? null,
+          },
+        }
+        const validateCheckpointRecord = async (record) => {
+          const normalized = validateResultRecords(
+            [record],
+            this.benchmark,
+            `${candidateId}/${partition}/${instanceId}/checkpoint`,
+          )
+          if (!normalized.has(instanceId) || record.instance_id !== instanceId
+              || JSON.stringify(record.trial_seeds) !== JSON.stringify(seeds)) {
+            throw new ProtocolError(`OmegaUse Trial Checkpoint 与 Task/Seed 不一致：${instanceId}`)
           }
-          return recordForTask({
-            layout,
-            partition,
-            trials,
-            runRoot: this.runRoot,
-            feedbackLimit: this.environment.feedback.maximumTextBytesPerCase,
-          })
-        },
-      )
-    } catch (error) {
-      runError = error
-    }
-    try {
-      await this.solverDriver.endUsageBatch?.()
-    } catch (error) {
-      if (!runError) throw error
-      runError.details = [...(runError.details ?? []), `Solver Usage Batch 收尾失败：${error.message}`]
+          if (!Array.isArray(record.artifacts) || record.artifacts.length !== seeds.length) {
+            throw new ProtocolError(`OmegaUse Trial Checkpoint Artifact 数量无效：${instanceId}`)
+          }
+          for (const [trialIndex, seed] of seeds.entries()) {
+            const expectedRoot = join(taskRoot, `trial-${trialIndex + 1}-seed-${seed}`)
+            const expectedRelative = relative(this.runRoot, expectedRoot).replaceAll('\\', '/')
+            const artifact = record.artifacts[trialIndex]
+            if (!artifact || artifact.seed !== seed || artifact.root !== expectedRelative
+                || !Array.isArray(artifact.changed)) {
+              throw new ProtocolError(`OmegaUse Trial Checkpoint Artifact 身份无效：${instanceId}/${seed}`)
+            }
+            const info = await lstat(expectedRoot).catch((error) => {
+              throw new ProtocolError(`OmegaUse Trial Checkpoint Artifact Root 不存在：${instanceId}/${seed}`, [
+                error.message,
+              ])
+            })
+            if (info.isSymbolicLink() || !info.isDirectory()) {
+              throw new ProtocolError(`OmegaUse Trial Checkpoint Artifact Root 必须是普通目录：${instanceId}/${seed}`)
+            }
+          }
+          return record
+        }
+        const checkpoint = await inspectTrialCheckpoint({
+          runRoot: this.runRoot,
+          taskRoot,
+          identity,
+          validateRecord: validateCheckpointRecord,
+        })
+        return { layout, taskRoot, identity, validateCheckpointRecord, checkpoint }
+      },
+    )
+    const pending = plans.filter(({ checkpoint }) => checkpoint.status !== 'committed')
+    const freshRecords = new Map()
+    let runError
+    if (pending.length > 0) {
+      await this.solverDriver.beginUsageBatch?.()
+      try {
+        await concurrentMap(
+          pending,
+          this.environment.task.maximumConcurrentTrials ?? 1,
+          async ({ layout, taskRoot, identity, validateCheckpointRecord, checkpoint }) => {
+            if (checkpoint.status !== 'missing') {
+              await quarantineTrialTask({
+                runRoot: this.runRoot,
+                taskRoot,
+                reason: checkpoint.status === 'stale'
+                  ? 'checkpoint-identity-changed'
+                  : 'task-attempt-incomplete',
+              })
+            }
+            const trials = []
+            for (const [trialIndex, seed] of seeds.entries()) {
+              trials.push(await this.runTrial({
+                candidateId,
+                candidateWorkspace: candidate,
+                layout,
+                model,
+                partition,
+                seed,
+                trialIndex,
+                executionId,
+              }))
+            }
+            const record = recordForTask({
+              layout,
+              partition,
+              trials,
+              runRoot: this.runRoot,
+              feedbackLimit: this.environment.feedback.maximumTextBytesPerCase,
+            })
+            await validateCheckpointRecord(record)
+            await commitTrialCheckpoint({ runRoot: this.runRoot, taskRoot, identity, record })
+            freshRecords.set(layout.instanceId, record)
+          },
+        )
+      } catch (error) {
+        runError = error
+      }
+      try {
+        await this.solverDriver.endUsageBatch?.()
+      } catch (error) {
+        if (!runError) throw error
+        runError.details = [...(runError.details ?? []), `Solver Usage Batch 收尾失败：${error.message}`]
+      }
     }
     if (runError) throw runError
+    const records = plans.map(({ layout, checkpoint }) => (
+      checkpoint.status === 'committed' ? checkpoint.record : freshRecords.get(layout.instanceId)
+    ))
+    if (records.some((record) => record === undefined)) {
+      throw new ProtocolError(`${candidateId}/${partition} Trial Checkpoint 合并不完整`)
+    }
     await writeJsonLines(outputPath, records)
     return validateResultRecords(records, this.benchmark, `${candidateId}/${partition}`)
   }

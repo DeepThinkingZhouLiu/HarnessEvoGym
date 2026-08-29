@@ -548,6 +548,7 @@ function validateTextReasoningEnvironment({ id, spec, protocol }) {
       'egressNetwork',
       'maximumRequestsPerRun',
       'maximumConcurrentRequests',
+      'maximumUpstreamRetries',
       'resources',
     ]),
     'EnvironmentAdapter.spec.modelGateway',
@@ -670,6 +671,11 @@ function validateTextReasoningEnvironment({ id, spec, protocol }) {
         'EnvironmentAdapter.spec.modelGateway.maximumConcurrentRequests',
         { integer: true, min: 1, max: 64 },
       ),
+      maximumUpstreamRetries: expectNumber(
+        modelGateway.maximumUpstreamRetries ?? 2,
+        'EnvironmentAdapter.spec.modelGateway.maximumUpstreamRetries',
+        { integer: true, min: 0, max: 5 },
+      ),
       resources: {
         cpus: expectNumber(gatewayResources.cpus, 'modelGateway.resources.cpus', { min: 0.1, max: 32 }),
         memory: expectText(gatewayResources.memory, 'modelGateway.resources.memory'),
@@ -783,6 +789,7 @@ function validateOmegaUseOfficeValEnvironment({ id, spec, protocol }) {
       'egressNetwork',
       'maximumRequestsPerRun',
       'maximumConcurrentRequests',
+      'maximumUpstreamRetries',
       'resources',
     ]),
     'EnvironmentAdapter.spec.modelGateway',
@@ -969,6 +976,11 @@ function validateOmegaUseOfficeValEnvironment({ id, spec, protocol }) {
         modelGateway.maximumConcurrentRequests,
         'EnvironmentAdapter.spec.modelGateway.maximumConcurrentRequests',
         { integer: true, min: 1, max: 64 },
+      ),
+      maximumUpstreamRetries: expectNumber(
+        modelGateway.maximumUpstreamRetries ?? 2,
+        'EnvironmentAdapter.spec.modelGateway.maximumUpstreamRetries',
+        { integer: true, min: 0, max: 5 },
       ),
       resources: {
         cpus: expectNumber(gatewayResources.cpus, 'modelGateway.resources.cpus', { min: 0.1, max: 32 }),

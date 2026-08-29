@@ -58,6 +58,7 @@ test('Model Gateway 只把一次性令牌和内部地址交给 Agent', async () 
       upstreamBaseUrlEnvironment: 'TEST_RSI_BASE_URL',
       maximumRequestsPerRun: 512,
       maximumConcurrentRequests: 8,
+      maximumUpstreamRetries: 5,
       resources: { cpus: 1, memory: '512m', pids: 128 },
     },
     docker,
@@ -98,6 +99,7 @@ test('Model Gateway 只把一次性令牌和内部地址交给 Agent', async () 
     assert.notEqual(access.secretEnvironment.TEST_RSI_API_KEY, solverAccess.secretEnvironment.TEST_RSI_API_KEY)
     const runOptions = calls.find(([name]) => name === 'run')[1]
     assert.equal(runOptions.environment.GATEWAY_TOKEN, undefined)
+    assert.equal(runOptions.environment.GATEWAY_MAX_UPSTREAM_RETRIES, '5')
     assert.equal(runOptions.secretEnvironment.GATEWAY_TOKEN.length, 64)
     assert.equal(runOptions.secretEnvironment.GATEWAY_CONTROL_TOKEN.length, 64)
     assert.equal(runOptions.secretEnvironment.GATEWAY_SOLVER_TOKEN.length, 64)

@@ -31,7 +31,7 @@ async function exists(pathValue) {
   }
 }
 
-test('Cowork 恢复归档未完成 Generation 和 Trial，保留已完成历史', async () => {
+test('Cowork 恢复归档未完成编排产物，但保留 Environment 管理的按题 Trial Root', async () => {
   const runRoot = await mkdtemp(join(tmpdir(), 'cowork-recovery-'))
   const completed = join(runRoot, 'generations', 'generation-3')
   const generation = join(runRoot, 'generations', 'generation-4')
@@ -58,24 +58,55 @@ test('Cowork 恢复归档未完成 Generation 和 Trial，保留已完成历史'
   const archived = await archiveIncompleteCoworkGeneration({
     runRoot,
     state: state(),
+    preserveTrialCheckpoints: true,
     now: () => new Date('2026-08-27T00:00:00.000Z'),
   })
 
   assert.ok(archived)
   assert.equal(await exists(completed), true)
-  for (const pathValue of [generation, results, candidate, trial]) {
+  for (const pathValue of [generation, results, candidate]) {
     assert.equal(await exists(pathValue), false)
   }
+  assert.equal(await exists(trial), true)
   assert.deepEqual(archived.manifest.spec.archived.sort(), [
     'candidates/g004-l1',
     'generations/generation-4',
     'results/generation-4',
-    `trials/${executionId}`,
   ])
   assert.equal(
     JSON.parse(await readFile(join(archived.root, 'manifest.json'), 'utf8')).kind,
     'CoworkRecoveryArchive',
   )
+})
+
+test('不支持按题 Checkpoint 的环境仍归档未完成 Trial Root', async () => {
+  const runRoot = await mkdtemp(join(tmpdir(), 'cowork-recovery-legacy-'))
+  const results = join(runRoot, 'results', 'generation-4')
+  const outputPath = join(results, 'h0-feedback.jsonl')
+  const executionId = createHash('sha256').update(resolve(outputPath)).digest('hex').slice(0, 12)
+  const trial = join(runRoot, 'trials', executionId)
+  await Promise.all([
+    mkdir(results, { recursive: true }),
+    mkdir(trial, { recursive: true }),
+  ])
+  await Promise.all([
+    writeFile(outputPath, '{"partial":true}\n'),
+    writeFile(join(trial, 'partial.txt'), 'partial\n'),
+  ])
+
+  const archived = await archiveIncompleteCoworkGeneration({
+    runRoot,
+    state: state(),
+    now: () => new Date('2026-08-27T00:00:00.000Z'),
+  })
+
+  assert.ok(archived)
+  assert.equal(await exists(results), false)
+  assert.equal(await exists(trial), false)
+  assert.deepEqual(archived.manifest.spec.archived.sort(), [
+    'results/generation-4',
+    `trials/${executionId}`,
+  ])
 })
 
 test('Cowork 恢复拒绝把符号链接当成 Controller 产物归档', async () => {

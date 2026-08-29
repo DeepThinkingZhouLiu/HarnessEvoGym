@@ -1101,10 +1101,16 @@ async function existingControllerDirectory(pathValue, label) {
 }
 
 /**
- * 恢复时不复用上次中断的临时工作区。它们可能只写了一半，但也不能删除：
- * Controller 会原子地移入 recovery/ 保留审计证据，然后重跑尚未计入 Budget 的轮次。
+ * 恢复时归档本轮编排产物，但保留 Environment 管理的 Trial Root。
+ * OmegaUse 会逐题验证 committed-result.json，复用已提交题目，并把半成品题目单独移入
+ * recovery/trial-attempts 后再运行。这里不能再整棵归档 trials/<executionId>。
  */
-export async function archiveIncompleteCoworkGeneration({ runRoot, state, now = () => new Date() }) {
+export async function archiveIncompleteCoworkGeneration({
+  runRoot,
+  state,
+  preserveTrialCheckpoints = false,
+  now = () => new Date(),
+}) {
   const generation = state?.spec?.generationsCompleted + 1
   if (!Number.isSafeInteger(generation) || generation < 1) {
     throw new ProtocolError('Cowork 恢复状态缺少合法的 generationsCompleted')
@@ -1123,11 +1129,13 @@ export async function archiveIncompleteCoworkGeneration({ runRoot, state, now = 
     join(runRoot, 'results', `generation-${generation}`),
     join(runRoot, 'candidates', nextCandidateId),
   ])
-  for (const candidateId of candidateIds) {
-    for (const partition of ['feedback', 'selection']) {
-      const outputPath = resultPath(runRoot, generation, candidateId, partition)
-      const executionId = createHash('sha256').update(resolve(outputPath)).digest('hex').slice(0, 12)
-      sources.add(join(runRoot, 'trials', executionId))
+  if (!preserveTrialCheckpoints) {
+    for (const candidateId of candidateIds) {
+      for (const partition of ['feedback', 'selection']) {
+        const outputPath = resultPath(runRoot, generation, candidateId, partition)
+        const executionId = createHash('sha256').update(resolve(outputPath)).digest('hex').slice(0, 12)
+        sources.add(join(runRoot, 'trials', executionId))
+      }
     }
   }
 
@@ -1300,6 +1308,7 @@ export function createCoworkBranchEvolutionDriver({
     try {
       baselineRecords = await environment.runCandidatePartition({
         candidateId: champion.id,
+        candidateDigest: champion.digest,
         candidateWorkspace: champion.workspace,
         model: context.bundle.experiment.models.solver,
         partition: 'selection',
@@ -1363,7 +1372,12 @@ export function createCoworkBranchEvolutionDriver({
 
   async function restore() {
     if (state !== null) {
-      await archiveIncompleteCoworkGeneration({ runRoot, state })
+      await archiveIncompleteCoworkGeneration({
+        runRoot,
+        state,
+        preserveTrialCheckpoints:
+          context?.bundle.environment.protocol === 'omegause-officeval-docker-v1',
+      })
       return coworkBranchProjection({ branchId, state })
     }
     if (runRootOverride === null || expectedBundleDigest === null) {
@@ -1526,7 +1540,12 @@ export function createCoworkBranchEvolutionDriver({
     startedAt = Date.now()
     ledgerOffset = structuredClone(state.spec.ledger)
     candidatesEvaluated = 0
-    await archiveIncompleteCoworkGeneration({ runRoot, state })
+    await archiveIncompleteCoworkGeneration({
+      runRoot,
+      state,
+      preserveTrialCheckpoints:
+        context.bundle.environment.protocol === 'omegause-officeval-docker-v1',
+    })
     return coworkBranchProjection({ branchId, state })
   }
 
@@ -1611,6 +1630,7 @@ export function createCoworkBranchEvolutionDriver({
       onEvent({ stage: 'feedback', generation, message: `${branchId}/${mutationParent.id} 运行 feedback Partition` })
       const feedbackRecords = await environment.runCandidatePartition({
         candidateId: mutationParent.id,
+        candidateDigest: mutationParent.digest,
         candidateWorkspace: mutationParent.workspace,
         model: context.bundle.experiment.models.solver,
         partition: 'feedback',
@@ -1646,6 +1666,7 @@ export function createCoworkBranchEvolutionDriver({
       phase = 'selection'
       const baselineRecords = await environment.runCandidatePartition({
         candidateId: champion.id,
+        candidateDigest: champion.digest,
         candidateWorkspace: champion.workspace,
         model: context.bundle.experiment.models.solver,
         partition: 'selection',
@@ -1654,6 +1675,7 @@ export function createCoworkBranchEvolutionDriver({
       })
       const candidateRecords = await environment.runCandidatePartition({
         candidateId: proposal.id,
+        candidateDigest: proposal.digest,
         candidateWorkspace: proposal.workspace,
         model: context.bundle.experiment.models.solver,
         partition: 'selection',
@@ -1976,6 +1998,7 @@ export async function runEvolution({
       onEvent({ stage: 'feedback', generation, message: `${mutationParent.id} 运行 feedback Partition` })
       const feedbackRecords = await environment.runCandidatePartition({
         candidateId: mutationParent.id,
+        candidateDigest: mutationParent.digest,
         candidateWorkspace: mutationParent.workspace,
         model: context.bundle.experiment.models.solver,
         partition: 'feedback',
@@ -2027,6 +2050,7 @@ export async function runEvolution({
         onEvent({ stage: 'selection', generation, message: `${champion.id} 与 ${proposal.id} 配对评测` })
         const baselineRecords = await environment.runCandidatePartition({
           candidateId: champion.id,
+          candidateDigest: champion.digest,
           candidateWorkspace: champion.workspace,
           model: context.bundle.experiment.models.solver,
           partition: 'selection',
@@ -2035,6 +2059,7 @@ export async function runEvolution({
         })
         const candidateRecords = await environment.runCandidatePartition({
           candidateId: proposal.id,
+          candidateDigest: proposal.digest,
           candidateWorkspace: proposal.workspace,
           model: context.bundle.experiment.models.solver,
           partition: 'selection',
@@ -2786,6 +2811,7 @@ async function finalizeCoworkRun({
     await writeJsonFile(join(runRoot, 'state.json'), state)
     const baselineFeedbackRecords = await environment.runCandidatePartition({
       candidateId: baselineId,
+      candidateDigest: h0State.digest,
       candidateWorkspace: h0Workspace,
       model: context.bundle.experiment.models.solver,
       partition: 'feedback',
@@ -2796,6 +2822,7 @@ async function finalizeCoworkRun({
       ? baselineFeedbackRecords
       : await environment.runCandidatePartition({
           candidateId: championId,
+          candidateDigest: championState.digest,
           candidateWorkspace: championWorkspace,
           model: context.bundle.experiment.models.solver,
           partition: 'feedback',
@@ -2805,6 +2832,7 @@ async function finalizeCoworkRun({
     onEvent({ stage: 'final-feedback', message: 'H0 与锁定 Champion 已完成 Feedback 回放' })
     const baselineRecords = await environment.runCandidatePartition({
       candidateId: baselineId,
+      candidateDigest: h0State.digest,
       candidateWorkspace: h0Workspace,
       model: context.bundle.experiment.models.solver,
       partition: 'final',
@@ -2816,6 +2844,7 @@ async function finalizeCoworkRun({
       ? baselineRecords
       : await environment.runCandidatePartition({
           candidateId: championId,
+          candidateDigest: championState.digest,
           candidateWorkspace: championWorkspace,
           model: context.bundle.experiment.models.solver,
           partition: 'final',

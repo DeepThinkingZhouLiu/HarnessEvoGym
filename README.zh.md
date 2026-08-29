@@ -342,6 +342,11 @@ for mode in single independent mutualism competition combined; do
   #   --recover-infrastructure
 done
 
+# 单次 L1+L2 Probe：正式 55/18 feedback/selection，只产生一个 Candidate。
+npm run rsi -- experiment run \
+  --config experiments/cowork-msa-rsi-linear-single-l2-one-generation.json \
+  --run-id cowork-rsi-linear-single-l2-one-generation-001
+
 unset RSI_PROVIDER_API_KEY
 ```
 
@@ -383,6 +388,10 @@ runtime、campaign ID、campaigns root、source root 和 credential FD。
 `report/final-evaluation.json`，并在父 `public/state.json` 中记录可审计的 Final 状态。
 
 详细说明：
+
+Updater 的通用提示词模板位于 [`prompts/updater.md`](prompts/updater.md)。Controller 会在
+启动前把 Target 名称、当前 Candidate、Mutation Region、可写/只读路径、语义约束和报告路径
+填入模板，并把冻结副本写进 Run 的 `trusted-inputs/updater-prompt.md`。
 
 - [Controller 五种模式](docs/controller-modes.zh.md)
 - [架构与信任边界](docs/architecture.zh.md)

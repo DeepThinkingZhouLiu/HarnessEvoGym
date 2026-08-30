@@ -150,6 +150,7 @@ test('Codex updater uses only the isolated local configuration and keeps DSH ava
       ...options.baseEnv,
       CODEX_HOME: '/host/codex-home',
       HTTP_PROXY: 'http://proxy.invalid:8017',
+      PYTHONPYCACHEPREFIX: '/host/unsafe-cache',
     },
   })
   const invocation = buildUpdaterInvocation(options)
@@ -166,6 +167,8 @@ test('Codex updater uses only the isolated local configuration and keeps DSH ava
   assert.ok(invocation.args.includes('model_providers.zcloud.request_max_retries=5'))
   assert.ok(invocation.args.includes('model_providers.zcloud.stream_max_retries=5'))
   assert.equal(invocation.env.CODEX_HOME, '/work/home')
+  assert.equal(invocation.env.PYTHONDONTWRITEBYTECODE, '1')
+  assert.equal(invocation.env.PYTHONPYCACHEPREFIX, '/work/tmp/python-cache')
   assert.equal(invocation.env.HTTP_PROXY, undefined)
   assert.equal(invocation.env.DSH_HOME, undefined)
   assert.equal(invocation.env.DSH_PERMISSION_MODE, undefined)

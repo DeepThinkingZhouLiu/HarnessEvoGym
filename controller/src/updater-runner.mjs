@@ -228,6 +228,10 @@ export function buildUpdaterInvocation({
       env: {
         ...commonEnvironment,
         CODEX_HOME: commonEnvironment.HOME,
+        // Python 检查可以被 Codex 显式调用；它们的 pyc 是临时产物，
+        // 必须留在沙箱私有的 run tmp，不能进入 Candidate Mutation Diff。
+        PYTHONDONTWRITEBYTECODE: '1',
+        PYTHONPYCACHEPREFIX: join(UPDATER_SANDBOX_PATHS.run, 'tmp', 'python-cache'),
       },
     }
   } else {

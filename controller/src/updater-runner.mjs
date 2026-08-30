@@ -109,6 +109,7 @@ export function buildUpdaterInvocation({
   bwrapPath,
   setprivPath = '/usr/bin/setpriv',
   gatewayRelayPath,
+  preserveSupplementaryGroups = false,
   baseEnv = process.env,
 }) {
   if (!UPDATER_BACKENDS.has(backend)) {
@@ -281,6 +282,7 @@ export function buildUpdaterInvocation({
     gid,
     bwrapPath,
     setprivPath,
+    preserveSupplementaryGroups,
     network: isolatedGateway ? 'none' : 'shared',
     procMode: backend === 'codex-cli'
       ? 'synthetic-self'

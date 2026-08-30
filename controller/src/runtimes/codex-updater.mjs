@@ -397,6 +397,9 @@ export function createCodexUpdaterDriver({
           peerLogs: [],
           bwrapPath: updater.runtime.bwrapPath,
           setprivPath: updater.runtime.setprivPath,
+          // 本 Driver 在普通宿主用户下运行，setgroups 对非 root 不可用；
+          // UID/GID 已核验为当前身份，保留附加组不扩大空根 Bubblewrap 的挂载边界。
+          preserveSupplementaryGroups: true,
           baseEnv: {
             PATH: '/usr/local/bin:/usr/bin:/bin',
             LANG: 'C.UTF-8',

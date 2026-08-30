@@ -150,6 +150,8 @@ test('Codex Updater 固定 distribution，通过 Responses Gateway 隔离修改 
     assert.equal(invocation.env.RSI_PROVIDER_API_KEY, undefined)
     assert.equal(invocation.env.RSI_PROVIDER_BASE_URL, undefined)
     assert.ok(invocation.args.includes('--unshare-net'))
+    assert.ok(invocation.args.includes('--keep-groups'))
+    assert.equal(invocation.args.includes('--clear-groups'), false)
     assert.ok(invocation.args.includes('model_providers.zcloud.request_max_retries=5'))
     assert.equal(driver.usage().requests, 0)
   } finally {

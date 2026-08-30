@@ -15,6 +15,9 @@ function projection(overrides = {}) {
   const evaluation = createEvaluationSummary({
     candidateId: 'candidate-1', metric: 'mean-reward', value: 0.8,
   })
+  const baselineEvaluation = createEvaluationSummary({
+    candidateId: 'baseline', metric: 'mean-reward', value: 0.6,
+  })
   return {
     apiVersion: 'harness-rsi/v1alpha1',
     kind: 'BranchProjection',
@@ -29,7 +32,7 @@ function projection(overrides = {}) {
       stepNumber: 1,
       candidateId: 'candidate-1',
       decision: 'promoted',
-      ranking: { eligible: true, evaluation },
+      ranking: { eligible: true, evaluation, baselineEvaluation },
     },
     ...overrides,
   }
@@ -39,6 +42,7 @@ test('BranchProjection 不暴露 Reasoning/Cowork 内部状态', () => {
   const normalized = validateBranchProjection(projection())
   assert.equal(normalized.incumbent.evaluation.primary.metric, 'mean-reward')
   assert.equal(normalized.lastStep.decision, 'promoted')
+  assert.equal(normalized.lastStep.ranking.baselineEvaluation.primary.value, 0.6)
   assert.ok(Object.isFrozen(normalized))
 })
 
@@ -54,6 +58,24 @@ test('BranchProjection 拒绝 Candidate 错配与场景私有字段', () => {
   assert.throws(
     () => validateBranchProjection({ ...projection(), linearGit: {} }),
     (error) => error instanceof ProtocolError && /未知字段/u.test(error.message),
+  )
+
+  const mismatchedMetric = projection()
+  mismatchedMetric.lastStep.ranking.baselineEvaluation = createEvaluationSummary({
+    candidateId: 'baseline', metric: 'resolved-rate', value: 0.6,
+  })
+  assert.throws(
+    () => validateBranchProjection(mismatchedMetric),
+    (error) => error instanceof ProtocolError && /主指标不一致/u.test(error.message),
+  )
+
+  const selfComparison = projection()
+  selfComparison.lastStep.ranking.baselineEvaluation = createEvaluationSummary({
+    candidateId: 'candidate-1', metric: 'mean-reward', value: 0.6,
+  })
+  assert.throws(
+    () => validateBranchProjection(selfComparison),
+    (error) => error instanceof ProtocolError && /不能指向当前 Candidate/u.test(error.message),
   )
 })
 

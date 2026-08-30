@@ -6,6 +6,7 @@ import {
 } from './branch-evolution-driver.mjs'
 import { createReasoningBranchDriver } from './branches/reasoning.mjs'
 import { redactSecrets } from './campaign-store.mjs'
+import { primaryMetricDelta } from './evaluation-summary.mjs'
 import {
   buildCoordinationContext,
   createBudgetPlan,
@@ -649,10 +650,15 @@ export class PopulationOrchestrator {
       const validationScore = primary
         ? (primary.direction === 'minimize' ? -primary.value : primary.value)
         : participant.beforeScore
+      const deltaScore = primary && candidate.ranking.baselineEvaluation
+        // Cowork 等随机 Environment 会在同一评测窗口重跑 Baseline；必须沿用
+        // Branch 的同期配对口径，不能再与 Population 初始化时的旧分数比较。
+        ? primaryMetricDelta(candidate.ranking.evaluation, candidate.ranking.baselineEvaluation)
+        : validationScore - participant.beforeScore
       return {
         branchId: participant.branchId,
         validationScore,
-        deltaScore: validationScore - participant.beforeScore,
+        deltaScore,
         candidateId: candidate?.candidateId ?? null,
         decision: candidate?.decision ?? 'stopped',
         // Competition 可以比较已评测但未晋升的 Candidate；无评测的 invalid/stopped

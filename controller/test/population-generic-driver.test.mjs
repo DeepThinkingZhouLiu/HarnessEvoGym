@@ -70,7 +70,13 @@ function projection(branchId, state, lastStep = null) {
   }
 }
 
-async function runMode(mode, { failAdvance = false, stopAfter = null } = {}) {
+async function runMode(mode, {
+  failAdvance = false,
+  stopAfter = null,
+  initialValues = {},
+  candidateValues = {},
+  pairedBaselineValues = {},
+} = {}) {
   const root = await mkdtemp(join(tmpdir(), 'population-generic-'))
   const campaignsRoot = join(root, 'campaigns')
   await mkdir(campaignsRoot)
@@ -98,7 +104,7 @@ async function runMode(mode, { failAdvance = false, stopAfter = null } = {}) {
             evaluation: createEvaluationSummary({
               candidateId,
               metric: 'mean-reward',
-              value: 0,
+              value: initialValues[branchId] ?? 0,
             }),
           }
           return projection(branchId, state)
@@ -111,8 +117,10 @@ async function runMode(mode, { failAdvance = false, stopAfter = null } = {}) {
           const next = calls.get(branchId) + 1
           calls.set(branchId, next)
           contexts.get(branchId).push(structuredClone(coordination))
+          const previous = state
           const candidateId = `${branchId}-c${next}`
-          const value = next + (branchId === 'branch-002' ? 0.5 : 0)
+          const value = candidateValues[branchId]?.[next - 1]
+            ?? next + (branchId === 'branch-002' ? 0.5 : 0)
           state = {
             status: stopAfter === next ? 'stopped' : 'active',
             steps: next,
@@ -130,7 +138,19 @@ async function runMode(mode, { failAdvance = false, stopAfter = null } = {}) {
             stepNumber: next,
             candidateId,
             decision: 'promoted',
-            ranking: { eligible: true, evaluation: state.evaluation },
+            ranking: {
+              eligible: true,
+              evaluation: state.evaluation,
+              ...(pairedBaselineValues[branchId]?.[next - 1] === undefined
+                ? {}
+                : {
+                    baselineEvaluation: createEvaluationSummary({
+                      candidateId: previous.candidateId,
+                      metric: 'mean-reward',
+                      value: pairedBaselineValues[branchId][next - 1],
+                    }),
+                  }),
+            },
           }
           history.push({ generation: next, candidateId, value, lastStep })
           return {
@@ -185,6 +205,33 @@ test('Branch 基础设施异常会暂停 Population，不能伪装成 0 分后�
   assert.equal(paused.type, 'POPULATION_INFRASTRUCTURE_PAUSED')
   assert.equal(paused.failures[0].branchId, 'branch-001')
   assert.match(paused.failures[0].message, /provider unavailable/u)
+})
+
+test('Population 使用 Branch 同期配对基线计算增量与 Competition 预算', async () => {
+  const result = await runMode('competition', {
+    initialValues: { 'branch-001': 10, 'branch-002': 10 },
+    candidateValues: {
+      'branch-001': [9, 9, 9],
+      'branch-002': [11, 11, 11],
+    },
+    pairedBaselineValues: {
+      'branch-001': [8, 9, 9],
+      'branch-002': [10.5, 11, 11],
+    },
+  })
+  const firstWave = result.state.events.find((event) => (
+    event.type === 'POPULATION_WAVE_COMPLETED' && event.epoch === 1
+  ))
+  assert.equal(firstWave.bonusWinner, 'branch-001')
+  assert.deepEqual(
+    firstWave.results.map(({ branchId, validationScore, deltaScore }) => ({
+      branchId, validationScore, deltaScore,
+    })),
+    [
+      { branchId: 'branch-001', validationScore: 9, deltaScore: 1 },
+      { branchId: 'branch-002', validationScore: 11, deltaScore: 0.5 },
+    ],
+  )
 })
 
 test('Population 跨进程恢复会先重载 Branch，再幂等继续 in-flight wave', async () => {

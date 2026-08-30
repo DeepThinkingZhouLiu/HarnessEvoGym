@@ -1086,6 +1086,7 @@ function coworkBranchProjection({ branchId, state, stepId = null }) {
           ranking: {
             eligible: lastCandidate.status === 'promoted',
             evaluation: lastCandidate.evaluation ?? null,
+            baselineEvaluation: lastCandidate.baselineEvaluation ?? null,
           },
         }
       : null,
@@ -1708,6 +1709,14 @@ export function createCoworkBranchEvolutionDriver({
       })
       const parentId = mutationParent.id
       const championBeforeId = champion.id
+      const baselineEvaluation = createEvaluationSummary({
+        candidateId: championBeforeId,
+        metric: context.bundle.policy.primaryMetric,
+        value: primaryMetricFromEvaluation(
+          evaluation.partitions.selection.baseline,
+          context.bundle.policy.primaryMetric,
+        ),
+      })
       if (evaluation.decision.eligible) champion = proposal
       else rejection = { stage: 'selection-gates', message: 'Candidate 未通过晋升 Gate', details: [] }
       const candidateRecord = {
@@ -1716,6 +1725,7 @@ export function createCoworkBranchEvolutionDriver({
         digest: proposal.digest,
         status: evaluation.decision.eligible ? 'promoted' : 'rejected',
         evaluation: candidateEvaluation,
+        baselineEvaluation,
         mutationPlanId: mutationPlan.metadata.id,
         regionIds: mutationPlan.spec.regionIds,
         decision: evaluation.decision,

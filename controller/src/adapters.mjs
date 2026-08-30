@@ -12,7 +12,7 @@ import {
   readConfigFile,
   resolveInside,
 } from './config.mjs'
-import { posix } from 'node:path'
+import { isAbsolute, posix } from 'node:path'
 import { normalizeMutationCatalogConfiguration } from './mutation-catalog.mjs'
 import { normalizeRelativePath } from './path-policy.mjs'
 import { ProtocolError, readJsonFile, validateBenchmark, validateEvaluationPolicy } from './protocol.mjs'
@@ -25,21 +25,6 @@ const ADAPTER_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
 const STRATEGY_IMAGE = /^[a-z0-9][a-z0-9._:-]*(?:\/[a-z0-9][a-z0-9._-]*)*@sha256:[0-9a-f]{64}$/u
 const SHA256_DIGEST = /^[0-9a-f]{64}$/u
 const PINNED_CONTAINER_IMAGE = /^(?:[a-z0-9][a-z0-9._:-]*\/)*[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$/u
-const VERIFIER_PROXY_ENVIRONMENT = new Set([
-  'HTTP_PROXY',
-  'HTTPS_PROXY',
-  'ALL_PROXY',
-  'NO_PROXY',
-  'http_proxy',
-  'https_proxy',
-  'all_proxy',
-  'no_proxy',
-])
-const VERIFIER_DEPENDENCY_ENVIRONMENT = new Set([
-  'PIP_INDEX_URL',
-  'UV_DOWNLOAD_URL',
-  'UV_INDEX_URL',
-])
 
 function metadataId(input, label) {
   return expectText(expectObject(input.metadata, `${label}.metadata`).id, `${label}.metadata.id`)
@@ -68,6 +53,47 @@ function validateRuntime(raw, label) {
     version: expectText(runtime.version, `${label}.version`),
     profile: expectText(runtime.profile, `${label}.profile`),
     preset: expectText(runtime.preset, `${label}.preset`),
+    secretEnvironment,
+  }
+}
+
+function absoluteRuntimePath(value, label) {
+  const pathValue = expectText(value, label)
+  if (!isAbsolute(pathValue) || pathValue.includes('\0')) {
+    throw new ProtocolError(`${label} 必须是绝对路径`)
+  }
+  return pathValue
+}
+
+function validateCodexUpdaterRuntime(raw, label) {
+  const runtime = expectObject(raw, label)
+  const secretEnvironment = expectStringArray(runtime.secretEnvironment, `${label}.secretEnvironment`)
+  for (const name of secretEnvironment) {
+    if (!ENVIRONMENT_NAME.test(name)) throw new ProtocolError(`${label}.secretEnvironment 包含非法名称：${name}`)
+  }
+  const providerId = expectText(runtime.providerId, `${label}.providerId`)
+  if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(providerId)) {
+    throw new ProtocolError(`${label}.providerId 不是合法 Codex Provider 标识`)
+  }
+  const version = expectText(runtime.version, `${label}.version`)
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version)) {
+    throw new ProtocolError(`${label}.version 必须是固定语义版本`)
+  }
+  return {
+    executable: absoluteRuntimePath(runtime.executable, `${label}.executable`),
+    distributionRoot: absoluteRuntimePath(runtime.distributionRoot, `${label}.distributionRoot`),
+    nodeBinary: absoluteRuntimePath(runtime.nodeBinary, `${label}.nodeBinary`),
+    bwrapPath: absoluteRuntimePath(runtime.bwrapPath, `${label}.bwrapPath`),
+    setprivPath: absoluteRuntimePath(runtime.setprivPath, `${label}.setprivPath`),
+    package: expectText(runtime.package, `${label}.package`),
+    version,
+    distributionDigest: sha256Digest(runtime.distributionDigest, `${label}.distributionDigest`),
+    providerId,
+    maximumModelRequests: expectNumber(
+      runtime.maximumModelRequests ?? 64,
+      `${label}.maximumModelRequests`,
+      { integer: true, min: 1, max: 128 },
+    ),
     secretEnvironment,
   }
 }
@@ -418,19 +444,32 @@ export function validateUpdaterAdapter(input) {
   const id = metadataId(input, 'UpdaterAdapter')
   const spec = expectObject(input.spec, 'UpdaterAdapter.spec')
   const protocol = expectText(spec.protocol, 'UpdaterAdapter.spec.protocol')
-  if (!['dsh-headless-docker', 'dsh-headless-docker-v1'].includes(protocol)) {
+  if (!['dsh-headless-docker', 'dsh-headless-docker-v1', 'codex-exec-v1'].includes(protocol)) {
     throw new ProtocolError(`当前未实现 Updater Protocol：${protocol}`)
   }
   const prompt = expectObject(spec.prompt, 'UpdaterAdapter.spec.prompt')
-  const source = expectObject(spec.source, 'UpdaterAdapter.spec.source')
-  const sourceKind = expectText(source.kind, 'UpdaterAdapter.spec.source.kind')
-  if (sourceKind !== 'git-submodule') throw new ProtocolError('当前 UpdaterAdapter 只支持 git-submodule Source')
   const output = expectObject(spec.output, 'UpdaterAdapter.spec.output')
   const mutationReportName = relativePath(
     expectObject(output.mutationReport, 'UpdaterAdapter.spec.output.mutationReport').name,
     'UpdaterAdapter.spec.output.mutationReport.name',
   )
   if (mutationReportName.includes('/')) throw new ProtocolError('Mutation Report name 必须是单个文件名')
+  if (protocol === 'codex-exec-v1') {
+    if (spec.source !== undefined) throw new ProtocolError('Codex Updater 不接受 Source；运行时由固定 distribution 提供')
+    return {
+      apiVersion: API_VERSION,
+      kind: 'UpdaterAdapter',
+      id,
+      protocol,
+      source: null,
+      runtime: validateCodexUpdaterRuntime(spec.runtime, 'UpdaterAdapter.spec.runtime'),
+      promptPath: relativePath(prompt.path, 'UpdaterAdapter.spec.prompt.path'),
+      mutationReportName,
+    }
+  }
+  const source = expectObject(spec.source, 'UpdaterAdapter.spec.source')
+  const sourceKind = expectText(source.kind, 'UpdaterAdapter.spec.source.kind')
+  if (sourceKind !== 'git-submodule') throw new ProtocolError('当前 UpdaterAdapter 只支持 git-submodule Source')
   return {
     apiVersion: API_VERSION,
     kind: 'UpdaterAdapter',
@@ -563,6 +602,7 @@ function validateTextReasoningEnvironment({ id, spec, protocol }) {
       'egressNetwork',
       'maximumRequestsPerRun',
       'maximumConcurrentRequests',
+      'maximumUpstreamRetries',
       'resources',
     ]),
     'EnvironmentAdapter.spec.modelGateway',
@@ -595,7 +635,7 @@ function validateTextReasoningEnvironment({ id, spec, protocol }) {
   ) {
     throw new ProtocolError('EnvironmentAdapter.spec.task.workspacePath 必须是安全的容器绝对路径')
   }
-  const reserved = ['/candidate', '/benchmark-skills', '/solver-output', '/tmp', '/run']
+  const reserved = ['/candidate', '/environment-assets', '/solver-output', '/tmp', '/run']
   if (reserved.some((root) => workspacePath === root || workspacePath.startsWith(`${root}/`))) {
     throw new ProtocolError(`EnvironmentAdapter.spec.task.workspacePath 与 RSI 保留挂载冲突：${workspacePath}`)
   }
@@ -685,6 +725,11 @@ function validateTextReasoningEnvironment({ id, spec, protocol }) {
         'EnvironmentAdapter.spec.modelGateway.maximumConcurrentRequests',
         { integer: true, min: 1, max: 64 },
       ),
+      maximumUpstreamRetries: expectNumber(
+        modelGateway.maximumUpstreamRetries ?? 2,
+        'EnvironmentAdapter.spec.modelGateway.maximumUpstreamRetries',
+        { integer: true, min: 0, max: 5 },
+      ),
       resources: {
         cpus: expectNumber(gatewayResources.cpus, 'modelGateway.resources.cpus', { min: 0.1, max: 32 }),
         memory: expectText(gatewayResources.memory, 'modelGateway.resources.memory'),
@@ -692,6 +737,328 @@ function validateTextReasoningEnvironment({ id, spec, protocol }) {
           integer: true,
           min: 16,
           max: 4096,
+        }),
+      },
+    },
+    reward: { minimum: 0, maximum: 1, resolvedThreshold: 1 },
+    feedback: {
+      maximumTextBytesPerCase: expectNumber(
+        feedback.maximumTextBytesPerCase,
+        'EnvironmentAdapter.spec.feedback.maximumTextBytesPerCase',
+        { integer: true, min: 256, max: 1024 * 1024 },
+      ),
+      maximumArtifactEntriesPerCase: expectNumber(
+        feedback.maximumArtifactEntriesPerCase,
+        'EnvironmentAdapter.spec.feedback.maximumArtifactEntriesPerCase',
+        { integer: true, min: 1, max: 10000 },
+      ),
+      maximumArtifactBytesPerCase: expectNumber(
+        feedback.maximumArtifactBytesPerCase,
+        'EnvironmentAdapter.spec.feedback.maximumArtifactBytesPerCase',
+        { integer: true, min: 1024, max: 1024 * 1024 },
+      ),
+      maximumHistoryEntries: expectNumber(
+        feedback.maximumHistoryEntries,
+        'EnvironmentAdapter.spec.feedback.maximumHistoryEntries',
+        { integer: true, min: 1, max: 100 },
+      ),
+      maximumHistoryBytes: expectNumber(
+        feedback.maximumHistoryBytes,
+        'EnvironmentAdapter.spec.feedback.maximumHistoryBytes',
+        { integer: true, min: 1024, max: 1024 * 1024 },
+      ),
+    },
+  }
+}
+
+function validateOmegaUseOfficeValEnvironment({ id, spec, protocol }) {
+  rejectUnknownConfiguration(
+    spec,
+    new Set(['protocol', 'source', 'task', 'runtime', 'docker', 'modelGateway', 'verifier', 'reward', 'feedback']),
+    'EnvironmentAdapter.spec',
+  )
+  const source = expectObject(spec.source, 'EnvironmentAdapter.spec.source')
+  const task = expectObject(spec.task, 'EnvironmentAdapter.spec.task')
+  const workspaceLimits = expectObject(task.workspaceLimits, 'EnvironmentAdapter.spec.task.workspaceLimits')
+  const runtime = expectObject(spec.runtime, 'EnvironmentAdapter.spec.runtime')
+  const docker = expectObject(spec.docker, 'EnvironmentAdapter.spec.docker')
+  const resources = expectObject(docker.resources, 'EnvironmentAdapter.spec.docker.resources')
+  const modelGateway = expectObject(spec.modelGateway, 'EnvironmentAdapter.spec.modelGateway')
+  const gatewayResources = expectObject(modelGateway.resources, 'EnvironmentAdapter.spec.modelGateway.resources')
+  const verifier = expectObject(spec.verifier, 'EnvironmentAdapter.spec.verifier')
+  const verifierResources = expectObject(verifier.resources, 'EnvironmentAdapter.spec.verifier.resources')
+  const reward = expectObject(spec.reward, 'EnvironmentAdapter.spec.reward')
+  const feedback = expectObject(spec.feedback, 'EnvironmentAdapter.spec.feedback')
+
+  rejectUnknownConfiguration(
+    source,
+    new Set([
+      'datasetRootEnvironment',
+      'evaluatorRootEnvironment',
+      'datasetRevision',
+      'evaluatorRevision',
+      'manifestPath',
+      'manifestDigest',
+    ]),
+    'EnvironmentAdapter.spec.source',
+  )
+  rejectUnknownConfiguration(
+    task,
+    new Set(['workspacePath', 'environmentAssets', 'maximumConcurrentTrials', 'workspaceLimits']),
+    'EnvironmentAdapter.spec.task',
+  )
+  rejectUnknownConfiguration(
+    workspaceLimits,
+    new Set([
+      'maximumFiles',
+      'maximumBytes',
+      'maximumFileBytes',
+      'maximumChangedFiles',
+      'maximumChangedBytes',
+    ]),
+    'EnvironmentAdapter.spec.task.workspaceLimits',
+  )
+  rejectUnknownConfiguration(
+    runtime,
+    new Set(['image', 'dockerfile', 'verifierRunner']),
+    'EnvironmentAdapter.spec.runtime',
+  )
+  rejectUnknownConfiguration(
+    docker,
+    new Set(['binary', 'network', 'runAsCurrentUser', 'resources']),
+    'EnvironmentAdapter.spec.docker',
+  )
+  rejectUnknownConfiguration(
+    resources,
+    new Set(['cpus', 'memory', 'pids', 'timeoutSeconds']),
+    'EnvironmentAdapter.spec.docker.resources',
+  )
+  rejectUnknownConfiguration(
+    modelGateway,
+    new Set([
+      'image',
+      'dockerfile',
+      'alias',
+      'port',
+      'egressNetwork',
+      'maximumRequestsPerRun',
+      'maximumConcurrentRequests',
+      'maximumUpstreamRetries',
+      'resources',
+    ]),
+    'EnvironmentAdapter.spec.modelGateway',
+  )
+  rejectUnknownConfiguration(gatewayResources, new Set(['cpus', 'memory', 'pids']), 'modelGateway.resources')
+  rejectUnknownConfiguration(
+    verifier,
+    new Set(['timeoutSeconds', 'resources']),
+    'EnvironmentAdapter.spec.verifier',
+  )
+  rejectUnknownConfiguration(
+    verifierResources,
+    new Set(['cpus', 'memory', 'pids']),
+    'EnvironmentAdapter.spec.verifier.resources',
+  )
+  rejectUnknownConfiguration(reward, new Set(['minimum', 'maximum', 'resolvedThreshold']), 'EnvironmentAdapter.spec.reward')
+  rejectUnknownConfiguration(
+    feedback,
+    new Set([
+      'maximumTextBytesPerCase',
+      'maximumArtifactEntriesPerCase',
+      'maximumArtifactBytesPerCase',
+      'maximumHistoryEntries',
+      'maximumHistoryBytes',
+    ]),
+    'EnvironmentAdapter.spec.feedback',
+  )
+
+  const datasetRootEnvironment = environmentName(
+    source.datasetRootEnvironment,
+    'EnvironmentAdapter.spec.source.datasetRootEnvironment',
+  )
+  const evaluatorRootEnvironment = environmentName(
+    source.evaluatorRootEnvironment,
+    'EnvironmentAdapter.spec.source.evaluatorRootEnvironment',
+  )
+  if (datasetRootEnvironment === evaluatorRootEnvironment) {
+    throw new ProtocolError('OmegaUse Dataset 与 Evaluator 必须使用不同的根目录环境变量')
+  }
+  const workspacePath = expectText(task.workspacePath, 'EnvironmentAdapter.spec.task.workspacePath')
+  if (
+    !workspacePath.startsWith('/')
+    || workspacePath === '/'
+    || workspacePath.includes(':')
+    || workspacePath.includes(',')
+    || posix.normalize(workspacePath) !== workspacePath
+  ) {
+    throw new ProtocolError('EnvironmentAdapter.spec.task.workspacePath 必须是安全的容器绝对路径')
+  }
+  const reserved = [
+    '/candidate',
+    '/environment-assets',
+    '/solver-output',
+    '/submission',
+    '/verifier',
+    '/logs',
+    '/tmp',
+    '/run',
+  ]
+  if (reserved.some((root) => workspacePath === root || workspacePath.startsWith(`${root}/`))) {
+    throw new ProtocolError(`EnvironmentAdapter.spec.task.workspacePath 与 RSI 保留挂载冲突：${workspacePath}`)
+  }
+  const resolvedWorkspaceLimits = {
+    maximumFiles: expectNumber(workspaceLimits.maximumFiles, 'task.workspaceLimits.maximumFiles', {
+      integer: true,
+      min: 1,
+      max: 100000,
+    }),
+    maximumBytes: expectNumber(workspaceLimits.maximumBytes, 'task.workspaceLimits.maximumBytes', {
+      integer: true,
+      min: 1024,
+    }),
+    maximumFileBytes: expectNumber(workspaceLimits.maximumFileBytes, 'task.workspaceLimits.maximumFileBytes', {
+      integer: true,
+      min: 1,
+    }),
+    maximumChangedFiles: expectNumber(
+      workspaceLimits.maximumChangedFiles,
+      'task.workspaceLimits.maximumChangedFiles',
+      { integer: true, min: 1, max: 10000 },
+    ),
+    maximumChangedBytes: expectNumber(
+      workspaceLimits.maximumChangedBytes,
+      'task.workspaceLimits.maximumChangedBytes',
+      { integer: true, min: 1 },
+    ),
+  }
+  if (
+    resolvedWorkspaceLimits.maximumFileBytes > resolvedWorkspaceLimits.maximumBytes
+    || resolvedWorkspaceLimits.maximumChangedBytes > resolvedWorkspaceLimits.maximumBytes
+    || resolvedWorkspaceLimits.maximumChangedFiles > resolvedWorkspaceLimits.maximumFiles
+  ) {
+    throw new ProtocolError('OmegaUse Workspace Limits 的子上限不能超过对应总上限')
+  }
+
+  const network = expectText(docker.network, 'EnvironmentAdapter.spec.docker.network')
+  if (network === 'host') throw new ProtocolError('Solver/Updater Docker 禁止使用 host 网络')
+  const gatewayAlias = expectText(modelGateway.alias, 'EnvironmentAdapter.spec.modelGateway.alias')
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(gatewayAlias) || gatewayAlias === 'localhost') {
+    throw new ProtocolError('EnvironmentAdapter.spec.modelGateway.alias 必须是非 localhost 的小写 Docker DNS 名')
+  }
+  const gatewayEgressNetwork = expectText(
+    modelGateway.egressNetwork,
+    'EnvironmentAdapter.spec.modelGateway.egressNetwork',
+  )
+  if (['host', 'none'].includes(gatewayEgressNetwork)) {
+    throw new ProtocolError('Model Gateway egressNetwork 不能是 host 或 none')
+  }
+  const rewardMinimum = expectNumber(reward.minimum, 'EnvironmentAdapter.spec.reward.minimum')
+  const rewardMaximum = expectNumber(reward.maximum, 'EnvironmentAdapter.spec.reward.maximum')
+  const resolvedThreshold = expectNumber(reward.resolvedThreshold, 'EnvironmentAdapter.spec.reward.resolvedThreshold')
+  if (rewardMinimum !== 0 || rewardMaximum !== 1 || resolvedThreshold !== 1) {
+    throw new ProtocolError('OmegaUse Reward 必须归一化到 [0,1] 且 resolvedThreshold=1')
+  }
+  const runtimeImage = expectText(runtime.image, 'EnvironmentAdapter.spec.runtime.image')
+  if (!/^[a-z0-9][a-z0-9._/-]{0,127}(?::[a-z0-9][a-z0-9._-]{0,63})?$/u.test(runtimeImage)) {
+    throw new ProtocolError('EnvironmentAdapter.spec.runtime.image 格式无效')
+  }
+
+  return {
+    apiVersion: API_VERSION,
+    kind: 'EnvironmentAdapter',
+    id,
+    protocol,
+    source: {
+      datasetRootEnvironment,
+      evaluatorRootEnvironment,
+      datasetRevision: gitRevision(source.datasetRevision, 'EnvironmentAdapter.spec.source.datasetRevision'),
+      evaluatorRevision: gitRevision(source.evaluatorRevision, 'EnvironmentAdapter.spec.source.evaluatorRevision'),
+      manifestPath: relativePath(source.manifestPath, 'EnvironmentAdapter.spec.source.manifestPath'),
+      manifestDigest: sha256Digest(source.manifestDigest, 'EnvironmentAdapter.spec.source.manifestDigest'),
+      revision: sha256Digest(source.manifestDigest, 'EnvironmentAdapter.spec.source.manifestDigest'),
+    },
+    task: {
+      workspacePath,
+      environmentAssets: relativePath(task.environmentAssets, 'EnvironmentAdapter.spec.task.environmentAssets'),
+      maximumConcurrentTrials: expectNumber(
+        task.maximumConcurrentTrials ?? 1,
+        'EnvironmentAdapter.spec.task.maximumConcurrentTrials',
+        { integer: true, min: 1, max: 8 },
+      ),
+      workspaceLimits: resolvedWorkspaceLimits,
+    },
+    runtime: {
+      image: runtimeImage,
+      dockerfile: relativePath(runtime.dockerfile, 'EnvironmentAdapter.spec.runtime.dockerfile'),
+      verifierRunner: relativePath(runtime.verifierRunner, 'EnvironmentAdapter.spec.runtime.verifierRunner'),
+    },
+    docker: {
+      binary: expectText(docker.binary, 'EnvironmentAdapter.spec.docker.binary'),
+      network,
+      runAsCurrentUser: expectBoolean(docker.runAsCurrentUser, 'EnvironmentAdapter.spec.docker.runAsCurrentUser'),
+      resources: {
+        cpus: expectNumber(resources.cpus, 'EnvironmentAdapter.spec.docker.resources.cpus', { min: 0.1, max: 32 }),
+        memory: expectText(resources.memory, 'EnvironmentAdapter.spec.docker.resources.memory'),
+        pids: expectNumber(resources.pids, 'EnvironmentAdapter.spec.docker.resources.pids', {
+          integer: true,
+          min: 16,
+          max: 4096,
+        }),
+        timeoutSeconds: expectNumber(
+          resources.timeoutSeconds,
+          'EnvironmentAdapter.spec.docker.resources.timeoutSeconds',
+          { integer: true, min: 1, max: 7200 },
+        ),
+      },
+    },
+    modelGateway: {
+      image: expectText(modelGateway.image, 'EnvironmentAdapter.spec.modelGateway.image'),
+      dockerfile: relativePath(modelGateway.dockerfile, 'EnvironmentAdapter.spec.modelGateway.dockerfile'),
+      alias: gatewayAlias,
+      port: expectNumber(modelGateway.port, 'EnvironmentAdapter.spec.modelGateway.port', {
+        integer: true,
+        min: 1024,
+        max: 65535,
+      }),
+      egressNetwork: gatewayEgressNetwork,
+      maximumRequestsPerRun: expectNumber(
+        modelGateway.maximumRequestsPerRun,
+        'EnvironmentAdapter.spec.modelGateway.maximumRequestsPerRun',
+        { integer: true, min: 1, max: 100000 },
+      ),
+      maximumConcurrentRequests: expectNumber(
+        modelGateway.maximumConcurrentRequests,
+        'EnvironmentAdapter.spec.modelGateway.maximumConcurrentRequests',
+        { integer: true, min: 1, max: 64 },
+      ),
+      maximumUpstreamRetries: expectNumber(
+        modelGateway.maximumUpstreamRetries ?? 2,
+        'EnvironmentAdapter.spec.modelGateway.maximumUpstreamRetries',
+        { integer: true, min: 0, max: 5 },
+      ),
+      resources: {
+        cpus: expectNumber(gatewayResources.cpus, 'modelGateway.resources.cpus', { min: 0.1, max: 32 }),
+        memory: expectText(gatewayResources.memory, 'modelGateway.resources.memory'),
+        pids: expectNumber(gatewayResources.pids, 'modelGateway.resources.pids', {
+          integer: true,
+          min: 16,
+          max: 4096,
+        }),
+      },
+    },
+    verifier: {
+      timeoutSeconds: expectNumber(verifier.timeoutSeconds, 'EnvironmentAdapter.spec.verifier.timeoutSeconds', {
+        integer: true,
+        min: 1,
+        max: 1800,
+      }),
+      resources: {
+        cpus: expectNumber(verifierResources.cpus, 'verifier.resources.cpus', { min: 0.1, max: 16 }),
+        memory: expectText(verifierResources.memory, 'verifier.resources.memory'),
+        pids: expectNumber(verifierResources.pids, 'verifier.resources.pids', {
+          integer: true,
+          min: 16,
+          max: 1024,
         }),
       },
     },
@@ -734,276 +1101,21 @@ export function validateEnvironmentAdapter(input) {
   if (protocol === 'text-reasoning-deterministic-v1') {
     return validateTextReasoningEnvironment({ id, spec, protocol })
   }
-  if (protocol !== 'skillsbench-docker-v1') {
-    throw new ProtocolError(`当前未实现 Environment Protocol：${protocol}`)
+  if (protocol === 'omegause-officeval-docker-v1') {
+    return validateOmegaUseOfficeValEnvironment({ id, spec, protocol })
   }
-  const source = expectObject(spec.source, 'EnvironmentAdapter.spec.source')
-  const task = expectObject(spec.task, 'EnvironmentAdapter.spec.task')
-  const workspaceLimits = expectObject(task.workspaceLimits, 'EnvironmentAdapter.spec.task.workspaceLimits')
-  const docker = expectObject(spec.docker, 'EnvironmentAdapter.spec.docker')
-  const resources = expectObject(docker.resources, 'EnvironmentAdapter.spec.docker.resources')
-  const modelGateway = expectObject(spec.modelGateway, 'EnvironmentAdapter.spec.modelGateway')
-  const gatewayResources = expectObject(
-    modelGateway.resources,
-    'EnvironmentAdapter.spec.modelGateway.resources',
-  )
-  const verifier = expectObject(spec.verifier, 'EnvironmentAdapter.spec.verifier')
-  const reward = expectObject(spec.reward, 'EnvironmentAdapter.spec.reward')
-  const feedback = expectObject(spec.feedback, 'EnvironmentAdapter.spec.feedback')
-
-  const rootEnvironment = expectText(source.rootEnvironment, 'EnvironmentAdapter.spec.source.rootEnvironment')
-  if (!/^[A-Z_][A-Z0-9_]*$/u.test(rootEnvironment)) {
-    throw new ProtocolError('EnvironmentAdapter.spec.source.rootEnvironment 必须是大写环境变量名')
-  }
-  const gatewayAlias = expectText(modelGateway.alias, 'EnvironmentAdapter.spec.modelGateway.alias')
-  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(gatewayAlias)) {
-    throw new ProtocolError('EnvironmentAdapter.spec.modelGateway.alias 必须是小写 Docker DNS 名')
-  }
-  if (gatewayAlias === 'localhost') {
-    throw new ProtocolError('EnvironmentAdapter.spec.modelGateway.alias 不能使用 localhost')
-  }
-  const gatewayEgressNetwork = expectText(
-    modelGateway.egressNetwork,
-    'EnvironmentAdapter.spec.modelGateway.egressNetwork',
-  )
-  if (['host', 'none'].includes(gatewayEgressNetwork)) {
-    throw new ProtocolError('Model Gateway egressNetwork 不能是 host 或 none')
-  }
-
-  const network = expectText(docker.network, 'EnvironmentAdapter.spec.docker.network')
-  if (network === 'host') throw new ProtocolError('Solver/Updater Docker 禁止使用 host 网络')
-  const verifierNetwork = expectText(verifier.network, 'EnvironmentAdapter.spec.verifier.network')
-  if (verifierNetwork === 'host') throw new ProtocolError('Verifier Docker 禁止使用 host 网络')
-  const workspacePath = expectText(task.workspacePath, 'EnvironmentAdapter.spec.task.workspacePath')
-  if (
-    !workspacePath.startsWith('/') ||
-    workspacePath === '/' ||
-    workspacePath.includes(':') ||
-    workspacePath.includes(',') ||
-    posix.normalize(workspacePath) !== workspacePath
-  ) {
-    throw new ProtocolError('EnvironmentAdapter.spec.task.workspacePath 必须是安全的容器绝对路径')
-  }
-  const reservedWorkspaceRoots = ['/tmp', '/run', '/logs', '/verifier', '/rsi-submission', '/dsh-home', '/benchmark-skills']
-  if (reservedWorkspaceRoots.some((root) => workspacePath === root || workspacePath.startsWith(`${root}/`))) {
-    throw new ProtocolError(`EnvironmentAdapter.spec.task.workspacePath 与 RSI 保留挂载冲突：${workspacePath}`)
-  }
-  const rewardMinimum = expectNumber(reward.minimum, 'EnvironmentAdapter.spec.reward.minimum')
-  const rewardMaximum = expectNumber(reward.maximum, 'EnvironmentAdapter.spec.reward.maximum')
-  const resolvedThreshold = expectNumber(reward.resolvedThreshold, 'EnvironmentAdapter.spec.reward.resolvedThreshold')
-  if (rewardMinimum >= rewardMaximum) throw new ProtocolError('Reward minimum 必须小于 maximum')
-  if (resolvedThreshold < rewardMinimum || resolvedThreshold > rewardMaximum) {
-    throw new ProtocolError('resolvedThreshold 必须位于 Reward 范围内')
-  }
-  const outputCandidates = expectStringArray(
-    verifier.outputCandidates,
-    'EnvironmentAdapter.spec.verifier.outputCandidates',
-  ).map((value, index) => {
-    if (!value.startsWith('/logs/')) {
-      throw new ProtocolError(`EnvironmentAdapter.spec.verifier.outputCandidates[${index}] 必须位于 /logs/`)
-    }
-    return `/logs/${relativePath(value.slice('/logs/'.length), `verifier.outputCandidates[${index}]`)}`
-  })
-  const requiredEvidenceCandidates = expectStringArray(
-    verifier.requiredEvidenceCandidates ?? [],
-    'EnvironmentAdapter.spec.verifier.requiredEvidenceCandidates',
-    { nonEmpty: false },
-  ).map((value, index) => {
-    if (!value.startsWith('/logs/')) {
-      throw new ProtocolError(
-        `EnvironmentAdapter.spec.verifier.requiredEvidenceCandidates[${index}] 必须位于 /logs/`,
-      )
-    }
-    return `/logs/${relativePath(
-      value.slice('/logs/'.length),
-      `verifier.requiredEvidenceCandidates[${index}]`,
-    )}`
-  })
-  const proxyEnvironment = expectStringArray(
-    verifier.proxyEnvironment ?? [],
-    'EnvironmentAdapter.spec.verifier.proxyEnvironment',
-    { nonEmpty: false },
-  )
-  if (new Set(proxyEnvironment).size !== proxyEnvironment.length) {
-    throw new ProtocolError('EnvironmentAdapter.spec.verifier.proxyEnvironment 不能重复')
-  }
-  for (const name of proxyEnvironment) {
-    if (!VERIFIER_PROXY_ENVIRONMENT.has(name)) {
-      throw new ProtocolError(`Verifier 只能继承标准代理环境变量：${name}`)
-    }
-  }
-  const dependencyEnvironmentInput = expectObject(
-    verifier.dependencyEnvironment ?? {},
-    'EnvironmentAdapter.spec.verifier.dependencyEnvironment',
-  )
-  const dependencyEnvironment = {}
-  for (const [containerName, hostNameInput] of Object.entries(dependencyEnvironmentInput)) {
-    if (!VERIFIER_DEPENDENCY_ENVIRONMENT.has(containerName)) {
-      throw new ProtocolError(`Verifier 不允许注入依赖环境变量：${containerName}`)
-    }
-    dependencyEnvironment[containerName] = environmentName(
-      hostNameInput,
-      `EnvironmentAdapter.spec.verifier.dependencyEnvironment.${containerName}`,
-    )
-  }
-  const resolvedWorkspaceLimits = {
-    maximumFiles: expectNumber(workspaceLimits.maximumFiles, 'task.workspaceLimits.maximumFiles', {
-      integer: true,
-      min: 1,
-    }),
-    maximumBytes: expectNumber(workspaceLimits.maximumBytes, 'task.workspaceLimits.maximumBytes', {
-      integer: true,
-      min: 1,
-    }),
-    maximumFileBytes: expectNumber(workspaceLimits.maximumFileBytes, 'task.workspaceLimits.maximumFileBytes', {
-      integer: true,
-      min: 1,
-    }),
-    maximumChangedFiles: expectNumber(
-      workspaceLimits.maximumChangedFiles,
-      'task.workspaceLimits.maximumChangedFiles',
-      { integer: true, min: 1 },
-    ),
-    maximumChangedBytes: expectNumber(
-      workspaceLimits.maximumChangedBytes,
-      'task.workspaceLimits.maximumChangedBytes',
-      { integer: true, min: 1 },
-    ),
-  }
-  if (resolvedWorkspaceLimits.maximumFileBytes > resolvedWorkspaceLimits.maximumBytes) {
-    throw new ProtocolError('maximumFileBytes 不能大于 maximumBytes')
-  }
-  if (resolvedWorkspaceLimits.maximumChangedFiles > resolvedWorkspaceLimits.maximumFiles) {
-    throw new ProtocolError('maximumChangedFiles 不能大于 maximumFiles')
-  }
-  if (resolvedWorkspaceLimits.maximumChangedBytes > resolvedWorkspaceLimits.maximumBytes) {
-    throw new ProtocolError('maximumChangedBytes 不能大于 maximumBytes')
-  }
-
-  return {
-    apiVersion: API_VERSION,
-    kind: 'EnvironmentAdapter',
-    id,
-    protocol,
-    source: {
-      rootEnvironment,
-      tasksSubdirectory: relativePath(source.tasksSubdirectory, 'EnvironmentAdapter.spec.source.tasksSubdirectory'),
-      revision: gitRevision(source.revision, 'EnvironmentAdapter.spec.source.revision'),
-    },
-    task: {
-      instructionCandidates: expectStringArray(task.instructionCandidates, 'EnvironmentAdapter.spec.task.instructionCandidates')
-        .map((value) => relativePath(value, 'instructionCandidates')),
-      dockerfile: relativePath(task.dockerfile, 'EnvironmentAdapter.spec.task.dockerfile'),
-      dockerContext: relativePath(task.dockerContext, 'EnvironmentAdapter.spec.task.dockerContext'),
-      skillsDirectory: relativePath(task.skillsDirectory, 'EnvironmentAdapter.spec.task.skillsDirectory'),
-      workspacePath,
-      workspaceLimits: resolvedWorkspaceLimits,
-      verifierCandidates: expectStringArray(task.verifierCandidates, 'EnvironmentAdapter.spec.task.verifierCandidates')
-        .map((value) => relativePath(value, 'verifierCandidates')),
-    },
-    docker: {
-      binary: expectText(docker.binary, 'EnvironmentAdapter.spec.docker.binary'),
-      network,
-      runAsCurrentUser: expectBoolean(docker.runAsCurrentUser, 'EnvironmentAdapter.spec.docker.runAsCurrentUser'),
-      resources: {
-        cpus: expectNumber(resources.cpus, 'EnvironmentAdapter.spec.docker.resources.cpus', { min: 0.1 }),
-        memory: expectText(resources.memory, 'EnvironmentAdapter.spec.docker.resources.memory'),
-        pids: expectNumber(resources.pids, 'EnvironmentAdapter.spec.docker.resources.pids', {
-          integer: true,
-          min: 16,
-        }),
-        timeoutSeconds: expectNumber(
-          resources.timeoutSeconds,
-          'EnvironmentAdapter.spec.docker.resources.timeoutSeconds',
-          { integer: true, min: 1 },
-        ),
-      },
-    },
-    modelGateway: {
-      image: expectText(modelGateway.image, 'EnvironmentAdapter.spec.modelGateway.image'),
-      dockerfile: relativePath(modelGateway.dockerfile, 'EnvironmentAdapter.spec.modelGateway.dockerfile'),
-      alias: gatewayAlias,
-      port: expectNumber(modelGateway.port, 'EnvironmentAdapter.spec.modelGateway.port', {
-        integer: true,
-        min: 1024,
-        max: 65535,
-      }),
-      egressNetwork: gatewayEgressNetwork,
-      maximumRequestsPerRun: expectNumber(
-        modelGateway.maximumRequestsPerRun,
-        'EnvironmentAdapter.spec.modelGateway.maximumRequestsPerRun',
-        { integer: true, min: 1, max: 100000 },
-      ),
-      maximumConcurrentRequests: expectNumber(
-        modelGateway.maximumConcurrentRequests,
-        'EnvironmentAdapter.spec.modelGateway.maximumConcurrentRequests',
-        { integer: true, min: 1, max: 64 },
-      ),
-      resources: {
-        cpus: expectNumber(gatewayResources.cpus, 'modelGateway.resources.cpus', { min: 0.1 }),
-        memory: expectText(gatewayResources.memory, 'modelGateway.resources.memory'),
-        pids: expectNumber(gatewayResources.pids, 'modelGateway.resources.pids', {
-          integer: true,
-          min: 16,
-        }),
-      },
-    },
-    verifier: {
-      pythonCommand: expectText(verifier.pythonCommand, 'EnvironmentAdapter.spec.verifier.pythonCommand'),
-      shellCommand: expectText(verifier.shellCommand, 'EnvironmentAdapter.spec.verifier.shellCommand'),
-      arguments: expectStringArray(verifier.arguments ?? [], 'EnvironmentAdapter.spec.verifier.arguments', { nonEmpty: false }),
-      proxyEnvironment,
-      dependencyEnvironment,
-      outputCandidates,
-      requiredEvidenceCandidates,
-      maximumAttempts: expectNumber(
-        verifier.maximumAttempts ?? 1,
-        'EnvironmentAdapter.spec.verifier.maximumAttempts',
-        { integer: true, min: 1, max: 3 },
-      ),
-      network: verifierNetwork,
-      runAsCurrentUser: expectBoolean(
-        verifier.runAsCurrentUser,
-        'EnvironmentAdapter.spec.verifier.runAsCurrentUser',
-      ),
-    },
-    reward: {
-      minimum: rewardMinimum,
-      maximum: rewardMaximum,
-      resolvedThreshold,
-    },
-    feedback: {
-      maximumTextBytesPerCase: expectNumber(
-        feedback.maximumTextBytesPerCase,
-        'EnvironmentAdapter.spec.feedback.maximumTextBytesPerCase',
-        { integer: true, min: 256 },
-      ),
-      maximumArtifactEntriesPerCase: expectNumber(
-        feedback.maximumArtifactEntriesPerCase,
-        'EnvironmentAdapter.spec.feedback.maximumArtifactEntriesPerCase',
-        { integer: true, min: 1, max: 10000 },
-      ),
-      maximumArtifactBytesPerCase: expectNumber(
-        feedback.maximumArtifactBytesPerCase,
-        'EnvironmentAdapter.spec.feedback.maximumArtifactBytesPerCase',
-        { integer: true, min: 1024, max: 1024 * 1024 },
-      ),
-      maximumHistoryEntries: expectNumber(
-        feedback.maximumHistoryEntries,
-        'EnvironmentAdapter.spec.feedback.maximumHistoryEntries',
-        { integer: true, min: 1, max: 100 },
-      ),
-      maximumHistoryBytes: expectNumber(
-        feedback.maximumHistoryBytes,
-        'EnvironmentAdapter.spec.feedback.maximumHistoryBytes',
-        { integer: true, min: 1024, max: 1024 * 1024 },
-      ),
-    },
-  }
+  throw new ProtocolError(`当前未实现 Environment Protocol：${protocol}`)
 }
 
 function validateModel(value, label) {
   const model = expectObject(value, label)
+  const reasoningEffort = model.reasoningEffort === undefined
+    ? null
+    : expectText(model.reasoningEffort, `${label}.reasoningEffort`)
+  if (reasoningEffort !== null
+      && !['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(reasoningEffort)) {
+    throw new ProtocolError(`${label}.reasoningEffort 无效`)
+  }
   return {
     provider: expectText(model.provider, `${label}.provider`),
     model: expectText(model.model, `${label}.model`),
@@ -1012,6 +1124,7 @@ function validateModel(value, label) {
       min: 1,
       max: 1_000_000,
     }),
+    reasoningEffort,
   }
 }
 

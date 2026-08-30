@@ -54,6 +54,7 @@ export class PopulationStore {
     this.statePath = join(this.publicRoot, 'state.json')
     this.eventsPath = join(this.publicRoot, 'events.jsonl')
     this.configPath = join(this.publicRoot, 'config.snapshot.json')
+    this.baselinePath = join(this.publicRoot, 'baseline-summary.json')
   }
 
   async initialize({ config, state }) {
@@ -113,6 +114,11 @@ export class PopulationStore {
     }
   }
 
+  async writeBaselineSummary(summary) {
+    await atomicJson(this.baselinePath, summary)
+    return this.baselinePath
+  }
+
   async writeReport({ summary, markdown, bestHarness, patch }) {
     const paths = {
       summary: join(this.reportRoot, 'population-summary.json'),
@@ -127,6 +133,12 @@ export class PopulationStore {
       atomicWrite(paths.patch, patch),
     ])
     return { directory: this.reportRoot, paths }
+  }
+
+  async writeFinalReport(report) {
+    const path = join(this.reportRoot, 'final-evaluation.json')
+    await atomicJson(path, report)
+    return path
   }
 
   async readReport() {

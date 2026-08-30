@@ -1,4 +1,7 @@
-import { validateEvaluationSummary } from './evaluation-summary.mjs'
+import {
+  primaryMetricDelta,
+  validateEvaluationSummary,
+} from './evaluation-summary.mjs'
 import { ProtocolError } from './protocol.mjs'
 
 const API_VERSION = 'harness-rsi/v1alpha1'
@@ -95,7 +98,11 @@ function normalizeLastStep(value, completedSteps) {
       ? null
       : safeId(step.candidateId, 'BranchProjection.lastStep.candidateId')
     const ranking = object(step.ranking, 'BranchProjection.lastStep.ranking')
-    rejectUnknown(ranking, new Set(['eligible', 'evaluation']), 'BranchProjection.lastStep.ranking')
+    rejectUnknown(
+      ranking,
+      new Set(['eligible', 'evaluation', 'baselineEvaluation']),
+      'BranchProjection.lastStep.ranking',
+    )
     if (typeof ranking.eligible !== 'boolean') {
       throw new ProtocolError('BranchProjection.lastStep.ranking.eligible 必须是 boolean')
     }
@@ -103,8 +110,22 @@ function normalizeLastStep(value, completedSteps) {
       ranking.evaluation,
       (summary) => validateEvaluationSummary(summary),
     )
+    const baselineEvaluation = nullable(
+      ranking.baselineEvaluation ?? null,
+      (summary) => validateEvaluationSummary(summary),
+    )
     if (evaluation !== null && evaluation.candidateId !== candidateId) {
       throw new ProtocolError('BranchProjection.lastStep Candidate 与 EvaluationSummary 不一致')
+    }
+    if (baselineEvaluation !== null) {
+      if (evaluation === null) {
+        throw new ProtocolError('BranchProjection.lastStep 配对基线必须与 Candidate Evaluation 同时提供')
+      }
+      if (baselineEvaluation.candidateId === candidateId) {
+        throw new ProtocolError('BranchProjection.lastStep 配对基线不能指向当前 Candidate')
+      }
+      // 同时验证主指标与方向一致；Population 后续只消费这个受信比较口径。
+      primaryMetricDelta(evaluation, baselineEvaluation)
     }
     if (['promoted', 'rejected'].includes(step.decision)
         && (candidateId === null || evaluation === null)) {
@@ -121,7 +142,11 @@ function normalizeLastStep(value, completedSteps) {
       stepNumber,
       candidateId,
       decision: step.decision,
-      ranking: Object.freeze({ eligible: ranking.eligible, evaluation }),
+      ranking: Object.freeze({
+        eligible: ranking.eligible,
+        evaluation,
+        baselineEvaluation,
+      }),
     })
   })
 }

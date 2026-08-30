@@ -1,0 +1,60 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "Benchmark",
+  "metadata": {
+    "id": "cowork-omegause-officeval-linux-v1",
+    "name": "OmegaUse-OfficeVal 91-task Linux static-verifier split"
+  },
+  "spec": {
+    "source": {
+      "adapter": "omegause-officeval",
+      "dataset": "baidu-frontier-research/OmegaUse-OfficeVal",
+      "split": "stratified-fixed-seed-55-feedback-18-selection-18-final",
+      "revision": "8bf749b53988822a90520eba4761c6c311e17dd0e13bd78658b261a921128291"
+    },
+    "evaluator": {
+      "adapter": "omegause-officeval",
+      "resultFormat": "harness-rsi/solver-result-jsonl-v2"
+    },
+    "partitions": {
+      "feedback": {
+        "visibility": "detailed",
+        "expectedCount": 55,
+        "instanceIds": [
+          "officeval_003", "officeval_004", "officeval_005", "officeval_006", "officeval_007",
+          "officeval_009", "officeval_010", "officeval_013", "officeval_014", "officeval_017",
+          "officeval_018", "officeval_020", "officeval_021", "officeval_024", "officeval_025",
+          "officeval_028", "officeval_029", "officeval_031", "officeval_032", "officeval_038",
+          "officeval_041", "officeval_042", "officeval_043", "officeval_045", "officeval_046",
+          "officeval_048", "officeval_052", "officeval_053", "officeval_054", "officeval_056",
+          "officeval_057", "officeval_059", "officeval_060", "officeval_063", "officeval_067",
+          "officeval_068", "officeval_069", "officeval_071", "officeval_072", "officeval_073",
+          "officeval_077", "officeval_079", "officeval_080", "officeval_082", "officeval_085",
+          "officeval_086", "officeval_090", "officeval_091", "officeval_092", "officeval_093",
+          "officeval_094", "officeval_095", "officeval_096", "officeval_098", "officeval_099"
+        ]
+      },
+      "selection": {
+        "visibility": "aggregate-only",
+        "expectedCount": 18,
+        "instanceIds": [
+          "officeval_002", "officeval_012", "officeval_016", "officeval_034", "officeval_035",
+          "officeval_036", "officeval_040", "officeval_049", "officeval_055", "officeval_058",
+          "officeval_062", "officeval_064", "officeval_075", "officeval_076", "officeval_078",
+          "officeval_083", "officeval_087", "officeval_100"
+        ]
+      },
+      "final": {
+        "visibility": "sealed",
+        "expectedCount": 18,
+        "instanceIds": [
+          "officeval_011", "officeval_015", "officeval_026", "officeval_027", "officeval_033",
+          "officeval_037", "officeval_044", "officeval_047", "officeval_050", "officeval_051",
+          "officeval_061", "officeval_065", "officeval_066", "officeval_070", "officeval_084",
+          "officeval_088", "officeval_089", "officeval_097"
+        ]
+      }
+    },
+    "expectedTotal": 91
+  }
+}

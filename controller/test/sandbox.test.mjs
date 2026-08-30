@@ -173,6 +173,24 @@ test('generic sandbox can provide an empty proc directory for restricted kernels
   }), ProtocolError)
 })
 
+test('generic sandbox 只允许当前宿主身份保留附加组', () => {
+  const uid = process.getuid?.()
+  const gid = process.getgid?.()
+  if (!Number.isInteger(uid) || uid < 1 || !Number.isInteger(gid) || gid < 1) return
+  const options = {
+    invocation: { command: '/usr/bin/true', args: [], cwd: '/work', env: {} },
+    uid,
+    gid,
+    preserveSupplementaryGroups: true,
+    mounts: [{ source: '/safe/work', destination: '/work', readOnly: false }],
+  }
+  const result = buildBubblewrapInvocation(options)
+  assert.deepEqual(result.args.slice(0, 4), [
+    `--reuid=${uid}`, `--regid=${gid}`, '--keep-groups', '--no-new-privs',
+  ])
+  assert.throws(() => buildBubblewrapInvocation({ ...options, uid: uid + 1 }), /当前宿主 UID\/GID/u)
+})
+
 test('generic sandbox can expose only a synthetic proc self executable', () => {
   const executable = '/opt/runtime/bin/tool'
   const result = buildBubblewrapInvocation({

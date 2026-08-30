@@ -6,6 +6,8 @@ import http.client
 import json
 from urllib.parse import urlsplit
 
+MAXIMUM_EMPTY_RESPONSE_ATTEMPTS = 3
+
 
 def _content(value: object) -> str:
     if isinstance(value, str):
@@ -134,7 +136,7 @@ def query(
         "stream": True,
         "stream_options": {"include_usage": True},
     }).encode("utf-8")
-    for attempt in (1, 2):
+    for attempt in range(1, MAXIMUM_EMPTY_RESPONSE_ATTEMPTS + 1):
         connection = http.client.HTTPConnection(parsed.hostname, parsed.port or 80, timeout=1200)
         connection.request(
             "POST",
@@ -163,7 +165,10 @@ def query(
 
         # 只把“正常结束但正文为空”或“空流”视为一次性上游故障。
         # length、tool_calls 等状态不会靠相同请求自动恢复，因此直接失败。
-        if attempt == 1 and result["finish_reason"] in {None, "stop"}:
+        if (
+            attempt < MAXIMUM_EMPTY_RESPONSE_ATTEMPTS
+            and result["finish_reason"] in {None, "stop"}
+        ):
             continue
         raise _empty_response_error(result, attempt)
 

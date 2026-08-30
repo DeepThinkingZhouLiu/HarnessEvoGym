@@ -26,7 +26,12 @@ const provider = {
   },
   models: [{ id: 'fixture-terra' }],
 }
-const model = { provider: provider.id, model: 'fixture-terra', maxTokens: 2048 }
+const model = {
+  provider: provider.id,
+  model: 'fixture-terra',
+  maxTokens: 2048,
+  reasoningEffort: 'high',
+}
 const modelAccess = {
   network: 'fixture-run-model-net',
   environment: {
@@ -51,16 +56,16 @@ async function trialFixture(prefix) {
   const root = await mkdtemp(join(tmpdir(), prefix))
   const candidateWorkspace = join(root, 'candidate')
   const taskWorkspace = join(root, 'workspace')
-  const benchmarkSkills = join(root, 'benchmark-skills')
+  const environmentAssets = join(root, 'environment-assets')
   const sessionRoot = join(root, 'solver-output')
   await Promise.all([
     mkdir(candidateWorkspace),
     mkdir(taskWorkspace),
-    mkdir(benchmarkSkills),
+    mkdir(environmentAssets),
   ])
   await writeFile(join(candidateWorkspace, 'run.py'), '# fixture\n')
-  await writeFile(join(benchmarkSkills, 'SKILL.md'), '# fixture\n')
-  return { root, candidateWorkspace, taskWorkspace, benchmarkSkills, sessionRoot }
+  await writeFile(join(environmentAssets, 'SKILL.md'), '# fixture\n')
+  return { root, candidateWorkspace, taskWorkspace, environmentAssets, sessionRoot }
 }
 
 test('MSA Cowork Runtime 派生镜像绑定 Task Image、Source 与定义摘要', async () => {
@@ -75,13 +80,13 @@ test('MSA Cowork Runtime 派生镜像绑定 Task Image、Source 与定义摘要'
     repositoryRoot,
     sourceRevision,
     sourcePath: 'sources/msa-minimal-harness',
-    baseImage: 'skillsbench-task:fixture',
+    baseImage: 'office-task:fixture',
     baseImageIdentity: `sha256:${'b'.repeat(64)}`,
-    tag: 'skillsbench-task:fixture-msa',
+    tag: 'office-task:fixture-msa',
   })
 
   assert.equal(result.built, true)
-  assert.equal(buildOptions.buildArgs.BASE_IMAGE, 'skillsbench-task:fixture')
+  assert.equal(buildOptions.buildArgs.BASE_IMAGE, 'office-task:fixture')
   assert.equal(buildOptions.labels['org.opencontainers.image.revision'], sourceRevision)
   assert.equal(buildOptions.labels['io.harness-rsi.runtime'], 'msa-minimal-cowork-v1')
   assert.equal(buildOptions.labels['io.harness-rsi.base-image-identity'], `sha256:${'b'.repeat(64)}`)
@@ -107,7 +112,7 @@ test('MSA Cowork Solver 只读挂 Candidate/Skill，只写任务与独立输出�
   const result = await runMsaMinimalCoworkSolver({
     docker,
     runtime,
-    image: 'skillsbench-task:fixture-msa',
+    image: 'office-task:fixture-msa',
     model,
     provider,
     ...fixture,
@@ -136,7 +141,7 @@ test('MSA Cowork Solver 只读挂 Candidate/Skill，只写任务与独立输出�
     [
       [MSA_COWORK_CONTAINER_PATHS.candidate, true],
       ['/root', false],
-      [MSA_COWORK_CONTAINER_PATHS.benchmarkSkills, true],
+      [MSA_COWORK_CONTAINER_PATHS.environmentAssets, true],
       [MSA_COWORK_CONTAINER_PATHS.solverOutput, false],
     ],
   )
@@ -159,7 +164,7 @@ test('MSA Cowork Solver 在进入 Docker 前拒绝越界的可信步数上限', 
     runMsaMinimalCoworkSolver({
       docker,
       runtime: { ...runtime, maximumSteps: 33 },
-      image: 'skillsbench-task:fixture-msa',
+      image: 'office-task:fixture-msa',
       model,
       provider,
       ...fixture,
@@ -193,7 +198,7 @@ test('MSA Cowork Solver 拒绝空白、NUL 与超限任务正文', async () => {
       runMsaMinimalCoworkSolver({
         docker,
         runtime,
-        image: 'skillsbench-task:fixture-msa',
+        image: 'office-task:fixture-msa',
         model,
         provider,
         ...fixture,
@@ -224,7 +229,7 @@ test('MSA Cowork Solver 拒绝跟随 Candidate 生成的 Answer 符号链接', a
     runMsaMinimalCoworkSolver({
       docker,
       runtime,
-      image: 'skillsbench-task:fixture-msa',
+      image: 'office-task:fixture-msa',
       model,
       provider,
       ...fixture,
@@ -290,7 +295,7 @@ test('MSA Solver Driver 提供 Factory 所需接口并累计隔离网关 Usage',
   })
 
   const result = await driver.run({
-    image: 'skillsbench-task:fixture-msa',
+    image: 'office-task:fixture-msa',
     model,
     ...fixture,
     task: 'fixture task',
@@ -308,9 +313,63 @@ test('MSA Solver Driver 提供 Factory 所需接口并累计隔离网关 Usage',
       model: 'fixture-terra',
       maxTokens: 2048,
       maxTokensField: 'max_tokens',
+      reasoningEffort: 'high',
     }],
     ['usage', 'solver'],
   ])
+})
+
+test('MSA Solver Driver 并发 Batch 只对网关 Usage 做一次总差分', async () => {
+  const fixture = await trialFixture('rsi-msa-cowork-batch-')
+  const snapshots = [
+    {
+      acceptedRequests: 0, usageResponses: 0, unknownUsageResponses: 0,
+      inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, reasoningTokens: 0,
+      activeRequests: 0,
+    },
+    {
+      acceptedRequests: 2, usageResponses: 2, unknownUsageResponses: 0,
+      inputTokens: 40, outputTokens: 10, cacheReadTokens: 0, reasoningTokens: 0,
+      activeRequests: 0,
+    },
+  ]
+  const gatewayCalls = []
+  const modelGateway = {
+    async access(role) {
+      gatewayCalls.push(['access', role])
+      return modelAccess
+    },
+    async usage(role) {
+      gatewayCalls.push(['usage', role])
+      return snapshots.shift()
+    },
+  }
+  const docker = {
+    async run() {
+      await writeFile(join(fixture.sessionRoot, 'answer.txt'), 'done\n')
+      await writeFile(join(fixture.sessionRoot, 'agent.jsonl'), `${JSON.stringify({ type: 'model' })}\n`)
+      return { stderr: '', durationMs: 1, outputTruncated: false }
+    },
+  }
+  const driver = createMsaMinimalCoworkSolverDriver({
+    target: { solver: { protocol: 'msa-minimal-docker-v1', runtime } },
+    provider,
+    docker,
+    repositoryRoot,
+    sourceRevision,
+    sourcePath: 'sources/msa-minimal-harness',
+    modelGateway,
+  })
+
+  await driver.beginUsageBatch()
+  const result = await driver.run({
+    image: 'office-task:fixture-msa', model, ...fixture, task: 'fixture task',
+    name: 'msa-cowork-batch-fixture', timeoutMs: 1000,
+  })
+  assert.equal(result.modelUsage, undefined)
+  await driver.endUsageBatch()
+  assert.equal(driver.usage().totalTokens, 50)
+  assert.deepEqual(gatewayCalls.map(([action]) => action), ['usage', 'access', 'usage'])
 })
 
 test('MSA Cowork CandidateSeed Python 可解析，Chat Client 可读取 SSE', async (context) => {
@@ -403,13 +462,37 @@ test('MSA Cowork Candidate Profile 不能抬高 Controller 下发的步数上限
   assert.match(result.answer, /exhausted its step budget/u)
 })
 
-test('MSA Cowork Chat Client 只对首次正常结束的空流重试一次', async (context) => {
+test('MSA Cowork Candidate 不把空 Final 或空 Bash 当成有效动作', async () => {
+  const seedRoot = resolve(repositoryRoot, 'targets/msa-minimal/cowork-v1')
+  const script = [
+    'import json, sys, types',
+    `sys.path.insert(0, ${JSON.stringify(seedRoot)})`,
+    'sys.modules["model"] = types.SimpleNamespace(query=lambda *args: "unused")',
+    'sys.modules["tools"] = types.SimpleNamespace(run_bash=lambda *args: "unused")',
+    'from agent import Agent',
+    'print(json.dumps({',
+    '  "empty_final": Agent.parse("<final>   </final>"),',
+    '  "empty_bash": Agent.parse("<bash>\\n\\t</bash>"),',
+    '  "valid_final": Agent.parse("<final>done</final>"),',
+    '}))',
+  ].join('\n')
+  const { stdout } = await executeFile('python3', ['-c', script], {
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+  })
+  const result = JSON.parse(stdout)
+
+  assert.equal(result.empty_final, null)
+  assert.equal(result.empty_bash, null)
+  assert.deepEqual(result.valid_final, ['final', 'done'])
+})
+
+test('MSA Cowork Chat Client 对正常结束的空流最多重试两次', async (context) => {
   const seedRoot = resolve(repositoryRoot, 'targets/msa-minimal/cowork-v1')
   let requests = 0
   const server = http.createServer((_request, response) => {
     requests += 1
     response.writeHead(200, { 'content-type': 'text/event-stream' })
-    if (requests === 1) {
+    if (requests < 3) {
       response.end([
         `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}`,
         '',
@@ -442,10 +525,10 @@ test('MSA Cowork Chat Client 只对首次正常结束的空流重试一次', asy
   })
 
   assert.equal(stdout.trim(), '<bash>echo safe</bash>')
-  assert.equal(requests, 2)
+  assert.equal(requests, 3)
 })
 
-test('MSA Cowork Chat Client 丢弃 reasoning_content 且两次空流后关闭失败', async (context) => {
+test('MSA Cowork Chat Client 丢弃 reasoning_content 且三次空流后关闭失败', async (context) => {
   const seedRoot = resolve(repositoryRoot, 'targets/msa-minimal/cowork-v1')
   const hiddenCommand = '<bash>touch /tmp/must-not-run</bash>'
   let requests = 0
@@ -484,7 +567,7 @@ test('MSA Cowork Chat Client 丢弃 reasoning_content 且两次空流后关闭�
       return true
     },
   )
-  assert.equal(requests, 2)
+  assert.equal(requests, 3)
 })
 
 test('MSA Cowork Chat Client 遇到 content_filter 不重试', async (context) => {

@@ -8,6 +8,8 @@ import {
   buildExperimentRuntime,
   finalizeEvolution,
   preflightExperiment,
+  resumePopulationEvolution,
+  runConfiguredBaseline,
   runConfiguredEvolution,
 } from './cowork-orchestrator.mjs'
 import {
@@ -30,8 +32,10 @@ const HELP = `HarnessEvoGym Controller
   harness-rsi experiment validate --config <experiment.json>
   harness-rsi experiment preflight --config <experiment.json> [--skip-secrets]
   harness-rsi runtime build --experiment <experiment.json>
+  harness-rsi experiment baseline --config <experiment.json> [--run-id <id>]
   harness-rsi experiment run --config <experiment.json> [--run-id <id>]
-  harness-rsi experiment finalize --run <.rsi/runs/run-id>
+  harness-rsi experiment resume --run <population-run>
+  harness-rsi experiment finalize --run <single-run | population-run> [--recover-infrastructure]
   harness-rsi benchmark validate --config <benchmark.json> [--output <report.json>]
   harness-rsi evaluate compare \\
     --benchmark <benchmark.json> \\
@@ -60,7 +64,10 @@ const HELP = `HarnessEvoGym Controller
   - final Partition 标记为 sealed，必须显式提供 --allow-sealed。
   - 本入口消费标准化 Solver Result，不直接执行候选仓库里的任何命令。
   - experiment run 只使用 feedback 与 selection，永远不会读取 final。
-  - experiment finalize 是唯一允许解锁 Cowork sealed final 的入口，每个 Run 只能执行一次。
+  - experiment baseline 只评测 H0 selection，不启动 Updater，不消耗进化预算。
+  - experiment resume 只恢复同一 Controller Revision 下的 Cowork Population 检查点。
+  - experiment finalize 是唯一允许解锁 Cowork sealed final 的入口。
+  - --recover-infrastructure 只能在 Population 上次失败且从未访问 sealed final 时使用，并且只能恢复一次。
   - Provider 密钥只从运行时环境变量读取，不写入 Experiment 或 .rsi 产物。
 `
 
@@ -184,11 +191,53 @@ async function evolveRunCommand(args) {
   }, options.get('output'))
 }
 
-async function evolveFinalizeCommand(args) {
+async function baselineRunCommand(args) {
+  const { options } = parseOptions(args, { valueOptions: new Set(['config', 'run-id', 'output']) })
+  const result = await runConfiguredBaseline({
+    repositoryRoot: REPOSITORY_ROOT,
+    experimentPath: requiredPath(options, 'config'),
+    ...(options.get('run-id') ? { runId: options.get('run-id') } : {}),
+    onEvent: progress,
+  })
+  await emit({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'BaselineRunReport',
+    runId: result.runId,
+    runRoot: result.runRoot,
+    baselinePath: result.baselinePath,
+    baselineId: result.state.best.candidateId,
+    status: result.state.status,
+    primary: result.state.best.evaluation.primary,
+    budgetConsumed: result.state.budget.consumed,
+  }, options.get('output'))
+}
+
+async function evolveResumeCommand(args) {
   const { options } = parseOptions(args, { valueOptions: new Set(['run', 'output']) })
+  const result = await resumePopulationEvolution({
+    repositoryRoot: REPOSITORY_ROOT,
+    runDirectory: requiredPath(options, 'run'),
+    onEvent: progress,
+  })
+  await emit({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'EvolutionRunReport',
+    runId: result.runId,
+    runRoot: result.runRoot,
+    championId: result.championId,
+    status: result.state.status,
+  }, options.get('output'))
+}
+
+async function evolveFinalizeCommand(args) {
+  const { options, flags } = parseOptions(args, {
+    valueOptions: new Set(['run', 'output']),
+    booleanFlags: new Set(['recover-infrastructure']),
+  })
   const result = await finalizeEvolution({
     repositoryRoot: REPOSITORY_ROOT,
     runDirectory: requiredPath(options, 'run'),
+    recoverInfrastructure: flags.has('recover-infrastructure'),
     onEvent: progress,
   })
   await emit({
@@ -297,7 +346,9 @@ async function main() {
   if (group === 'adapter' && action === 'validate') return await validateAdapterCommand(args)
   if (group === 'experiment' && action === 'validate') return await validateExperimentCommand(args)
   if (group === 'experiment' && action === 'preflight') return await preflightExperimentCommand(args)
+  if (group === 'experiment' && action === 'baseline') return await baselineRunCommand(args)
   if (group === 'experiment' && action === 'run') return await evolveRunCommand(args)
+  if (group === 'experiment' && action === 'resume') return await evolveResumeCommand(args)
   if (group === 'experiment' && action === 'finalize') return await evolveFinalizeCommand(args)
   if (group === 'runtime' && action === 'build') return await buildRuntimeCommand(args)
   if (group === 'benchmark' && action === 'validate') return await validateBenchmarkCommand(args)

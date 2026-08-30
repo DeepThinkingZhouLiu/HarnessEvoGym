@@ -1,4 +1,4 @@
-import { SkillsBenchEnvironment } from './environments/skillsbench.mjs'
+import { OmegaUseOfficeValEnvironment } from './environments/omegause-officeval.mjs'
 import { TextReasoningEnvironment } from './environments/text-reasoning.mjs'
 import { diffModelUsage } from './cowork-model-gateway.mjs'
 import { assertPathKind } from './config.mjs'
@@ -11,6 +11,7 @@ import {
   stageUpdaterContext,
 } from './runtimes/dsh.mjs'
 import { createMsaMinimalCoworkSolverDriver } from './runtimes/msa-minimal-cowork.mjs'
+import { createCodexUpdaterDriver } from './runtimes/codex-updater.mjs'
 
 const DRIVER_PROTOCOL = /^[a-z0-9]+(?:-[a-z0-9]+)*-v[0-9]+$/u
 const ENVIRONMENT_FACTORIES = new Map()
@@ -106,6 +107,7 @@ function modelRolePolicy(model, provider) {
     model: model.model,
     maxTokens: model.maxTokens,
     maxTokensField: provider.compatibility.maxTokensField,
+    reasoningEffort: model.reasoningEffort ?? null,
   }
 }
 
@@ -249,11 +251,12 @@ function createDshUpdaterDriver({ updater, provider, docker, repositoryRoot, sou
   }
 }
 
-registerEnvironmentDriver('skillsbench-docker-v1', (options) => new SkillsBenchEnvironment(options))
+registerEnvironmentDriver('omegause-officeval-docker-v1', (options) => new OmegaUseOfficeValEnvironment(options))
 registerEnvironmentDriver('text-reasoning-deterministic-v1', (options) => new TextReasoningEnvironment(options))
 registerSolverDriver('dsh-headless-docker-v1', createDshSolverDriver)
 registerSolverDriver('msa-minimal-docker-v1', createMsaMinimalCoworkSolverDriver)
 registerUpdaterDriver('dsh-headless-docker-v1', createDshUpdaterDriver)
+registerUpdaterDriver('codex-exec-v1', createCodexUpdaterDriver)
 
 export function createSolverDriver(options) {
   const protocol = options.target.solver.protocol === 'dsh-headless-docker'

@@ -144,10 +144,13 @@ test('Codex updater uses only the isolated local configuration and keeps DSH ava
     updaterModel: 'gpt-5.6-terra',
     updaterReasoningEffort: 'max',
     gatewaySocketPath: '/srv/updater-run/model-gateway.sock',
+    upstreamRoot: '/srv/upstream',
+    outputRoot: '/srv/output',
     baseEnv: {
       ...options.baseEnv,
       CODEX_HOME: '/host/codex-home',
       HTTP_PROXY: 'http://proxy.invalid:8017',
+      PYTHONPYCACHEPREFIX: '/host/unsafe-cache',
     },
   })
   const invocation = buildUpdaterInvocation(options)
@@ -158,10 +161,14 @@ test('Codex updater uses only the isolated local configuration and keeps DSH ava
     '--ephemeral',
     '--dangerously-bypass-approvals-and-sandbox',
   ]) assert.ok(invocation.args.includes(flag))
-  assert.equal(invocation.args.includes('--json'), false)
+  assert.equal(invocation.args.includes('--json'), true)
   assert.ok(invocation.args.includes('model_provider="zcloud"'))
   assert.ok(invocation.args.includes('model_reasoning_effort="max"'))
+  assert.ok(invocation.args.includes('model_providers.zcloud.request_max_retries=5'))
+  assert.ok(invocation.args.includes('model_providers.zcloud.stream_max_retries=5'))
   assert.equal(invocation.env.CODEX_HOME, '/work/home')
+  assert.equal(invocation.env.PYTHONDONTWRITEBYTECODE, '1')
+  assert.equal(invocation.env.PYTHONPYCACHEPREFIX, '/work/tmp/python-cache')
   assert.equal(invocation.env.HTTP_PROXY, undefined)
   assert.equal(invocation.env.DSH_HOME, undefined)
   assert.equal(invocation.env.DSH_PERMISSION_MODE, undefined)
@@ -169,6 +176,8 @@ test('Codex updater uses only the isolated local configuration and keeps DSH ava
     mountMode(invocation.args, '/srv/codex-cli', UPDATER_SANDBOX_PATHS.runtime),
     '--ro-bind',
   )
+  assert.equal(mountMode(invocation.args, '/srv/upstream', UPDATER_SANDBOX_PATHS.upstream), '--ro-bind')
+  assert.equal(mountMode(invocation.args, '/srv/output', UPDATER_SANDBOX_PATHS.output), '--bind')
   assert.ok(invocation.args.includes('--unshare-net'))
   assert.equal(invocation.args.includes('--proc'), false)
   assert.ok(invocation.args.includes('/proc/self/exe'))

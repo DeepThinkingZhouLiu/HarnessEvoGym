@@ -304,18 +304,21 @@ test('Model Gateway 按 Solver/Updater 强制覆盖可信模型并分角色计�
     await waitForGateway(gatewayUrl, child, stderr)
     assert.equal((await configure({
       role: 'solver', model: 'trusted-solver', maxTokens: 111, maxTokensField: 'max_tokens',
+      reasoningEffort: 'high',
     }, solverToken)).status, 401)
     assert.equal((await request('/chat/completions', solverToken, {
       method: 'POST', body: JSON.stringify({ model: 'attacker' }),
     })).status, 503)
     assert.equal((await configure({
       role: 'solver', model: 'trusted-solver', maxTokens: 111, maxTokensField: 'max_tokens',
+      reasoningEffort: 'high',
     })).status, 200)
     assert.equal((await configure({
       role: 'updater', model: 'trusted-updater', maxTokens: 222, maxTokensField: 'max_completion_tokens',
     })).status, 200)
     assert.equal((await configure({
       role: 'solver', model: 'changed-model', maxTokens: 111, maxTokensField: 'max_tokens',
+      reasoningEffort: 'high',
     })).status, 409)
 
     const solverResponse = await request('/chat/completions', solverToken, {
@@ -329,6 +332,8 @@ test('Model Gateway 按 Solver/Updater 强制覆盖可信模型并分角色计�
         stream_options: { include_usage: false },
         best_of: 99,
         num_return_sequences: 99,
+        reasoning: { effort: 'low' },
+        reasoning_effort: 'low',
         messages: [{ role: 'user', content: 'solver' }],
       }),
     })
@@ -368,6 +373,7 @@ test('Model Gateway 按 Solver/Updater 强制覆盖可信模型并分角色计�
       {
         model: 'trusted-solver',
         max_tokens: 111,
+        reasoning_effort: 'high',
         n: 1,
         stream: true,
         stream_options: { include_usage: true },
@@ -377,6 +383,7 @@ test('Model Gateway 按 Solver/Updater 强制覆盖可信模型并分角色计�
         model: 'trusted-solver',
         max_tokens: 111,
         messages: [{ role: 'user', content: 'renewed-solver' }],
+        reasoning_effort: 'high',
         n: 1,
         stream: true,
         stream_options: { include_usage: true },
@@ -407,6 +414,171 @@ test('Model Gateway 按 Solver/Updater 强制覆盖可信模型并分角色计�
     })
     assert.equal((await updaterUsage.json()).acceptedRequests, 1)
     assert.equal((await aggregateUsage.json()).acceptedRequests, 3)
+  } finally {
+    child.kill('SIGTERM')
+    if (child.exitCode === null) await new Promise((resolveExit) => child.once('exit', resolveExit))
+    await new Promise((resolveClose) => upstream.close(resolveClose))
+  }
+})
+
+test('Model Gateway 在未下发 Header 前有限重试上游 502/503/504', async () => {
+  const providerKey = 'provider-key-for-retry-test'
+  const gatewayToken = 'a'.repeat(64)
+  let upstreamAttempts = 0
+  const upstream = http.createServer((request, response) => {
+    request.resume()
+    request.once('end', () => {
+      upstreamAttempts += 1
+      if (upstreamAttempts === 1) {
+        response.writeHead(503, { 'content-type': 'application/json' })
+        response.end('{"error":"overloaded"}')
+        return
+      }
+      if (upstreamAttempts === 2) {
+        response.writeHead(502, { 'content-type': 'application/json' })
+        response.end('{"error":"bad_gateway"}')
+        return
+      }
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end([
+        'data: {"choices":[{"delta":{"content":"recovered"}}]}',
+        '',
+        'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}',
+        '',
+        'data: [DONE]',
+        '',
+      ].join('\n'))
+    })
+  })
+  const upstreamPort = await listen(upstream)
+  const gatewayPort = await freePort()
+  const stderr = []
+  const child = spawn(process.execPath, [resolve(repositoryRoot, 'docker/model-gateway/server.mjs')], {
+    env: {
+      ...process.env,
+      GATEWAY_PORT: String(gatewayPort),
+      GATEWAY_TOKEN: gatewayToken,
+      UPSTREAM_API_KEY_ENV: 'TEST_UPSTREAM_KEY',
+      UPSTREAM_BASE_URL_ENV: 'TEST_UPSTREAM_URL',
+      GATEWAY_MAX_REQUESTS: '10',
+      GATEWAY_MAX_CONCURRENT_REQUESTS: '2',
+      TEST_UPSTREAM_KEY: providerKey,
+      TEST_UPSTREAM_URL: `http://127.0.0.1:${upstreamPort}/v1`,
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  })
+  child.stderr.on('data', (chunk) => stderr.push(chunk.toString('utf8')))
+  const gatewayUrl = `http://127.0.0.1:${gatewayPort}`
+
+  try {
+    await waitForGateway(gatewayUrl, child, stderr)
+    const proxied = await fetch(`${gatewayUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${gatewayToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'retry' }] }),
+    })
+    assert.equal(proxied.status, 200)
+    assert.match(await proxied.text(), /recovered/u)
+    assert.equal(upstreamAttempts, 3)
+
+    const usageResponse = await fetch(`${gatewayUrl}/rsi/usage`, {
+      headers: { authorization: `Bearer ${gatewayToken}` },
+    })
+    assert.deepEqual(await usageResponse.json(), {
+      acceptedRequests: 1,
+      activeRequests: 0,
+      usageResponses: 1,
+      unknownUsageResponses: 0,
+      inputTokens: 5,
+      outputTokens: 3,
+      cacheReadTokens: 0,
+      reasoningTokens: 0,
+    })
+  } finally {
+    child.kill('SIGTERM')
+    if (child.exitCode === null) await new Promise((resolveExit) => child.once('exit', resolveExit))
+    await new Promise((resolveClose) => upstream.close(resolveClose))
+  }
+})
+
+test('Model Gateway 可配置额外重试 5 次并覆盖连接断开、429 与 5xx', async () => {
+  const providerKey = 'provider-key-for-five-retries'
+  const gatewayToken = 'f'.repeat(64)
+  let upstreamAttempts = 0
+  const upstream = http.createServer((request, response) => {
+    request.resume()
+    request.once('end', () => {
+      upstreamAttempts += 1
+      if (upstreamAttempts === 1) {
+        request.socket.destroy()
+        return
+      }
+      const retryStatuses = [429, 502, 503, 504]
+      const retryStatus = retryStatuses[upstreamAttempts - 2]
+      if (retryStatus !== undefined) {
+        response.writeHead(retryStatus, {
+          'content-type': 'application/json',
+          'retry-after': '0',
+        })
+        response.end('{"error":"temporary"}')
+        return
+      }
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end([
+        'data: {"choices":[{"delta":{"content":"recovered-after-five-retries"}}]}',
+        '',
+        'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":2}}',
+        '',
+        'data: [DONE]',
+        '',
+      ].join('\n'))
+    })
+  })
+  const upstreamPort = await listen(upstream)
+  const gatewayPort = await freePort()
+  const stderr = []
+  const child = spawn(process.execPath, [resolve(repositoryRoot, 'docker/model-gateway/server.mjs')], {
+    env: {
+      ...process.env,
+      GATEWAY_PORT: String(gatewayPort),
+      GATEWAY_TOKEN: gatewayToken,
+      UPSTREAM_API_KEY_ENV: 'TEST_UPSTREAM_KEY',
+      UPSTREAM_BASE_URL_ENV: 'TEST_UPSTREAM_URL',
+      GATEWAY_MAX_REQUESTS: '10',
+      GATEWAY_MAX_CONCURRENT_REQUESTS: '2',
+      GATEWAY_MAX_UPSTREAM_RETRIES: '5',
+      TEST_UPSTREAM_KEY: providerKey,
+      TEST_UPSTREAM_URL: `http://127.0.0.1:${upstreamPort}/v1`,
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  })
+  child.stderr.on('data', (chunk) => stderr.push(chunk.toString('utf8')))
+  const gatewayUrl = `http://127.0.0.1:${gatewayPort}`
+
+  try {
+    await waitForGateway(gatewayUrl, child, stderr)
+    const proxied = await fetch(`${gatewayUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${gatewayToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'retry-five' }] }),
+    })
+    assert.equal(proxied.status, 200)
+    assert.match(await proxied.text(), /recovered-after-five-retries/u)
+    assert.equal(upstreamAttempts, 6)
+
+    const usageResponse = await fetch(`${gatewayUrl}/rsi/usage`, {
+      headers: { authorization: `Bearer ${gatewayToken}` },
+    })
+    const usage = await usageResponse.json()
+    assert.equal(usage.acceptedRequests, 1)
+    assert.equal(usage.usageResponses, 1)
+    assert.equal(usage.unknownUsageResponses, 0)
   } finally {
     child.kill('SIGTERM')
     if (child.exitCode === null) await new Promise((resolveExit) => child.once('exit', resolveExit))

@@ -5,10 +5,10 @@ workspace. Use Bash to inspect inputs and invoke the Python, LibreOffice, PDF,
 presentation, spreadsheet, and document utilities already installed in the task
 image. Never attempt network access. Never look for evaluators, hidden tests,
 reference answers, or files outside the mounted task workspace, `/candidate`, and
-`/benchmark-skills`.
+`/environment-assets`.
 
 Relevant general skill documents are included below in the system prompt. The
-task may also provide trusted, read-only instructions from `/benchmark-skills`.
+task may also provide trusted, read-only assets from `/environment-assets`.
 Read and apply the relevant guidance before producing an artifact. Preserve
 existing user data unless the task explicitly asks to replace it. Prefer
 deterministic scripts, inspect generated files, and perform at least one concrete

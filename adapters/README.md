@@ -85,8 +85,8 @@ npm run rsi -- adapter validate --config adapters/updaters/deepseek-harness.yml
 npm run rsi -- adapter validate --config adapters/providers/zcloud-openai.yml
 npm run rsi -- adapter validate --config adapters/strategies/linear-hill-climb.yml
 npm run rsi -- adapter validate --config adapters/strategies/progressive-risk-expansion.yml
-npm run rsi -- adapter validate --config environments/skillsbench-cowork.yml
-npm run rsi -- experiment validate --config experiments/cowork-skillsbench-dsh-l1.json
+npm run rsi -- adapter validate --config environments/omegause-officeval.yml
+npm run rsi -- experiment validate --config experiments/cowork-msa-smoke-single.json
 npm run rsi -- experiment validate --config experiments/reasoning-msa-progressive-strict-smoke.json
 ```
 

@@ -171,7 +171,7 @@ npm run rsi -- adapter validate --config adapters/strategies/docker-round-robin.
 ## Driver 插件边界
 
 Solver、Updater 和 Environment 的实现创建不再由主编排循环写死分支，而是通过
-带版本的 Driver Registry 解析。当前内置了 DSH、MSA Minimal、SkillsBench 和
+带版本的 Driver Registry 解析。当前内置了 DSH、MSA Minimal、OmegaUse-OfficeVal 和
 Synthetic Text Reasoning 协议；旧 `dsh-headless-docker` 协议名仍然可用。
 
 这是一个受信任扩展接口，但不等于 pi-agent 已经即插即用。仓库已经实现可注册的

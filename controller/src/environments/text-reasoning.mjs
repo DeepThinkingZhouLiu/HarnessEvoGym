@@ -282,11 +282,11 @@ export class TextReasoningEnvironment {
     )
     assertInside(this.runRoot, trialRoot, 'Synthetic Reasoning Trial')
     const taskWorkspace = join(trialRoot, 'workspace')
-    const benchmarkSkills = join(trialRoot, 'trusted-skills')
+    const environmentAssets = join(trialRoot, 'environment-assets')
     const sessionRoot = join(trialRoot, 'solver-session')
     await Promise.all([
       mkdir(taskWorkspace, { recursive: true, mode: 0o700 }),
-      mkdir(benchmarkSkills, { recursive: true, mode: 0o700 }),
+      mkdir(environmentAssets, { recursive: true, mode: 0o700 }),
     ])
     const startedAt = Date.now()
     try {
@@ -295,7 +295,7 @@ export class TextReasoningEnvironment {
         model,
         candidateWorkspace,
         taskWorkspace,
-        benchmarkSkills,
+        environmentAssets,
         sessionRoot,
         task: task.instruction,
         name: `${executionId}-${candidateId}-${task.id}-${seed}-solver`,

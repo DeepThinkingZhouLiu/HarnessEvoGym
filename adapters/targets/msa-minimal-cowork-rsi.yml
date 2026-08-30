@@ -1,0 +1,189 @@
+apiVersion: harness-rsi/v1alpha1
+kind: TargetAdapter
+
+metadata:
+  id: msa-minimal-cowork-rsi
+  name: MSA Minimal Cowork RSI Harness
+
+spec:
+  source:
+    kind: repository-tree
+    path: sources/msa-minimal-harness
+    revision: 250fac518d414be00e65ed82ab94b57910644e16
+
+  materialization:
+    strategy: source-plus-seed-overlay
+    seedPath: targets/msa-minimal/cowork-v1
+    seedDigest: 27e50592951c551230080a78edc0e7c272b6ddcbe2b6fd180de38d028a5ef2bc
+    overrides:
+      - agent.py
+      - model.py
+      - run.py
+    runtimeRoot: .rsi/runs
+
+  solver:
+    protocol: msa-minimal-docker-v1
+    runtime:
+      image: harness-rsi/msa-minimal-cowork:250fac518d41
+      dockerfile: docker/msa-minimal-runtime/Dockerfile
+      profile: cowork
+      pythonCommand: python3
+      answerFile: answer.txt
+      traceFile: agent.jsonl
+      maximumAnswerBytes: 1048576
+      maximumTraceBytes: 16777216
+      # 正式 RSI 使用 Candidate Profile 的完整 12 步上限；Smoke Adapter 仍固定为 1 步。
+      maximumSteps: 12
+      secretEnvironment:
+        - RSI_PROVIDER_API_KEY
+        - RSI_PROVIDER_BASE_URL
+
+  mutation:
+    alwaysReadOnly:
+      - .rsi-context/**
+      - .rsi-output/**
+      - .git
+      - .git/**
+      - LICENSE.md
+      - NOTICE.md
+      - README.md
+      - "**/.env"
+      - "**/.env.*"
+      - "**/*credential*"
+      - "**/*secret*"
+
+    limits:
+      maximumTreeEntries: 2000
+      maximumChangedFiles: 30
+      maximumChangedBytes: 1048576
+      maximumFileBytes: 262144
+
+    semanticChecks:
+      protocol: msa-minimal-cowork-v1
+      requiredFiles:
+        - agent.py
+        - model.py
+        - run.py
+        - tools.py
+        - profiles/cowork.md
+        - profiles/cowork.json
+      pythonFiles:
+        - agent.py
+        - model.py
+        - run.py
+        - tools.py
+      profile:
+        path: profiles/cowork.json
+        maximums:
+          # 与可信 Solver Runtime 的 maximumSteps 对齐，拒绝不会实际生效的搜索提案。
+          max_steps: 12
+          command_timeout_seconds: 600
+          max_observation_chars: 131072
+          # Model Gateway 会按正式 Experiment 固定为 8192，Candidate 不能声明更高的无效值。
+          max_output_tokens: 8192
+          maximum_skill_files: 128
+          maximum_skill_chars: 524288
+      skills:
+        root: skills
+        requiredNamePrefix: cowork-
+
+    catalog:
+      maximumRegionsPerPlan: 6
+      regions:
+        - id: profile-policy
+          description: 调整 Cowork 角色、行为约束、步骤和上下文预算。
+          riskLevel: l1
+          writable:
+            - profiles/cowork.md
+            - profiles/cowork.json
+          extensions: [.md, .json]
+          requires: []
+          conflicts: []
+
+        - id: skill-guidance
+          description: 调整文档、PDF、演示文稿和表格的 Cowork Playbook。
+          riskLevel: l1
+          writable:
+            - skills/**/*.md
+            - skills/**/*.json
+            - skills/**/*.yml
+            - skills/**/*.yaml
+            - skills/**/*.txt
+          extensions: [.md, .json, .yml, .yaml, .txt]
+          requires: []
+          conflicts: []
+
+        - id: agent-loop
+          description: 调整消息历史、动作解析、重试、自检和上下文编排。
+          riskLevel: l2
+          writable: [agent.py]
+          extensions: [.py]
+          requires: []
+          conflicts: []
+
+        - id: tool-runtime
+          description: 调整 Bash 工具的超时、输出编码和错误反馈。
+          riskLevel: l2
+          writable: [tools.py]
+          extensions: [.py]
+          requires: []
+          conflicts: []
+
+        - id: model-transport
+          description: 调整 Chat Completions 传输、SSE 解析和错误恢复。
+          riskLevel: l3
+          writable: [model.py]
+          extensions: [.py]
+          requires: []
+          conflicts: []
+
+        - id: runtime-wiring
+          description: 调整 CLI、Profile 和 Answer/Trace 生命周期装配。
+          riskLevel: l3
+          writable: [run.py]
+          extensions: [.py]
+          requires: []
+          conflicts: []
+
+    levels:
+      l1:
+        description: 只允许修改 Cowork Prompt、Profile 与 Skill 文档。
+        writable:
+          - profiles/cowork.md
+          - profiles/cowork.json
+          - skills/**/*.md
+          - skills/**/*.json
+          - skills/**/*.yml
+          - skills/**/*.yaml
+          - skills/**/*.txt
+        extensions: [.md, .json, .yml, .yaml, .txt]
+
+      l2:
+        description: 在 L1 基础上允许修改 Agent Loop 与 Bash Tool Runtime。
+        writable:
+          - profiles/cowork.md
+          - profiles/cowork.json
+          - skills/**/*.md
+          - skills/**/*.json
+          - skills/**/*.yml
+          - skills/**/*.yaml
+          - skills/**/*.txt
+          - agent.py
+          - tools.py
+        extensions: [.md, .json, .yml, .yaml, .txt, .py]
+
+      l3:
+        description: 在 L2 基础上允许修改模型传输与 Runtime Wiring；评测根和网关仍冻结。
+        writable:
+          - profiles/cowork.md
+          - profiles/cowork.json
+          - skills/**/*.md
+          - skills/**/*.json
+          - skills/**/*.yml
+          - skills/**/*.yaml
+          - skills/**/*.txt
+          - agent.py
+          - tools.py
+          - model.py
+          - run.py
+        extensions: [.md, .json, .yml, .yaml, .txt, .py]

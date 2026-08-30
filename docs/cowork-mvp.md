@@ -1,79 +1,171 @@
-# Cowork RSI L1/L2 MVP Runbook
+# OmegaUse-OfficeVal Cowork RSI Runbook
 
 English | [中文](cowork-mvp.zh.md)
 
-## Scope
+## Goal
 
-This path tests whether DeepSeek Harness can improve a Cowork candidate preset from objective task feedback and retain that gain on tasks not exposed to the Updater. H0, proposals, and champions are independent overlays; L1/L2 never edit the pinned DSH source submodule.
+This path evaluates whether the MSA Minimal Harness can produce real Word,
+PowerPoint, and Excel deliverables in an isolated workspace, and whether an
+Updater can improve a Candidate from training feedback without reading validation
+or test evidence. It replaces SkillsBench and measures completed Office tasks
+rather than skill-loading behavior.
+
+```text
+MSA Minimal Target
+  + OmegaUse-OfficeVal Environment
+  + 55/18/18 Benchmark
+  + EvolutionRecipe / SearchStrategy
+  + generic Population Controller
+```
+
+## Per-task flow
+
+```text
+pinned Source Manifest
+-> verify Dataset/Evaluator revisions and every source SHA-256
+-> expose only instruction and original Office inputs to Solver
+-> run MSA with Bash/Python/LibreOffice in a disposable workspace
+-> copy only changed regular artifacts into a separate submission
+-> score in an offline verifier container
+-> apply the Dim1 gate and weighted Dim2 rubric
+-> normalize reward to [0,1]
+-> disclose detailed feedback only for the feedback partition
+```
+
+Solver never sees rubrics, verifier source, per-instance validation evidence, or
+sealed-final data. Updater sees only feedback evidence and can edit only the
+Candidate paths in the current MutationLease.
 
 ## Responsibilities
 
-| Module | Responsibility |
-|--------|----------------|
-| `cowork-orchestrator.mjs` | Generations, state, lineage, promotion, rollback, one-time finalization |
-| `candidate.mjs` | Copying, hashing, diffs, mutation policy and report validation |
-| `factories.mjs` | Protocol-to-driver selection for Solver, Updater, and Environment implementations |
-| `runtimes/dsh.mjs` | DSH model settings and Solver/Updater container protocol |
-| `environments/skillsbench.mjs` | Task images, disposable workspaces, verifier execution, reward normalization |
-| `cowork-model-gateway.mjs` | Per-run internal network, ephemeral token, usage accounting, and gateway lifecycle |
-| `evaluator.mjs` | Paired metrics, bootstrap intervals, frozen gates |
-| Target Adapter | Runtime and target-specific L1/L2 paths |
-| Updater Adapter | Independent updater source, runtime, prompt, and report contract |
-| Model Provider Adapter | Upstream protocol, credential environment names, compatibility, and model catalog |
-| Environment Adapter | Dataset revision, task layout, Docker resources, verifier contract |
+| Module                                              | Responsibility                                             |
+|-----------------------------------------------------|------------------------------------------------------------|
+| `omegause-officeval.mjs`                           | Source checks, workspaces, submissions, verifier, reward   |
+| `msa-minimal-cowork.mjs`                           | Run an MSA Candidate inside the Office runtime             |
+| `cowork-model-gateway.mjs`                         | Hide provider keys, enforce model/token settings, meter use |
+| `candidate.mjs`                                    | Candidate copies, digests, diff guard, mutation reports    |
+| `evaluator.mjs`                                    | Paired metrics and frozen promotion gates                  |
+| `cowork-orchestrator.mjs`                          | Branch steps, promotion, rollback, one-time final          |
+| `population-orchestrator.mjs`                      | Five modes, synchronized waves, sharing, competition       |
+| Target Adapter                                      | H0 Seed, runtime, L1/L2/L3 regions, semantic validator     |
+| Environment Adapter                                 | OfficeVal source, runtime resources, feedback limits       |
+| Benchmark / Policy                                  | train/validation/test IDs, metric, promotion policy        |
 
-The Updater is one full coding-agent session. It performs cross-case diagnosis, hypothesis formation, and editing itself; the Controller does not replace it with fixed diagnosis/proposal services. Later generations receive bounded prior hypotheses, changed files, and aggregate selection gates so they do not repeat failed searches, while per-instance selection evidence remains hidden.
+## Pinned data and split
 
-## Isolation and mutation
+The upstream dataset is `baidu-frontier-research/OmegaUse-OfficeVal`. The
+committed `benchmarks/omegause-officeval/source-manifest.json` pins:
 
-L1 permits only preset YAML and skill text/data. L2 adds Python, JavaScript, MJS, and Shell files under `skills/**/scripts/**`. The Controller rejects no-op proposals, symlinks, special files, L1 executable bits, credential-like paths, out-of-scope changes, excessive tree entries, and configured changed-file/byte limits after every Updater session. Rejecting no-op candidates prevents selection noise from being mistaken for evolution.
+- Dataset revision `cd6ba6d8fb83b3fb551e24eebc20e1fb0bd154a5`.
+- Evaluator revision `ffbeecb8752447c8e40b594a0eeb1db7236ecb36`.
+- Instructions, rubrics, inputs, per-task verifiers, and shared verifier files for all 100 tasks.
+- The nine Windows Office COM tasks excluded from the Linux path.
 
-Solver, Updater, Verifier, and Model Gateway are separate Docker roles. Agent containers drop capabilities, use `no-new-privileges`, a read-only root filesystem, and explicit CPU/memory/PID/time/workspace limits. DSH is fully built from the pinned source submodule and injected into each task image. Candidate presets and task-provided skills are read-only bind mounts, so candidate changes do not rebuild an image. The trusted Verifier receives the host submission through a read-only mount, copies it into a private size-bounded tmpfs, and writes only an isolated log mount; this keeps upstream checks that need scratch files working without letting a root Verifier rewrite the submission. Root-run verifier logs are returned to the Controller user's UID/GID on exit. Because some pinned scripts install dependencies with apt/dpkg, only this trusted role restores Docker's default non-privileged capability subset, never `SYS_ADMIN`; Solver and Updater remain capability-free. Task images carry revision/task labels, and derived images are reused only when the DSH source, runtime-definition digest, and exact task-image identity all match. Candidate generic skills use the enforced `cowork-*` namespace so task-specific skills retain their own names and precedence.
+The registered Linux split is:
 
-Pinned upstream verifiers may download fixed dependency versions at scoring time. A verifier-only standard proxy allowlist is the sole path for inheriting proxy variables already present on the host; every other standard proxy key is explicitly passed as empty to override implicit Docker client proxy injection. The current SkillsBench adapter uses an empty allowlist and direct bridge-network egress. These variables are never passed to Solver or Updater and therefore do not open their internal network.
+| Partition                   | Count | Updater visibility | Purpose                         |
+|----------------------------|------:|--------------------|---------------------------------|
+| `feedback` / train         |    55 | detailed           | diagnosis and Candidate updates |
+| `selection` / validation  |    18 | aggregate only     | promotion decisions             |
+| `final` / test            |    18 | one-time sealed    | final report after lock-in       |
 
-Slow environments may instead map a pinned local dependency-cache URL into the trusted Verifier. The Controller accepts only `UV_DOWNLOAD_URL`, `PIP_INDEX_URL`, or `UV_INDEX_URL` as target variables and exposes `host.docker.internal` only to this role, never to an Agent container.
+The three-task smoke uses `officeval_060 / 090 / 003`, all drawn from the
+formal feedback partition, to cover PPT, Excel, and Word without consuming formal
+validation or test data.
 
-The feedback packet includes the feedback task instruction, reward, final answer, verifier evidence, runtime errors, a bounded artifact summary, and latency. The Controller puts a compact assertion summary parsed from trusted `ctrf.json` before raw runtime logs, so dependency-installation output cannot displace the actual failure reason. Text has a per-case byte budget; artifacts have separate entry and JSON-byte budgets with an explicit omitted count. It never includes selection/final instructions or per-instance evidence.
+## Isolation
 
-Each run creates a fresh Docker internal network. Solver and Updater have no external route and receive only an ephemeral token and internal URL. The dual-homed Model Gateway alone inherits the real provider key, proxies only the configured upstream `POST /chat/completions` endpoint, and enforces run-level request and concurrency caps. It parses streamed usage and measures each Solver/Updater session by counter deltas; if any response lacks valid usage, that session's token totals remain unknown. Real and ephemeral secrets are inherited through child-process environments rather than Docker command arguments.
+Every run creates an internal Docker network. Solver and Updater have no external
+route and call only the Model Gateway using role-scoped ephemeral tokens. The
+Gateway owns the real provider key and overwrites model, token-limit, and
+multi-candidate fields.
+
+The Office runtime includes LibreOffice Writer/Calc/Impress, Python Office
+libraries, fonts, and PDF/ZIP tools. Candidate and environment assets are
+read-only; task and session workspaces are writable. The Controller rejects
+symlinks, special files, and artifacts over the configured count and byte limits
+before verification.
+
+Verifier runs in a distinct container with no network, empty proxy variables,
+a read-only root, no additional capabilities, read-only submission/code mounts,
+and a separate writable log mount. Per-task and shared verifier files are
+re-hashed after staging. A well-formed upstream `status:error` is a legitimate
+candidate zero. Import failures, process errors, protocol corruption, or source
+drift are infrastructure failures and fail closed.
+
+## Configuration
+
+```text
+environments/omegause-officeval.yml
+benchmarks/omegause-officeval/source-manifest.json
+benchmarks/cowork-omegause-officeval-smoke/benchmark.json
+benchmarks/cowork-omegause-officeval-linux-v1/benchmark.json
+evaluation/policies/cowork-officeval-rsi.json
+adapters/targets/msa-minimal.yml
+adapters/targets/msa-minimal-cowork-rsi.yml
+experiments/cowork-msa-smoke-<mode>.json
+experiments/cowork-msa-rsi-linear-<mode>.json
+```
+
+`msa-minimal` caps each Solver task at one step for inexpensive connectivity
+smoke. `msa-minimal-cowork-rsi` allows the profile's 12-step loop for the
+registered 55/18/18 experiments.
 
 ## Commands
 
 ```bash
 npm install
-git submodule update --init --recursive
-export RSI_SKILLSBENCH_ROOT=/absolute/path/to/skillsbench
+export RSI_OFFICEVAL_DATASET_ROOT=/absolute/path/to/OmegaUse-OfficeVal-Dataset
+export RSI_OFFICEVAL_EVALUATOR_ROOT=/absolute/path/to/OmegaUse-OfficeVal
 export RSI_PROVIDER_BASE_URL=https://your-provider.example/v1
-export RSI_PROVIDER_API_KEY=your-runtime-secret
+read -rsp 'Provider API Key: ' RSI_PROVIDER_API_KEY && export RSI_PROVIDER_API_KEY
 
+npm run check
+npm test
 npm run rsi -- experiment validate \
-  --config experiments/cowork-skillsbench-dsh-l1.json
+  --config experiments/cowork-msa-smoke-single.json
 npm run rsi -- experiment preflight \
-  --config experiments/cowork-skillsbench-dsh-l1.json
+  --config experiments/cowork-msa-smoke-single.json
 npm run rsi -- runtime build \
-  --experiment experiments/cowork-skillsbench-dsh-l1.json
+  --experiment experiments/cowork-msa-smoke-single.json
 npm run rsi -- experiment run \
-  --config experiments/cowork-skillsbench-dsh-l1.json \
-  --run-id cowork-l1-smoke-001
+  --config experiments/cowork-msa-smoke-single.json \
+  --run-id cowork-officeval-smoke-001
 npm run rsi -- experiment finalize \
-  --run .rsi/runs/cowork-l1-smoke-001
+  --run .rsi/runs/populations/cowork-officeval-smoke-001
+
+unset RSI_PROVIDER_API_KEY
 ```
 
-The run command uses only feedback and selection. The Controller trust-root paths must be committed before preflight/evolution; each run freezes the superproject SHA and Finalization requires the same revision. Finalization locks the champion, replays feedback for a comparable training gain, and evaluates sealed final in one consumed attempt. Integrity and revision checks happen before unlock; an atomic create-if-absent `final-attempt.json` claim prevents concurrent finalizers from both entering replay. Once claimed, success, failure, or a crash does not silently make the sealed set reusable.
+Evolution reads only feedback and selection. Finalization becomes available only
+after Population locks `best-harness.json`, and rechecks state, Candidate digest,
+configuration digest, and source revisions before one-time unsealing. Once an
+attempt has touched sealed data, it cannot be rerun regardless of success.
 
-The upstream connection is configured once through a `ModelProviderAdapter`: it owns the protocol, credential environment names, compatibility flags, and allowed model catalog, while real credentials remain runtime-only. Solver and Updater independently select `provider`, `model`, and `maxTokens` in the Experiment. The current low-cost POC uses `gpt-5.6-terra` for both roles, capped at 8192 tokens. The DSH runtime translates the shared provider contract into its `llm-pi-ai` OpenAI Chat Completions adapter; a future pi-agent integration needs only its own runtime translation rather than another credential configuration.
+## Reward and claims
 
-## Evaluation
+OfficeVal applies a Dim1 deliverable-validity gate and weighted Dim2 rubric items:
 
-The v2 result protocol accepts continuous `[0,1]` reward and records repeated trial rewards and seeds, deterministic-seed capability, latency, artifacts, and policy violations. The eight selected upstream verifiers currently emit binary 0/1 rewards. Selection promotion requires full coverage/completion, at least one reward improvement, non-negative mean reward delta, zero reward regressions, and zero safety violations.
+```text
+reward = dim1_pass ? clamp(total_score / max_score, 0, 1) : 0
+```
 
-`seed_controlled=false` is intentional: seeds are paired and recorded, but the current DSH provider path does not guarantee deterministic sampling. Formal runs should use at least three trials. Complete Solver token usage is written to per-instance results and Solver/Updater totals enter the evolution ledger. Dollar cost remains unknown without a trusted provider rate card, so POC cost gates stay disabled instead of reporting zero.
+Partial improvement such as 0.35 to 0.60 is therefore visible. The current
+engineering policy requires complete coverage, non-decreasing mean reward, at
+least one improved task, and zero policy violations, while provisionally allowing
+up to three reward regressions.
 
-## Extending safely
+Before publishing a formal benchmark claim:
 
-- Add tasks by changing a pinned Benchmark manifest; keep feedback, selection, and final disjoint.
-- Adapt verifier arguments and output files through the Environment Adapter rather than adding benchmark logic to the Controller.
-- Start L1 and L2 from the same H0 with identical models, tasks, trials, and budgets.
-- Do not copy third-party task skills into the candidate repository without compatible licensing.
-- Before formal claims, add DNS/IP controls outside the existing gateway, pin all image and verifier dependency digests, configure trusted provider pricing, and expand the held-out set.
+- Run at least three preregistered seeds per task instead of one trial.
+- Give every population mode identical Candidate budgets, models, tokens, and tasks.
+- Preregister regression limits, confidence-interval gates, and stopping rules before final.
+- Report reward, generalization gap, Solver/Updater tokens, wall time, and all failed runs.
+- Never tune a Candidate against a final result and rerun the same test set.
+
+## Current boundaries
+
+- The Linux path excludes nine Windows Office COM tasks; they require a separate Windows worker/verifier adapter.
+- The three-task smoke proves only Dataset -> MSA -> Office artifact -> Verifier -> Reward connectivity.
+- A one-seed 55/18/18 run is useful for development but is not a statistical significance claim.
+- PI Agent still needs its own Source/Seed/Runtime/Validator adapter.

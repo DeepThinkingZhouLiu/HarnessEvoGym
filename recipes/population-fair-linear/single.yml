@@ -1,0 +1,14 @@
+apiVersion: harness-rsi/v1alpha1
+kind: EvolutionRecipe
+spec:
+  population:
+    mode: single
+    concurrency: { n_branches: 1 }
+    # 五种 Mode 统一消耗 4 个 Candidate 轮次，避免预算差异污染比较。
+    budget: { total_budget: 4, beta: 0 }
+    peer_sharing: { enabled: false }
+    competition: { enabled: false }
+  moduleSearch:
+    authority: strategy-directed
+    riskCeiling: l1
+    strategy: linear-hill-climb

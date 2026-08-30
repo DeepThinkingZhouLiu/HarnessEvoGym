@@ -70,9 +70,9 @@ class Agent:
         profile_root = root / "profiles"
         self.config = json.loads((profile_root / f"{profile}.json").read_text(encoding="utf-8"))
         prompt = (profile_root / f"{profile}.md").read_text(encoding="utf-8")
-        benchmark_root = Path(os.environ.get("RSI_BENCHMARK_SKILLS_ROOT", "/benchmark-skills"))
+        environment_root = Path(os.environ.get("RSI_ENVIRONMENT_ASSETS_ROOT", "/environment-assets"))
         skill_text = _load_skills(
-            [root / "skills", benchmark_root],
+            [root / "skills", environment_root],
             int(self.config["maximum_skill_files"]),
             int(self.config["maximum_skill_chars"]),
         )
@@ -95,11 +95,15 @@ class Agent:
     def parse(reply: str) -> tuple[str, str] | None:
         final = FINAL_PATTERN.search(reply)
         if final:
-            return "final", final.group(1).strip()
+            content = final.group(1).strip()
+            if content:
+                return "final", content
         for pattern in BASH_PATTERNS:
             action = pattern.search(reply)
             if action:
-                return "bash", action.group(1).strip()
+                content = action.group(1).strip()
+                if content:
+                    return "bash", content
         return None
 
     def run(self, task: str, workspace: Path) -> str:

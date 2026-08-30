@@ -17,7 +17,7 @@ combine population coordination with module search.
 
 | Composition                 | Branch execution                 | Environment isolation                                      | Search                         |
 |-----------------------------|----------------------------------|------------------------------------------------------------|--------------------------------|
-| MSA Cowork + SkillsBench    | Generic Cowork Branch Driver     | Task images, separate Verifier, Docker internal network    | Recipe + SearchStrategy        |
+| MSA Cowork + OfficeVal      | Generic Cowork Branch Driver     | Office runtime, offline Verifier, Docker internal network  | Recipe + SearchStrategy        |
 | MSA Text Reasoning smoke    | Same Cowork Branch Driver        | Pinned text tasks, exact verifier, Docker internal network | Same Recipe + SearchStrategy   |
 | HZY Reasoning production    | Compatibility Reasoning Driver   | Distinct UIDs, bubblewrap, Unix gateway, sealed broker     | Legacy config mapped to modes  |
 
@@ -159,6 +159,8 @@ continues to provide child-only sealed tests, strict promotion and rollback,
 crash recovery, single-writer locking, FD-only credentials, and post-closure
 reports. Generic Experiments prove that MSA Minimal can reuse all five modes and
 one SearchStrategy across Cowork and text Reasoning. They fail closed into
-`PAUSED_INFRASTRUCTURE`, but cross-process resume and sealed final are not yet
-available, and Gateway request budgets remain Branch-scoped. The text tasks are
-an engineering smoke, not HLE; SWE-bench remains a contract stub.
+`PAUSED_INFRASTRUCTURE`. Cowork Populations support same-Controller-revision
+cross-process resume and one-time sealed final after closure. Resume revalidates
+the frozen Bundle and Candidates, archives incomplete artifacts, and retains the
+failed attempt's resource ledger. Gateway request budgets remain Branch-scoped.
+The text tasks are an engineering smoke, not HLE; SWE-bench remains a contract stub.

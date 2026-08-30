@@ -70,7 +70,13 @@ function projection(branchId, state, lastStep = null) {
   }
 }
 
-async function runMode(mode, { failAdvance = false, stopAfter = null } = {}) {
+async function runMode(mode, {
+  failAdvance = false,
+  stopAfter = null,
+  initialValues = {},
+  candidateValues = {},
+  pairedBaselineValues = {},
+} = {}) {
   const root = await mkdtemp(join(tmpdir(), 'population-generic-'))
   const campaignsRoot = join(root, 'campaigns')
   await mkdir(campaignsRoot)
@@ -98,7 +104,7 @@ async function runMode(mode, { failAdvance = false, stopAfter = null } = {}) {
             evaluation: createEvaluationSummary({
               candidateId,
               metric: 'mean-reward',
-              value: 0,
+              value: initialValues[branchId] ?? 0,
             }),
           }
           return projection(branchId, state)
@@ -111,8 +117,10 @@ async function runMode(mode, { failAdvance = false, stopAfter = null } = {}) {
           const next = calls.get(branchId) + 1
           calls.set(branchId, next)
           contexts.get(branchId).push(structuredClone(coordination))
+          const previous = state
           const candidateId = `${branchId}-c${next}`
-          const value = next + (branchId === 'branch-002' ? 0.5 : 0)
+          const value = candidateValues[branchId]?.[next - 1]
+            ?? next + (branchId === 'branch-002' ? 0.5 : 0)
           state = {
             status: stopAfter === next ? 'stopped' : 'active',
             steps: next,
@@ -130,7 +138,19 @@ async function runMode(mode, { failAdvance = false, stopAfter = null } = {}) {
             stepNumber: next,
             candidateId,
             decision: 'promoted',
-            ranking: { eligible: true, evaluation: state.evaluation },
+            ranking: {
+              eligible: true,
+              evaluation: state.evaluation,
+              ...(pairedBaselineValues[branchId]?.[next - 1] === undefined
+                ? {}
+                : {
+                    baselineEvaluation: createEvaluationSummary({
+                      candidateId: previous.candidateId,
+                      metric: 'mean-reward',
+                      value: pairedBaselineValues[branchId][next - 1],
+                    }),
+                  }),
+            },
           }
           history.push({ generation: next, candidateId, value, lastStep })
           return {
@@ -185,6 +205,146 @@ test('Branch 基础设施异常会暂停 Population，不能伪装成 0 分后�
   assert.equal(paused.type, 'POPULATION_INFRASTRUCTURE_PAUSED')
   assert.equal(paused.failures[0].branchId, 'branch-001')
   assert.match(paused.failures[0].message, /provider unavailable/u)
+})
+
+test('Population 使用 Branch 同期配对基线计算增量与 Competition 预算', async () => {
+  const result = await runMode('competition', {
+    initialValues: { 'branch-001': 10, 'branch-002': 10 },
+    candidateValues: {
+      'branch-001': [9, 9, 9],
+      'branch-002': [11, 11, 11],
+    },
+    pairedBaselineValues: {
+      'branch-001': [8, 9, 9],
+      'branch-002': [10.5, 11, 11],
+    },
+  })
+  const firstWave = result.state.events.find((event) => (
+    event.type === 'POPULATION_WAVE_COMPLETED' && event.epoch === 1
+  ))
+  assert.equal(firstWave.bonusWinner, 'branch-001')
+  assert.deepEqual(
+    firstWave.results.map(({ branchId, validationScore, deltaScore }) => ({
+      branchId, validationScore, deltaScore,
+    })),
+    [
+      { branchId: 'branch-001', validationScore: 9, deltaScore: 1 },
+      { branchId: 'branch-002', validationScore: 11, deltaScore: 0.5 },
+    ],
+  )
+})
+
+test('Population 跨进程恢复会先重载 Branch，再幂等继续 in-flight wave', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'population-resume-'))
+  const campaignsRoot = join(root, 'campaigns')
+  await mkdir(campaignsRoot)
+  let branchState = null
+  let fail = true
+  let restored = 0
+
+  function createBranch({ branchId, branchesRoot }) {
+    const history = []
+    return {
+      async initialize() {
+        const candidateId = `${branchId}-h0`
+        branchState = {
+          status: 'active',
+          steps: 0,
+          candidateId,
+          revision: digest(`${candidateId}-revision`),
+          digest: digest(candidateId),
+          evaluation: createEvaluationSummary({ candidateId, metric: 'mean-reward', value: 0 }),
+          lastStep: null,
+        }
+        return projection(branchId, branchState)
+      },
+      async restore() {
+        restored += 1
+        return projection(branchId, branchState, branchState.lastStep)
+      },
+      async inspect() {
+        return projection(branchId, branchState, branchState.lastStep)
+      },
+      async advanceOne({ stepId }) {
+        if (fail) throw new Error('fixture provider unavailable')
+        const candidateId = `${branchId}-c1`
+        const evaluation = createEvaluationSummary({
+          candidateId,
+          metric: 'mean-reward',
+          value: 1,
+        })
+        const lastStep = {
+          stepId,
+          stepNumber: 1,
+          candidateId,
+          decision: 'promoted',
+          ranking: { eligible: true, evaluation },
+        }
+        branchState = {
+          status: 'active',
+          steps: 1,
+          candidateId,
+          revision: digest(`${candidateId}-revision`),
+          digest: digest(candidateId),
+          evaluation,
+          lastStep,
+        }
+        history.push({ generation: 1, candidateId })
+        return {
+          apiVersion: 'harness-rsi/v1alpha1',
+          kind: 'BranchStepResult',
+          stepId,
+          budgetConsumed: 1,
+          projection: projection(branchId, branchState, lastStep),
+        }
+      },
+      async exportPeerEvidence() {
+        return {
+          sourcePath: join(branchesRoot, branchId, 'public', 'evolution-log.jsonl'),
+          entries: history,
+        }
+      },
+      async exportBest() {
+        return {
+          candidateId: branchState.candidateId,
+          revision: branchState.revision,
+          digest: branchState.digest,
+          evaluation: branchState.evaluation,
+          changedFiles: ['profiles/cowork.md'],
+          diffStat: 'profiles/cowork.md | modified',
+          patch: '+restored\n',
+          workspace: join(branchesRoot, branchId, 'workspace'),
+          implementationRoot: join(branchesRoot, branchId),
+        }
+      },
+    }
+  }
+
+  const first = new PopulationOrchestrator({
+    loadedCampaign: loaded('single'),
+    campaignsRoot,
+    campaignId: 'generic-resume',
+    createBranch,
+  })
+  await first.initialize()
+  const paused = await first.run()
+  assert.equal(paused.status, 'PAUSED_INFRASTRUCTURE')
+  assert.equal(paused.budget.consumed, 0)
+
+  fail = false
+  const second = new PopulationOrchestrator({
+    loadedCampaign: loaded('single'),
+    campaignsRoot,
+    campaignId: 'generic-resume',
+    createBranch,
+  })
+  const completed = await second.resume()
+  assert.equal(restored, 1)
+  assert.equal(completed.status, 'CLOSED')
+  assert.equal(completed.budget.consumed, 1)
+  assert.equal(completed.events.filter((event) => (
+    event.type === 'POPULATION_INFRASTRUCTURE_RESUMED'
+  )).length, 1)
 })
 
 for (const mode of ['single', 'independent', 'mutualism', 'competition', 'combined']) {

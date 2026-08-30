@@ -204,11 +204,19 @@ export function buildBubblewrapInvocation({
   procSelfExecutable,
   hostname = 'harness-rsi',
   maskedPaths = [],
+  preserveSupplementaryGroups = false,
 }) {
   const userId = positiveIdentity(uid, 'sandbox uid')
   const groupId = positiveIdentity(gid, 'sandbox gid')
   const bwrap = absolutePath(bwrapPath, 'bwrapPath')
   const setpriv = absolutePath(setprivPath, 'setprivPath')
+  if (typeof preserveSupplementaryGroups !== 'boolean') {
+    throw new ProtocolError('preserveSupplementaryGroups 必须是布尔值')
+  }
+  if (preserveSupplementaryGroups
+      && (process.getuid?.() !== userId || process.getgid?.() !== groupId)) {
+    throw new ProtocolError('只有保持当前宿主 UID/GID 时才能保留附加组')
+  }
   if (!NETWORK_MODES.has(network)) throw new ProtocolError('sandbox network 模式无效')
   if (!PROC_MODES.has(procMode)) throw new ProtocolError('sandbox proc 模式无效')
   if (typeof hostname !== 'string' || !/^[a-z0-9][a-z0-9-]{0,62}$/u.test(hostname)) {
@@ -280,7 +288,7 @@ export function buildBubblewrapInvocation({
     args: [
       `--reuid=${userId}`,
       `--regid=${groupId}`,
-      '--clear-groups',
+      preserveSupplementaryGroups ? '--keep-groups' : '--clear-groups',
       '--no-new-privs',
       bwrap,
       ...bwrapArguments,

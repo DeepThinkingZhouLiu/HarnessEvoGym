@@ -1,8 +1,12 @@
 import { relative } from 'node:path'
 
-import { validateBranchEvolutionDriver } from './branch-evolution-driver.mjs'
+import {
+  validateBranchEvolutionDriver,
+  validateBranchProjection,
+} from './branch-evolution-driver.mjs'
 import { createReasoningBranchDriver } from './branches/reasoning.mjs'
 import { redactSecrets } from './campaign-store.mjs'
+import { primaryMetricDelta } from './evaluation-summary.mjs'
 import {
   buildCoordinationContext,
   createBudgetPlan,
@@ -69,6 +73,18 @@ function branchStatus(branch, projection) {
   return branchRemaining(branch) > 0 ? 'active' : 'exhausted'
 }
 
+function assertRestoredIncumbent(branch, projection) {
+  const expected = branch.incumbent
+  const actual = projection.incumbent
+  if (!expected || !actual
+      || expected.candidateId !== actual.candidateId
+      || expected.digest !== actual.digest
+      || expected.revision !== actual.revision
+      || JSON.stringify(expected.evaluation) !== JSON.stringify(actual.evaluation)) {
+    throw new ProtocolError(`${branch.branchId} 恢复后 incumbent 与 Population 冻结状态不一致`)
+  }
+}
+
 function assertRoundLimit(value) {
   if (!Number.isSafeInteger(value) || value < 0 || value > 10_000) {
     throw new ProtocolError('Population roundLimit 必须是 0..10000 的整数')
@@ -101,6 +117,33 @@ function markdownReport(summary) {
   return lines.join('\n')
 }
 
+function publicPopulationFinal(final) {
+  if (final === null || final === undefined || typeof final !== 'object' || Array.isArray(final)) {
+    return null
+  }
+  const safeId = (value, pattern) => (
+    typeof value === 'string' && pattern.test(value) ? value : null
+  )
+  const safeTime = (value) => (
+    typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null
+  )
+  const completed = final.evaluated === true
+  const failed = !completed && safeTime(final.failedAt) !== null
+  return {
+    status: completed ? 'completed' : failed ? 'failed' : 'running',
+    evaluated: completed,
+    branchId: safeId(final.branchId, /^branch-[0-9]{3}$/u),
+    baselineId: safeId(final.baselineId, /^[a-z0-9][a-z0-9._-]{1,119}$/u),
+    candidateId: safeId(final.candidateId, /^[a-z0-9][a-z0-9._-]{1,119}$/u),
+    startedAt: safeTime(final.startedAt),
+    completedAt: safeTime(final.completedAt),
+    failedAt: safeTime(final.failedAt),
+    report: final.report === 'report/final-evaluation.json'
+      ? 'report/final-evaluation.json'
+      : null,
+  }
+}
+
 export function formatPopulationStatus(state) {
   if (!state || state.kind !== 'PopulationCampaignState') {
     throw new ProtocolError('Population status source 格式错误')
@@ -115,6 +158,8 @@ export function formatPopulationStatus(state) {
     updatedAt: state.updatedAt,
     closedAt: state.closedAt ?? null,
     reportAvailable: ['CLOSED', 'REPORTED'].includes(state.status),
+    // Status 是公开投影：不反射 failure.details、Final 指标或未知字段。
+    final: publicPopulationFinal(state.final),
     epoch: state.epoch,
     budget: structuredClone(state.budget),
     best: state.best === null ? null : structuredClone(state.best),
@@ -222,6 +267,7 @@ export class PopulationOrchestrator {
       },
       branches,
       best: null,
+      final: null,
       events: [{
         sequence: 1,
         type: 'POPULATION_CONFIG_FROZEN',
@@ -295,6 +341,55 @@ export class PopulationOrchestrator {
     return state
   }
 
+  /** 只固化 H0 评测，不启动 Updater，也不消耗进化 Budget。 */
+  async freezeBaseline() {
+    const state = await this.#readState()
+    if (state.status === 'PAUSED_INFRASTRUCTURE') {
+      throw new ProtocolError('Population Baseline 因基础设施故障暂停')
+    }
+    if (state.status !== 'EVOLVING' || state.epoch !== 0
+        || state.budget.consumed !== 0 || state.inFlightWave !== undefined) {
+      throw new ProtocolError('Population 只能在 H0 评测后、第一轮进化前固化 Baseline')
+    }
+    const frozenAt = iso(this.clock)
+    const baseline = redactSecrets({
+      apiVersion: 'harness-rsi/v1alpha1',
+      kind: 'PopulationBaselineReport',
+      campaignId: state.campaignId,
+      mode: state.mode,
+      frozenAt,
+      configFingerprint: state.configFingerprint,
+      ...(state.configDigest === undefined ? {} : { configDigest: state.configDigest }),
+      budgetConsumed: 0,
+      best: structuredClone(state.best),
+      branches: state.branches.map((branch) => ({
+        branchId: branch.branchId,
+        incumbent: structuredClone(branch.incumbent),
+      })),
+    }, this.secretValues)
+    const baselinePath = await this.store.writeBaselineSummary(baseline)
+    const frozen = {
+      ...state,
+      status: 'BASELINE_FROZEN',
+      updatedAt: frozenAt,
+      baseline: { path: 'public/baseline-summary.json', frozenAt },
+      events: [...state.events, event(state, 'POPULATION_BASELINE_FROZEN', frozenAt, {
+        branchId: state.best.branchId,
+        candidateId: state.best.candidateId,
+        primaryMetric: state.best.primaryMetric,
+        primaryValue: state.best.primaryValue,
+      })],
+    }
+    await this.store.saveState(frozen)
+    this.progress({
+      type: 'population-baseline-frozen',
+      branchId: frozen.best.branchId,
+      primaryMetric: frozen.best.primaryMetric,
+      primaryValue: frozen.best.primaryValue,
+    })
+    return { state: frozen, baseline, baselinePath }
+  }
+
   async #pauseInfrastructure(state, failures, phase) {
     const pausedAt = iso(this.clock)
     const publicFailures = redactSecrets(failures.map(({ branchId, error }) => ({
@@ -328,6 +423,9 @@ export class PopulationOrchestrator {
     if (state.status === 'PAUSED_INFRASTRUCTURE') {
       throw new ProtocolError('Population 当前暂停；请使用 evolve resume')
     }
+    if (state.status === 'BASELINE_FROZEN') {
+      throw new ProtocolError('Population 已固化为 H0 Baseline，不能在同一 Run 中继续进化')
+    }
     let completedWaves = 0
     while (state.status === 'EVOLVING' && completedWaves < waveLimit) {
       if (!state.inFlightWave) state = await this.#startWave(state)
@@ -358,6 +456,32 @@ export class PopulationOrchestrator {
     if (state.status !== 'PAUSED_INFRASTRUCTURE') {
       throw new ProtocolError('Population 当前不是 PAUSED_INFRASTRUCTURE')
     }
+    await Promise.all(state.branches.map(async (branch) => {
+      const driver = await this.#handle(branch.branchId)
+      const restored = typeof driver.restore === 'function'
+        ? await driver.restore()
+        : await driver.inspect()
+      const projection = validateBranchProjection(restored)
+      if (projection.branchId !== branch.branchId) {
+        throw new ProtocolError(`Population 恢复得到了错误的 Branch：${projection.branchId}`)
+      }
+      const inFlight = state.inFlightWave?.participants.find(
+        (participant) => participant.branchId === branch.branchId,
+      )
+      const maximumCompleted = inFlight ? inFlight.beforeSteps + 1 : branch.consumed
+      if (projection.completedSteps < branch.consumed
+          || projection.completedSteps > maximumCompleted) {
+        throw new ProtocolError(`${branch.branchId} 恢复后 Step 与 Population Budget 不一致`, [
+          `population=${branch.consumed}`,
+          `branch=${projection.completedSteps}`,
+        ])
+      }
+      if (projection.completedSteps === branch.consumed) {
+        assertRestoredIncumbent(branch, projection)
+      } else if (!inFlight || projection.lastStep === null) {
+        throw new ProtocolError(`${branch.branchId} 超前 Step 缺少对应的 in-flight 记录`)
+      }
+    }))
     const resumedAt = iso(this.clock)
     state = {
       ...state,
@@ -526,10 +650,15 @@ export class PopulationOrchestrator {
       const validationScore = primary
         ? (primary.direction === 'minimize' ? -primary.value : primary.value)
         : participant.beforeScore
+      const deltaScore = primary && candidate.ranking.baselineEvaluation
+        // Cowork 等随机 Environment 会在同一评测窗口重跑 Baseline；必须沿用
+        // Branch 的同期配对口径，不能再与 Population 初始化时的旧分数比较。
+        ? primaryMetricDelta(candidate.ranking.evaluation, candidate.ranking.baselineEvaluation)
+        : validationScore - participant.beforeScore
       return {
         branchId: participant.branchId,
         validationScore,
-        deltaScore: validationScore - participant.beforeScore,
+        deltaScore,
         candidateId: candidate?.candidateId ?? null,
         decision: candidate?.decision ?? 'stopped',
         // Competition 可以比较已评测但未晋升的 Candidate；无评测的 invalid/stopped

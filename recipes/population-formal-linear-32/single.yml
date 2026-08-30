@@ -1,0 +1,14 @@
+apiVersion: harness-rsi/v1alpha1
+kind: EvolutionRecipe
+spec:
+  population:
+    mode: single
+    # Single 的定义就是一个 Branch；32 表示该 Branch 最多产生 32 个 Candidate。
+    concurrency: { n_branches: 1 }
+    budget: { total_budget: 32, beta: 0 }
+    peer_sharing: { enabled: false }
+    competition: { enabled: false }
+  moduleSearch:
+    authority: strategy-directed
+    riskCeiling: l2
+    strategy: linear-hill-climb

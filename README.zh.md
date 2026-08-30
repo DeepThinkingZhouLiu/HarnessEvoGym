@@ -4,7 +4,7 @@
 
 一个把 **“优化谁”、“在哪里做题”、“怎么进化”** 拆开配置的 Harness
 自进化实验平台。当前已经能用同一个 Controller 组合 MSA Minimal Target、
-SkillsBench Cowork 环境或文本 Reasoning 冒烟环境，并运行
+OmegaUse-OfficeVal Cowork 环境或文本 Reasoning 冒烟环境，并运行
 `single / independent / mutualism / competition / combined` 五种种群模式。
 
 平台的核心公式是：
@@ -61,10 +61,24 @@ SearchStrategy 只管“搜哪里”，Updater 仍是完整 Coding Agent，自�
 
 | 场景 / 对象          | 已实现的组合                                               | 用途                                      |
 |----------------------|--------------------------------------------------------------|-------------------------------------------|
-| Cowork               | MSA Minimal + Cowork Seed + SkillsBench                      | 真实 Office/PDF/PPTX/XLSX 任务与 Verifier |
+| Cowork               | MSA Minimal + Cowork Seed + OmegaUse-OfficeVal               | 真实 Word/PPT/Excel 交付任务与加权 Rubric |
 | Reasoning 工程冒烟   | MSA Minimal + Reasoning Seed + Synthetic Text Reasoning       | 证明真实模型、变异、评分与五种 Mode 链路      |
 | Reasoning 正式路径   | MSA + HLE，或 DSH + PutnamBench                         | 保留 HZY 原有生产链路，需专用数据和运行时       |
 | 未来 Target          | DSH、PI Agent 或其他 Harness + 自己的 Seed/Catalog/Driver | 新增 Adapter 即可，不改 Population 算法          |
+
+Cowork 现在接的是更符合 Office Agent 场景的
+`baidu-frontier-research/OmegaUse-OfficeVal`。上游共 100 道任务；当前 Linux
+运行链使用 91 道静态 Verifier 任务，排除 9 道依赖 Windows Office COM
+的题。固定划分是 `55 feedback / 18 selection / 18 sealed final`：
+feedback 可以向 Updater 返回详细失败信息，selection 只用聚合分数决定是否晋升，
+final 在 Champion 锁定后只解封一次。另有 3 道题的 Word/PPT/Excel Smoke，
+三道题都从正式 feedback 集中取，只证明链路能跑，不消费正式验证集和测试集。
+
+Solver 只能看到任务说明和原始 Office 文件；Rubric、Verifier 和
+sealed final 不会挂载给 Solver/Updater。Solver 产出的变更文件会被复制到
+独立 Submission，再交给无网络、只读根文件系统的 Verifier 容器评分。
+Reward 是通过 Dim1 格式门槛后的加权 Dim2 得分，并归一化到 `[0,1]`，
+不再是只有 0/1 的 Skill 命中信号。
 
 新 Experiment 通过 `spec.recipe` 进入通用 Population。旧 Cowork Experiment 不写
 Recipe 时仍保留原来的单 Champion 目录和行为；旧 Reasoning Campaign 仍可以使用
@@ -72,7 +86,9 @@ HZY 原有 Runtime。这是兼容层，不是两套新算法。
 
 Model Gateway 给 Controller、Solver 和 Updater 分配不同令牌。Solver/Updater 即使在
 请求体里伪造 `model` 或 `max_tokens`，网关也会用 Experiment 冻结值覆盖；
-两个角色的 Usage 也分开计量。
+两个角色的 Usage 也分开计量。OmegaUse 正式环境把上游额外重试固定为 5 次：仅对
+429/502/503/504、连接中断和上游超时重试，并且只允许发生在响应 Header/Body 下发前；
+已经开始返回的流绝不会重播，同一模型逻辑请求在 Usage 中仍只计一次。
 
 Population 启动时还会对展开后的 Experiment、Recipe、Adapter、Benchmark、Policy 和
 Updater Prompt 摘要生成统一 `configDigest`。每个 Branch 在创建运行目录和调用模型前
@@ -117,6 +133,7 @@ Controller 先复制这份固定 Source，再叠加 Target 自己的 CandidateSe
 | Target                     | CandidateSeed                         | H0 起点                                      |
 |----------------------------|---------------------------------------|----------------------------------------------|
 | `msa-minimal`              | `targets/msa-minimal/cowork-v1/`      | Cowork Prompt、4 类 Office Skill、Chat Completions |
+| `msa-minimal-cowork-rsi`   | `targets/msa-minimal/cowork-v1/`      | 同一 H0，但开放完整 12 步 Cowork 工具循环 |
 | `msa-minimal-reasoning`    | `targets/msa-minimal/reasoning-v1/`   | Math Profile、Chat Completions 和 Reasoning CLI     |
 
 两个 Target 共用同一份 Agent Loop Source，但各自声明自己的 Catalog：
@@ -181,10 +198,46 @@ HZY 原有 HLE/PutnamBench 生产 Campaign 仍位于 `benchmarks/hle-text-math/`
 
 当前 `msa-minimal` Cowork Adapter 把 `maximumSteps` 固定为 `1`，只用于低成本验证
 五种 Mode 的真实模型闭环；Candidate Profile 即使把 `max_steps` 调高也不会生效。
-正式质量实验应新建独立 Target Adapter 并设置更合理的预算，不要直接拿 Smoke 分数做结论。
+已提供的 `msa-minimal-cowork-rsi` 则开放与 Profile 一致的 12 步上限，用于
+55/18/18 OmegaUse-OfficeVal 受控 RSI 实验；不要直接拿 3 题 Smoke 分数做能力结论。
 该限制对本轮只开放 L1 的实验是可信硬上限；若未来开放可修改 `agent.py/run.py` 的
 L2/L3 并把 Candidate 视为主动恶意代码，还应在 Model Gateway 增加每个 Solver Session
 的独立请求硬配额。
+
+### 五种 Mode 公平线性 RSI 配置
+
+`recipes/population-fair-linear/*.yml` 把五种 Mode 的可变异 Candidate 总预算统一为
+4，搜索策略统一为 `linear-hill-climb`，只开放 MSA Cowork L1。对应实验是：
+
+- `experiments/cowork-msa-rsi-linear-single.json`
+- `experiments/cowork-msa-rsi-linear-independent.json`
+- `experiments/cowork-msa-rsi-linear-mutualism.json`
+- `experiments/cowork-msa-rsi-linear-competition.json`
+- `experiments/cowork-msa-rsi-linear-combined.json`
+
+五份配置共用同一 H0、Terra Solver/Updater、55 道 feedback、18 道 selection、
+18 道 sealed final 与同一 Reward Gate。这是一套“流程完整、可变异预算对齐”的正式
+配置起点，但当前每题仍只有 1 个 Trial，**不等于统计显著的 Benchmark
+结论**。正式对外比较应将 Trial 提高到至少 3，预注册随机种子和 Gate。
+多 Branch Mode 还会多做一次 H0 基线评测，所以最终比较时必须同时
+报告 Solver/Updater Token 和墙钟时间，不能只看最终分数。
+
+### Codex 0.149 Updater 对照实验
+
+`adapters/updaters/codex-cli.yml` 把 Updater 从 DSH 换成官方 Codex CLI 0.149.1，
+并固定 npm distribution 的绝对路径、包版本和完整 SHA-256 摘要。Codex 使用隔离的
+`CODEX_HOME`，忽略用户配置与 Rules；它只读 feedback 和上游 Harness 源码，只能写
+当前 Candidate 与独立 Mutation Report 目录。真实 Provider Key 只由 Controller-owned
+Responses Gateway 持有，Codex 通过无网络 Bubblewrap 内的 Unix socket relay 调用
+`gpt-5.6-terra/high`。Provider 请求和流中断最多重试 5 次。
+
+可运行配置是
+`experiments/cowork-msa-rsi-linear-single-l2-one-generation-codex.json`：从全新 H0
+开始，使用 Single + `linear-hill-climb`，开放 MSA Cowork L1+L2，只生成一个
+Candidate；feedback/selection 仍为同一组 55/18 OmegaUse-OfficeVal 任务，因此可用于和
+DSH Updater 做同协议对照。自构建 `codex-dev --provider zcloud` 在模型协议上也可用，
+但正式实验不能读取个人 `~/.codex`；应先把它安装到独立只读目录，固定版本和摘要，再用
+新的 Updater Adapter 替换本配置，不要直接复用开发中的可变二进制。
 
 ### 模式与 Budget
 
@@ -195,7 +248,7 @@ spec:
   population:
     mode: combined
     concurrency: { n_branches: 2 }
-    budget: { total_budget: 3, beta: 0.67 }
+    budget: { total_budget: 4, beta: 0.5 }
     peer_sharing: { enabled: true }
     competition: { enabled: true, bonus_grant_unit: 1 }
   moduleSearch:
@@ -269,32 +322,77 @@ MSA Minimal Reasoning Target
 export RSI_PROVIDER_BASE_URL=https://provider.example/v1
 read -rsp 'Provider API Key: ' RSI_PROVIDER_API_KEY && export RSI_PROVIDER_API_KEY
 
-# Progressive Synthetic Reasoning：不需要 SkillsBench。
+# Progressive Synthetic Reasoning：不需要外部 Office 数据。
 npm run rsi -- runtime build \
   --experiment experiments/reasoning-msa-progressive-strict-smoke.json
 npm run rsi -- experiment run \
   --config experiments/reasoning-msa-progressive-strict-smoke.json \
   --run-id reasoning-progressive-strict-001
 
-# Cowork 额外需要本地 SkillsBench 根目录。
-export RSI_SKILLSBENCH_ROOT=/absolute/path/to/skillsbench
+# Cowork 需要固定版本的 OmegaUse Dataset 和 Evaluator Checkout。
+export RSI_OFFICEVAL_DATASET_ROOT=/absolute/path/to/OmegaUse-OfficeVal-Dataset
+export RSI_OFFICEVAL_EVALUATOR_ROOT=/absolute/path/to/OmegaUse-OfficeVal
 npm run rsi -- runtime build \
   --experiment experiments/cowork-msa-smoke-single.json
 npm run rsi -- experiment run \
   --config experiments/cowork-msa-smoke-single.json \
   --run-id cowork-single-smoke-001
 
+# 受控 RSI：五种 Mode 的可变异总预算都是 4。
+for mode in single independent mutualism competition combined; do
+  npm run rsi -- experiment run \
+    --config "experiments/cowork-msa-rsi-linear-${mode}.json" \
+    --run-id "cowork-rsi-linear-${mode}-001"
+
+  # 若 Provider/Docker/Verifier 异常导致暂停，修复后继续同一个 Run。
+  # npm run rsi -- experiment resume \
+  #   --run ".rsi/runs/populations/cowork-rsi-linear-${mode}-001"
+
+  # Population 关闭并锁定全局最优 Branch 后，只解封一次 final。
+  npm run rsi -- experiment finalize \
+    --run ".rsi/runs/populations/cowork-rsi-linear-${mode}-001"
+
+  # 仅当 Final 因基础设施失败，且 Controller 证明尚未创建任何 sealed-final
+  # 产物时，可显式执行一次受审计恢复：
+  # npm run rsi -- experiment finalize \
+  #   --run ".rsi/runs/populations/cowork-rsi-linear-${mode}-001" \
+  #   --recover-infrastructure
+done
+
+# 单次 L1+L2 Probe：正式 55/18 feedback/selection，只产生一个 Candidate。
+npm run rsi -- experiment run \
+  --config experiments/cowork-msa-rsi-linear-single-l2-one-generation.json \
+  --run-id cowork-rsi-linear-single-l2-one-generation-001
+
 unset RSI_PROVIDER_API_KEY
 ```
 
-`experiment run` 进化期只读 feedback/selection。当前通用 Population smoke 不解封 final；
-旧单 Champion Cowork Run 仍使用 `experiment finalize` 做一次性 final 评测。
-这些小题集只用于跑通工程闭环，不代表统计显著性结论。
+`experiment run` 进化期只读 feedback/selection。单 Champion 与通用 Population 都使用
+`experiment finalize` 做一次性 final 评测；Population 入口会核对父状态、
+`best-harness.json`、Best Branch Champion 和 Candidate Digest，然后仅比较该最优
+Champion 与冻结 H0。父目录中的 `final-attempt.json` 使并发进程无法反复查看
+sealed final，报告写入 `report/final-evaluation.json`。如果第一次 Final 在仅回放公开
+feedback 时因上游 502/503/504 等基础设施故障失败，Controller 会在确认没有任何
+sealed-final 路径或结果后，允许显式的 `--recover-infrastructure` 恢复一次。原 Claim
+与失败事件始终保留，未完成的 feedback 证据会归档到 `final-recovery/`；一旦已接触
+sealed final，或 Recovery 自身再失败，都会永久拒绝再次解封。
+
+Reasoning 的 Synthetic Text 五 Mode 仍只是工程冒烟。HLE 正式实验必须先准备门控
+`cais/hle` 数据、sealed split、固定 MSA Source 与专用 Runtime；这些条件缺失时，
+不能把 Synthetic 结果替代为正式 Reasoning 成绩。
 
 当前通用 Population 的边界也需要明确：基础设施异常会被标成
-`PAUSED_INFRASTRUCTURE` 并让命令失败，绝不会冒充 0 分成功结束；但跨进程恢复尚未接入
-CLI，排除故障后应使用新 Run ID 重跑。Model Gateway 的请求上限目前按 Branch 生效，
-还不是整个 Population 的全局费用上限。生产 HLE/PutnamBench 继续使用原有的恢复、
+`PAUSED_INFRASTRUCTURE` 并让命令失败，绝不会冒充 0 分成功结束。Cowork Population 可以用
+`experiment resume --run <population-run>` 在同一个 Controller Revision 下继续；恢复时会重验冻结
+Bundle、Source、Candidate Digest 和 Mutation 边界，并把未完成轮次归档到 `recovery/`
+后重跑。OmegaUse 会进一步按题读取原子提交的 `committed-result.json`：已经完成的题目
+（包括合法 0 分）直接复用，只运行没有完成的题目；半成品会先移入 `recovery/trial-attempts/`
+保留审计证据。基础设施失败不会在同一命令里自动重跑整题，必须由用户显式执行 Resume，
+失败尝试的 Token/时间仍计入 Ledger。普通进化恢复必须是同一 Controller
+Revision；只有上述“尚未访问 sealed final”的 Final Recovery 可以在显式参数下使用一个
+继承原 Revision 的新 Controller，并同时记录进化版本和 Finalizer 版本。修改冻结配置后仍必须
+使用新 Run ID。Model Gateway 的请求上限目前按 Branch 生效，还不是整个 Population 的全局费用上限。
+生产 HLE/PutnamBench 继续使用原有的恢复、
 sealed test 与 Final 链路，不能把这里的公开 Smoke 替代为正式评测。
 
 单个 Campaign 使用
@@ -303,9 +401,14 @@ runtime、campaign ID、campaigns root、source root 和 credential FD。
 
 每个 branch 写入 `public/state.json` 和 `public/evolution-log.jsonl`。种群关闭后
 输出所有 branch incumbent，以及 `best-harness.json` 和
-`best-harness.patch`。
+`best-harness.patch`；一次性 Final 成功后还会写入
+`report/final-evaluation.json`，并在父 `public/state.json` 中记录可审计的 Final 状态。
 
 详细说明：
+
+Updater 的通用提示词模板位于 [`prompts/updater.md`](prompts/updater.md)。Controller 会在
+启动前把 Target 名称、当前 Candidate、Mutation Region、可写/只读路径、语义约束和报告路径
+填入模板，并把冻结副本写进 Run 的 `trusted-inputs/updater-prompt.md`。
 
 - [Controller 五种模式](docs/controller-modes.zh.md)
 - [架构与信任边界](docs/architecture.zh.md)

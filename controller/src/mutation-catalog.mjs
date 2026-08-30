@@ -286,6 +286,11 @@ export function issueMutationLease({ target, catalog, plan, riskCeiling }) {
       readOnly: [...target.mutation.alwaysReadOnly],
       extensions: [...new Set(selected.flatMap((region) => region.extensions))],
       limits: { ...target.mutation.limits },
+      // Updater 需要在提出变异前看到与 Candidate Validator 相同的硬约束；
+      // 最终仍由 Controller 重新校验，不能把提示词当成安全边界。
+      semanticConstraints: target.mutation.semanticChecks === null
+        ? null
+        : structuredClone(target.mutation.semanticChecks),
       parentIds: [...plan.spec.parentIds],
       generation: plan.spec.generation,
     },

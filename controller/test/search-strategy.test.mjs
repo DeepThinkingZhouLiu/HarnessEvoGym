@@ -15,7 +15,7 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
 async function context() {
   const bundle = await loadExperimentBundle(
-    resolve(repositoryRoot, 'experiments/cowork-skillsbench-dsh-l1.json'),
+    resolve(repositoryRoot, 'experiments/cowork-omegause-dsh-l1.json'),
     repositoryRoot,
   )
   return {

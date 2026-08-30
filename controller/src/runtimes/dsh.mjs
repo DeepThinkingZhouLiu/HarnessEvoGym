@@ -210,7 +210,7 @@ export async function runDshSolver({
   candidatePreset,
   workspace,
   dshHome,
-  benchmarkSkills,
+  environmentAssets,
   modelAccess,
   task,
   name,
@@ -227,9 +227,9 @@ export async function runDshSolver({
       readOnly: true,
     },
   ]
-  if (benchmarkSkills !== undefined) {
-    mounts.push({ source: benchmarkSkills, target: '/benchmark-skills', readOnly: true })
-    environment.DSH_BUNDLED_SKILL_DIR = '/benchmark-skills'
+  if (environmentAssets !== undefined) {
+    mounts.push({ source: environmentAssets, target: '/environment-assets', readOnly: true })
+    environment.DSH_BUNDLED_SKILL_DIR = '/environment-assets'
   }
   if (!modelAccess) throw new ProtocolError('DSH Solver 缺少 Model Gateway Access')
   for (const nameValue of runtime.secretEnvironment) {
@@ -242,7 +242,7 @@ export async function runDshSolver({
   const result = await docker.run({
     image,
     name,
-    // SkillsBench 指令会以 YAML front matter 的 `---` 开头；用 `--` 明确结束
+    // Environment 指令可能以 `-` 开头；用 `--` 明确结束参数解析。
     // Headless 选项解析，避免 Commander 把任务正文当成未知选项。
     command: ['dsh', '--profile', runtime.profile, '--preset', runtime.preset, '--', task],
     workdir: containerWorkspace,

@@ -15,7 +15,10 @@ const apiKey = process.env[apiKeyEnvironment] ?? ''
 const rawBaseUrl = process.env[baseUrlEnvironment] ?? ''
 const maximumRequests = Number(process.env.GATEWAY_MAX_REQUESTS ?? '512')
 const maximumConcurrentRequests = Number(process.env.GATEWAY_MAX_CONCURRENT_REQUESTS ?? '8')
+const maximumUpstreamRetries = Number(process.env.GATEWAY_MAX_UPSTREAM_RETRIES ?? '2')
 const maximumRequestBytes = 32 * 1024 * 1024
+const maximumRetryDelayMs = 60_000
+const retryableUpstreamStatuses = new Set([429, 502, 503, 504])
 
 if (!Number.isInteger(listenPort) || listenPort < 1024 || listenPort > 65535) {
   throw new Error('model-gateway: GATEWAY_PORT 必须是 1024-65535 的整数')
@@ -35,6 +38,11 @@ if (!Number.isInteger(maximumRequests) || maximumRequests < 1) {
 }
 if (!Number.isInteger(maximumConcurrentRequests) || maximumConcurrentRequests < 1) {
   throw new Error('model-gateway: GATEWAY_MAX_CONCURRENT_REQUESTS 必须是正整数')
+}
+if (!Number.isInteger(maximumUpstreamRetries)
+    || maximumUpstreamRetries < 0
+    || maximumUpstreamRetries > 5) {
+  throw new Error('model-gateway: GATEWAY_MAX_UPSTREAM_RETRIES 必须是 0..5 的整数')
 }
 
 const upstreamBase = new URL(rawBaseUrl)
@@ -97,6 +105,26 @@ function filteredHeaders(headers, allowlist) {
 function send(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
   response.end(`${JSON.stringify(body)}\n`)
+}
+
+function retryAfterMilliseconds(value) {
+  const raw = Array.isArray(value) ? value[0] : value
+  if (typeof raw !== 'string' || raw.trim().length === 0) return null
+  const seconds = Number(raw)
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(maximumRetryDelayMs, Math.ceil(seconds * 1000))
+  }
+  const at = Date.parse(raw)
+  if (!Number.isFinite(at)) return null
+  return Math.min(maximumRetryDelayMs, Math.max(0, at - Date.now()))
+}
+
+function retryDelayMilliseconds(retryNumber, headers = {}) {
+  const requested = retryAfterMilliseconds(headers['retry-after'])
+  if (requested !== null) return requested
+  const exponential = Math.min(maximumRetryDelayMs, 250 * (2 ** Math.max(0, retryNumber - 1)))
+  const jitter = Math.floor(Math.random() * 251)
+  return Math.min(maximumRetryDelayMs, exponential + jitter)
 }
 
 function emptyUsage() {
@@ -235,12 +263,17 @@ function validatedRolePolicy(value) {
   if (typeof value.model !== 'string' || !MODEL_ID_PATTERN.test(value.model)) return null
   if (!Number.isSafeInteger(value.maxTokens) || value.maxTokens < 1 || value.maxTokens > 1_000_000) return null
   if (!MAX_TOKENS_FIELDS.has(value.maxTokensField)) return null
-  if (Object.keys(value).some((key) => !['role', 'model', 'maxTokens', 'maxTokensField'].includes(key))) return null
+  if (value.reasoningEffort !== null && value.reasoningEffort !== undefined
+      && !['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(value.reasoningEffort)) return null
+  if (Object.keys(value).some((key) => ![
+    'role', 'model', 'maxTokens', 'maxTokensField', 'reasoningEffort',
+  ].includes(key))) return null
   return {
     role: value.role,
     model: value.model,
     maxTokens: value.maxTokens,
     maxTokensField: value.maxTokensField,
+    reasoningEffort: value.reasoningEffort ?? null,
   }
 }
 
@@ -257,8 +290,11 @@ function trustedRequestBody(rawBody, policy) {
   delete output.max_completion_tokens
   delete output.max_output_tokens
   delete output.maxTokens
+  delete output.reasoning
+  delete output.reasoning_effort
   for (const field of AMPLIFICATION_FIELDS) delete output[field]
   output[policy.maxTokensField] = policy.maxTokens
+  if (policy.reasoningEffort !== null) output.reasoning_effort = policy.reasoningEffort
   // 受信角色只能请求一个、必然返回 Usage 的流式 Completion。
   // 覆盖而不信任 Agent 提交的同名字段，避免放大生成数或绕过计量。
   output.n = 1
@@ -516,27 +552,58 @@ const server = http.createServer((request, response) => {
       headers['content-type'] = 'application/json'
       headers['content-length'] = String(payload.length)
     }
-    const upstream = transport.request(target, { method: 'POST', headers }, (upstreamResponse) => {
-      usageDelegated = true
-      response.writeHead(
-        upstreamResponse.statusCode ?? 502,
-        filteredHeaders(upstreamResponse.headers, responseHeaderAllowlist),
-      )
-      const usageMeter = createSseUsageMeter(counters)
-      pipeline(upstreamResponse, usageMeter, response, (error) => {
-        if (error && !response.destroyed) response.destroy(error)
+    let currentUpstream = null
+    let retryTimer = null
+    response.once('close', () => {
+      if (!response.writableEnded) currentUpstream?.destroy()
+      if (retryTimer !== null) clearTimeout(retryTimer)
+    })
+
+    const forward = (attempt) => {
+      if (response.destroyed || response.writableEnded) return
+      let retryScheduled = false
+      const scheduleRetry = (upstreamHeaders = {}) => {
+        if (retryScheduled || response.destroyed || response.writableEnded) return false
+        if (attempt > maximumUpstreamRetries || response.headersSent) return false
+        retryScheduled = true
+        retryTimer = setTimeout(() => {
+          retryTimer = null
+          forward(attempt + 1)
+        }, retryDelayMilliseconds(attempt, upstreamHeaders))
+        return true
+      }
+      const upstream = transport.request(target, { method: 'POST', headers }, (upstreamResponse) => {
+        const status = upstreamResponse.statusCode ?? 502
+        if (retryableUpstreamStatuses.has(status) && attempt <= maximumUpstreamRetries) {
+          // 只有在尚未向 Agent 下发 Header/Body 时才能重试，避免重播部分 Completion。
+          // 429 遵守有界 Retry-After；其余故障使用指数退避和抖动。
+          const retry = () => scheduleRetry(upstreamResponse.headers)
+          upstreamResponse.once('end', retry)
+          upstreamResponse.once('error', retry)
+          upstreamResponse.resume()
+          return
+        }
+        usageDelegated = true
+        response.writeHead(
+          status,
+          filteredHeaders(upstreamResponse.headers, responseHeaderAllowlist),
+        )
+        const usageMeter = createSseUsageMeter(counters)
+        pipeline(upstreamResponse, usageMeter, response, (error) => {
+          if (error && !response.destroyed) response.destroy(error)
+        })
       })
-    })
-    upstream.setTimeout(20 * 60 * 1000, () => upstream.destroy(new Error('upstream timeout')))
-    upstream.on('error', (error) => {
-      recordUnknownUsage()
-      if (!response.headersSent) send(response, 502, { error: 'upstream_failure' })
-      else response.destroy(error)
-    })
-    response.on('close', () => {
-      if (!response.writableEnded) upstream.destroy()
-    })
-    upstream.end(payload)
+      currentUpstream = upstream
+      upstream.setTimeout(20 * 60 * 1000, () => upstream.destroy(new Error('upstream timeout')))
+      upstream.on('error', (error) => {
+        if (scheduleRetry()) return
+        recordUnknownUsage()
+        if (!response.headersSent) send(response, 502, { error: 'upstream_failure' })
+        else response.destroy(error)
+      })
+      upstream.end(payload)
+    }
+    forward(1)
   })
 })
 

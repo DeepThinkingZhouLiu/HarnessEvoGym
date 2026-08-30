@@ -1,6 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { appendFile, mkdir, open, readFile, realpath, stat, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import {
+  appendFile,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
   copyRegularTree,
   diffSnapshots,
@@ -36,6 +47,8 @@ import { runProcess, secretValuesFromEnvironment } from './process.mjs'
 import { createSearchStrategyDriver } from './search-strategy.mjs'
 import { resolveTargetSource } from './target-sources.mjs'
 import { PopulationOrchestrator } from './population-orchestrator.mjs'
+import { PopulationStore } from './population-store.mjs'
+import { acquireCampaignLock } from './campaign-lock.mjs'
 
 const MAXIMUM_STRATEGY_HISTORY_ENTRIES = 64
 
@@ -125,6 +138,35 @@ async function trustedControllerRevision(repositoryRoot) {
   return value
 }
 
+async function assertControllerRevisionForFinal({
+  repositoryRoot,
+  frozenRevision,
+  currentRevision,
+  recoveryRequested,
+}) {
+  if (currentRevision === frozenRevision) return
+  if (!recoveryRequested) {
+    throw new ProtocolError('当前 Controller Revision 与 Run 冻结值不一致', [
+      `run=${frozenRevision ?? '(missing)'}`,
+      `current=${currentRevision}`,
+    ])
+  }
+  if (typeof frozenRevision !== 'string' || !/^[0-9a-f]{40}$/u.test(frozenRevision)) {
+    throw new ProtocolError('Run 缺少合法的冻结 Controller Revision')
+  }
+  const ancestry = await runProcess(
+    'git',
+    ['-C', repositoryRoot, 'merge-base', '--is-ancestor', frozenRevision, currentRevision],
+    { timeoutMs: 30_000, allowExitCodes: [0, 1] },
+  )
+  if (ancestry.exitCode !== 0) {
+    throw new ProtocolError('Final Recovery Controller 必须继承原进化 Controller Revision', [
+      `run=${frozenRevision}`,
+      `current=${currentRevision}`,
+    ])
+  }
+}
+
 async function pinnedSubmoduleRevision(repositoryRoot, sourcePath) {
   const result = await runProcess('git', ['-C', repositoryRoot, 'ls-tree', 'HEAD', '--', sourcePath], {
     timeoutMs: 30_000,
@@ -156,16 +198,93 @@ async function resolvePinnedSource(repositoryRoot, source, label) {
   return { root, revision }
 }
 
-function buildLedger({ generations, candidatesEvaluated, startedAt, solverUsage, updaterUsage }) {
+const USAGE_COUNTER_FIELDS = Object.freeze([
+  'requests',
+  'usageResponses',
+  'unknownUsageResponses',
+  'observedInputTokens',
+  'observedOutputTokens',
+])
+
+const COMPLETE_USAGE_FIELDS = Object.freeze([
+  'inputTokens',
+  'outputTokens',
+  'totalTokens',
+  'cacheReadTokens',
+  'reasoningTokens',
+])
+
+function assertUsageSnapshot(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || typeof value.complete !== 'boolean') {
+    throw new ProtocolError(`${label} Usage 格式无效`)
+  }
+  for (const field of USAGE_COUNTER_FIELDS) {
+    if (!Number.isSafeInteger(value[field]) || value[field] < 0) {
+      throw new ProtocolError(`${label} Usage 字段无效：${field}`)
+    }
+  }
+  for (const field of COMPLETE_USAGE_FIELDS) {
+    if (value.complete) {
+      if (!Number.isSafeInteger(value[field]) || value[field] < 0) {
+        throw new ProtocolError(`${label} Usage 字段无效：${field}`)
+      }
+    } else if (value[field] !== null) {
+      throw new ProtocolError(`${label} Usage 不完整时 ${field} 必须为 null`)
+    }
+  }
+  return value
+}
+
+function mergeUsageSnapshots(previous, current, label) {
+  const right = assertUsageSnapshot(current, label)
+  if (previous === null || previous === undefined) return structuredClone(right)
+  const left = assertUsageSnapshot(previous, `已持久化 ${label}`)
+  const complete = left.complete && right.complete
+  const merged = {
+    complete,
+    ...Object.fromEntries(USAGE_COUNTER_FIELDS.map((field) => [field, left[field] + right[field]])),
+  }
+  for (const field of COMPLETE_USAGE_FIELDS) {
+    merged[field] = complete ? left[field] + right[field] : null
+  }
+  return merged
+}
+
+function buildLedger({
+  generations,
+  candidatesEvaluated,
+  startedAt,
+  solverUsage,
+  updaterUsage,
+  previousLedger = null,
+}) {
+  if (previousLedger !== null && previousLedger !== undefined
+      && (!Number.isSafeInteger(previousLedger.candidatesEvaluated)
+        || previousLedger.candidatesEvaluated < 0
+        || !Number.isSafeInteger(previousLedger.wallTimeMs)
+        || previousLedger.wallTimeMs < 0)) {
+    throw new ProtocolError('已持久化 Evolution Ledger 格式无效')
+  }
+  const mergedUpdaterUsage = mergeUsageSnapshots(
+    previousLedger?.updaterUsage,
+    updaterUsage,
+    'Updater',
+  )
+  const mergedSolverUsage = mergeUsageSnapshots(
+    previousLedger?.solverUsage,
+    solverUsage,
+    'Solver',
+  )
   return {
     generations,
-    candidatesEvaluated,
-    updaterTokens: updaterUsage.totalTokens,
-    solverTokens: solverUsage.totalTokens,
-    updaterUsage: structuredClone(updaterUsage),
-    solverUsage: structuredClone(solverUsage),
+    candidatesEvaluated: (previousLedger?.candidatesEvaluated ?? 0) + candidatesEvaluated,
+    updaterTokens: mergedUpdaterUsage.totalTokens,
+    solverTokens: mergedSolverUsage.totalTokens,
+    updaterUsage: mergedUpdaterUsage,
+    solverUsage: mergedSolverUsage,
     costUsd: null,
-    wallTimeMs: Date.now() - startedAt,
+    wallTimeMs: (previousLedger?.wallTimeMs ?? 0) + Date.now() - startedAt,
   }
 }
 
@@ -229,12 +348,15 @@ async function createContext({
     source: bundle.target.source,
     label: 'Target Source',
   })
-  const updaterSource = bundle.updater.source.path === bundle.target.source.path
-    ? targetSource
-    : await resolvePinnedSource(repositoryRoot, bundle.updater.source, 'Updater Source')
-  if (updaterSource.revision !== bundle.updater.source.revision) {
+  const updaterSource = bundle.updater.source === null
+    ? null
+    : (bundle.updater.source.path === bundle.target.source.path
+        ? targetSource
+        : await resolvePinnedSource(repositoryRoot, bundle.updater.source, 'Updater Source'))
+  if (updaterSource !== null && updaterSource.revision !== bundle.updater.source.revision) {
     throw new ProtocolError('Updater Adapter Revision 与复用的 Target Source Revision 不一致')
   }
+  const updaterSourceRevision = updaterSource?.revision ?? bundle.updater.runtime.distributionDigest
   const baselineTemplate = bundle.target.materialization.baselinePath
     ? resolveInside(repositoryRoot, bundle.target.materialization.baselinePath, 'Target Baseline Path')
     : null
@@ -243,7 +365,7 @@ async function createContext({
     ...(['dsh-headless-docker', 'dsh-headless-docker-v1'].includes(bundle.target.solver.protocol)
       ? [['Target Solver', bundle.target.solver.runtime, targetSource]]
       : []),
-    ['Updater', bundle.updater.runtime, updaterSource],
+    ...(updaterSource === null ? [] : [['Updater', bundle.updater.runtime, updaterSource]]),
   ]) {
     const sourcePackage = await readJsonFile(join(source.root, 'apps/cli/package.json'))
     if (runtime.package !== sourcePackage.name || runtime.version !== sourcePackage.version) {
@@ -259,11 +381,13 @@ async function createContext({
       'Target Runtime Dockerfile',
       'file',
     ),
-    assertPathKind(
-      resolveInside(repositoryRoot, bundle.updater.runtime.dockerfile, 'Updater Runtime Dockerfile'),
-      'Updater Runtime Dockerfile',
-      'file',
-    ),
+    ...(bundle.updater.runtime.dockerfile
+      ? [assertPathKind(
+          resolveInside(repositoryRoot, bundle.updater.runtime.dockerfile, 'Updater Runtime Dockerfile'),
+          'Updater Runtime Dockerfile',
+          'file',
+        )]
+      : []),
     assertPathKind(
       resolveInside(repositoryRoot, bundle.updater.promptPath, 'Updater Prompt'),
       'Updater Prompt',
@@ -305,8 +429,8 @@ async function createContext({
     provider: bundle.provider,
     docker,
     repositoryRoot,
-    sourceRevision: updaterSource.revision,
-    sourcePath: bundle.updater.source.path,
+    sourceRevision: updaterSourceRevision,
+    sourcePath: bundle.updater.source?.path ?? null,
     modelGateway,
   })
   const runRoot = runRootOverride
@@ -315,8 +439,8 @@ async function createContext({
     sourceRoot: targetSource.root,
     targetSourceRoot: targetSource.root,
     targetSourceRevision: targetSource.revision,
-    updaterSourceRoot: updaterSource.root,
-    updaterSourceRevision: updaterSource.revision,
+    updaterSourceRoot: updaterSource?.root ?? null,
+    updaterSourceRevision,
     baselineTemplate,
     sourceRevision: targetSource.revision,
     docker,
@@ -339,6 +463,7 @@ export async function preflightExperiment({ repositoryRoot, experimentPath, requ
   }
   const temporaryRunRoot = resolve(repositoryRoot, '.rsi/preflight')
   const environment = createEnvironmentRunner({
+    repositoryRoot,
     environment: context.bundle.environment,
     benchmark: context.bundle.benchmark,
     target: context.bundle.target,
@@ -375,7 +500,7 @@ export async function buildExperimentRuntime({ repositoryRoot, experimentPath })
     repositoryRoot,
   })
   return {
-    image: context.bundle.updater.runtime.image,
+    image: context.bundle.updater.runtime.image ?? null,
     gatewayImage,
     package: `${context.bundle.updater.runtime.package}@${context.bundle.updater.runtime.version}`,
     sourceRevision: context.updaterSourceRevision,
@@ -451,6 +576,7 @@ async function runUpdaterGeneration({
       'mutation.regions': mutationPolicy.metadata.regions.join(', '),
       'mutation.writablePaths': mutationPolicy.spec.writable.map((value) => `- ${value}`).join('\n'),
       'mutation.readOnlyPaths': mutationPolicy.spec.readOnly.map((value) => `- ${value}`).join('\n'),
+      'mutation.semanticConstraints': JSON.stringify(mutationPolicy.spec.semanticConstraints, null, 2),
       'output.mutationReportPath': `.rsi-output/${context.bundle.updater.mutationReportName}`,
     },
     feedbackPacket,
@@ -641,6 +767,180 @@ export async function claimFinalAttempt(runRoot, { attemptId, startedAt }) {
   return claimPath
 }
 
+export async function claimFinalRecoveryAttempt(runRoot, {
+  attemptId,
+  startedAt,
+  recoveredFromAttemptId,
+  evolutionControllerRevision,
+  finalizerControllerRevision,
+}) {
+  const claimPath = join(runRoot, 'final-recovery-attempt.json')
+  let handle
+  try {
+    handle = await open(claimPath, 'wx', 0o444)
+  } catch (error) {
+    if (error.code === 'EEXIST') {
+      throw new ProtocolError('Final Recovery Attempt 已被领取；禁止再次恢复')
+    }
+    throw new ProtocolError('无法原子领取 Final Recovery Attempt', [error.message])
+  }
+  try {
+    await handle.writeFile(`${JSON.stringify({
+      apiVersion: 'harness-rsi/v1alpha1',
+      kind: 'FinalRecoveryAttemptClaim',
+      metadata: { attemptId, startedAt },
+      spec: {
+        recoveredFromAttemptId,
+        evolutionControllerRevision,
+        finalizerControllerRevision,
+      },
+    }, null, 2)}\n`, 'utf8')
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  return claimPath
+}
+
+async function controllerEntry(pathValue, label) {
+  try {
+    const info = await lstat(pathValue)
+    if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile())) {
+      throw new ProtocolError(`${label} 必须是 Controller 创建的普通文件或目录`)
+    }
+    return info
+  } catch (error) {
+    if (error.code === 'ENOENT') return null
+    throw error
+  }
+}
+
+function finalTrialRoot(runRoot, generation, candidateId, partition, attemptId) {
+  if (!['feedback', 'final'].includes(partition)) {
+    throw new ProtocolError(`Final Recovery Partition 无效：${partition}`)
+  }
+  const resultPartition = partition === 'feedback'
+    ? `feedback-final-${attemptId}`
+    : `final-${attemptId}`
+  const outputPath = resultPath(
+    runRoot,
+    generation,
+    candidateId,
+    resultPartition,
+  )
+  const executionId = createHash('sha256').update(resolve(outputPath)).digest('hex').slice(0, 12)
+  return join(runRoot, 'trials', executionId)
+}
+
+async function inspectFailedFinalArtifacts({
+  runRoot,
+  failedAttemptId,
+  baselineId,
+  championId,
+  generationsCompleted,
+}) {
+  if (typeof failedAttemptId !== 'string'
+      || !/^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/u.test(failedAttemptId)) {
+    throw new ProtocolError('待恢复的 Final Attempt ID 无效')
+  }
+  const generation = generationsCompleted + 1
+  if (!Number.isSafeInteger(generation) || generation < 1) {
+    throw new ProtocolError('待恢复的 Final 缺少合法轮次')
+  }
+  const candidateIds = [...new Set([
+    safeCandidateId(baselineId),
+    safeCandidateId(championId),
+  ])]
+  const finalTrialRoots = candidateIds.map((candidateId) => (
+    finalTrialRoot(runRoot, generation, candidateId, 'final', failedAttemptId)
+  ))
+  for (const pathValue of finalTrialRoots) {
+    assertInside(runRoot, pathValue, 'Final Recovery 密封证据路径')
+    if (await controllerEntry(pathValue, 'Final 试验产物')) {
+      throw new ProtocolError('失败的 Final Attempt 已接触 sealed final；禁止恢复')
+    }
+  }
+
+  const generationResults = join(runRoot, 'results', `generation-${generation}`)
+  const resultInfo = await controllerEntry(generationResults, 'Final Result 轮次')
+  const allowedFeedbackResults = new Set(candidateIds.map(
+    (candidateId) => `${candidateId}-feedback-final-${failedAttemptId}.jsonl`,
+  ))
+  if (resultInfo) {
+    if (!resultInfo.isDirectory()) throw new ProtocolError('Final Result 轮次必须是普通目录')
+    const entries = await readdir(generationResults, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isFile() || !allowedFeedbackResults.has(entry.name)) {
+        throw new ProtocolError('Final Result 轮次存在非 Feedback 产物；禁止恢复', [entry.name])
+      }
+    }
+  }
+
+  const feedbackTrialRoots = candidateIds.map((candidateId) => (
+    finalTrialRoot(runRoot, generation, candidateId, 'feedback', failedAttemptId)
+  ))
+  const sources = []
+  if (resultInfo) sources.push(generationResults)
+  for (const pathValue of feedbackTrialRoots) {
+    assertInside(runRoot, pathValue, 'Final Recovery Feedback 路径')
+    const info = await controllerEntry(pathValue, 'Final Feedback 试验产物')
+    if (info && !info.isDirectory()) {
+      throw new ProtocolError('Final Feedback 试验产物必须是普通目录')
+    }
+    if (info) sources.push(pathValue)
+  }
+  return { generation, sources: [...new Set(sources)].sort() }
+}
+
+/**
+ * 只归档失败 Final 的公开 Feedback 回放；只要发现 sealed final 证据就 fail closed。
+ */
+export async function archiveFailedFinalAttempt({
+  runRoot,
+  failedAttemptId,
+  baselineId,
+  championId,
+  generationsCompleted,
+  now = () => new Date(),
+}) {
+  const inspection = await inspectFailedFinalArtifacts({
+    runRoot,
+    failedAttemptId,
+    baselineId,
+    championId,
+    generationsCompleted,
+  })
+  if (inspection.sources.length === 0) return null
+
+  const archivedAt = now().toISOString()
+  const archiveId = `${archivedAt.replace(/[:.]/gu, '-').toLowerCase()}-${randomUUID().slice(0, 8)}`
+  const archiveBase = join(runRoot, 'final-recovery')
+  const archiveRoot = join(archiveBase, `${failedAttemptId}-${archiveId}`)
+  await mkdir(archiveBase, { recursive: true, mode: 0o700 })
+  await mkdir(archiveRoot, { recursive: false, mode: 0o700 })
+  const archived = []
+  for (const source of inspection.sources) {
+    const relativePath = relative(runRoot, source).replaceAll('\\', '/')
+    const destination = join(archiveRoot, relativePath)
+    assertInside(archiveRoot, destination, 'Final Recovery 归档路径')
+    await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
+    await rename(source, destination)
+    archived.push(relativePath)
+  }
+  const manifest = {
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'FinalRecoveryArchive',
+    metadata: { recoveredFromAttemptId: failedAttemptId, archivedAt },
+    spec: {
+      generation: inspection.generation,
+      sealedFinalAccessed: false,
+      archived,
+    },
+  }
+  await writeJsonFile(join(archiveRoot, 'manifest.json'), manifest)
+  return { root: archiveRoot, manifest }
+}
+
 async function assertCandidateIntegrity({
   candidateId,
   workspace,
@@ -786,15 +1086,119 @@ function coworkBranchProjection({ branchId, state, stepId = null }) {
           ranking: {
             eligible: lastCandidate.status === 'promoted',
             evaluation: lastCandidate.evaluation ?? null,
+            baselineEvaluation: lastCandidate.baselineEvaluation ?? null,
           },
         }
       : null,
   })
 }
 
+async function existingControllerDirectory(pathValue, label) {
+  try {
+    const info = await lstat(pathValue)
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new ProtocolError(`${label} 必须是 Controller 创建的普通目录`)
+    }
+    return true
+  } catch (error) {
+    if (error.code === 'ENOENT') return false
+    throw error
+  }
+}
+
+/**
+ * 恢复时归档本轮编排产物，但保留 Environment 管理的 Trial Root。
+ * OmegaUse 会逐题验证 committed-result.json，复用已提交题目，并把半成品题目单独移入
+ * recovery/trial-attempts 后再运行。这里不能再整棵归档 trials/<executionId>。
+ */
+export async function archiveIncompleteCoworkGeneration({
+  runRoot,
+  state,
+  preserveTrialCheckpoints = false,
+  now = () => new Date(),
+}) {
+  const generation = state?.spec?.generationsCompleted + 1
+  if (!Number.isSafeInteger(generation) || generation < 1) {
+    throw new ProtocolError('Cowork 恢复状态缺少合法的 generationsCompleted')
+  }
+  if (state.metadata?.status === 'stopped') return null
+  const level = state.spec.mutationLevel
+  const nextCandidateId = safeCandidateId(`g${String(generation).padStart(3, '0')}-${level}`)
+  const candidateIds = new Set([
+    nextCandidateId,
+    ...state.spec.candidates
+      .filter((candidate) => candidate?.digest !== null)
+      .map((candidate) => safeCandidateId(candidate.id)),
+  ])
+  const sources = new Set([
+    join(runRoot, 'generations', `generation-${generation}`),
+    join(runRoot, 'results', `generation-${generation}`),
+    join(runRoot, 'candidates', nextCandidateId),
+  ])
+  if (!preserveTrialCheckpoints) {
+    for (const candidateId of candidateIds) {
+      for (const partition of ['feedback', 'selection']) {
+        const outputPath = resultPath(runRoot, generation, candidateId, partition)
+        const executionId = createHash('sha256').update(resolve(outputPath)).digest('hex').slice(0, 12)
+        sources.add(join(runRoot, 'trials', executionId))
+      }
+    }
+  }
+
+  const existing = []
+  for (const source of sources) {
+    assertInside(runRoot, source, 'Cowork 恢复源路径')
+    if (await existingControllerDirectory(source, 'Cowork 未完成产物')) existing.push(source)
+  }
+  if (existing.length === 0) return null
+
+  const attemptId = `${now().toISOString().replace(/[:.]/gu, '-').toLowerCase()}-${randomUUID().slice(0, 8)}`
+  const recoveryBase = join(runRoot, 'recovery')
+  const recoveryRoot = join(recoveryBase, `generation-${generation}-${attemptId}`)
+  await mkdir(recoveryBase, { recursive: true, mode: 0o700 })
+  await mkdir(recoveryRoot, { recursive: false, mode: 0o700 })
+  const archived = []
+  for (const source of existing.sort()) {
+    const relativePath = relative(runRoot, source).replaceAll('\\', '/')
+    const destination = join(recoveryRoot, relativePath)
+    assertInside(recoveryRoot, destination, 'Cowork 恢复归档路径')
+    await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
+    await rename(source, destination)
+    archived.push(relativePath)
+  }
+  const manifest = {
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'CoworkRecoveryArchive',
+    metadata: { attemptId, archivedAt: now().toISOString() },
+    spec: { generation, archived },
+  }
+  await writeJsonFile(join(recoveryRoot, 'manifest.json'), manifest)
+  return { root: recoveryRoot, manifest }
+}
+
+function assertRestorableCoworkState(value, { runId, branchId }) {
+  if (!value || value.apiVersion !== 'harness-rsi/v1alpha1'
+      || value.kind !== 'EvolutionRunState'
+      || value.metadata?.id !== runId
+      || !['running', 'stopped'].includes(value.metadata?.status)
+      || value.spec?.branchId !== branchId
+      || !Array.isArray(value.spec.candidates)
+      || !Array.isArray(value.spec.searchHistory)
+      || !Number.isSafeInteger(value.spec.generationsCompleted)
+      || value.spec.generationsCompleted < 0) {
+    throw new ProtocolError(`Cowork Branch ${branchId} 持久化状态无法恢复`)
+  }
+  const ids = value.spec.candidates.map((candidate) => safeCandidateId(candidate?.id))
+  if (new Set(ids).size !== ids.length || !ids.includes(value.spec.baselineId)
+      || !ids.includes(value.spec.championId)) {
+    throw new ProtocolError(`Cowork Branch ${branchId} Candidate 谱系无效`)
+  }
+  return value
+}
+
 /**
  * Cowork 的单 Branch 执行面。Population 只通过通用 BranchEvolutionDriver 调它，
- * 不读取 SkillsBench、Overlay、SearchStrategy 或 Candidate Store 的内部字段。
+ * 不读取具体 Environment、Overlay、SearchStrategy 或 Candidate Store 的内部字段。
  */
 export function createCoworkBranchEvolutionDriver({
   repositoryRoot,
@@ -816,9 +1220,21 @@ export function createCoworkBranchEvolutionDriver({
   let mutationCatalog = null
   let materializedCandidates = null
   let peerEvidencePath = null
+  let ledgerOffset = null
 
   async function persist() {
     await writeJsonFile(join(runRoot, 'state.json'), state)
+  }
+
+  function ledger(generations) {
+    return buildLedger({
+      generations,
+      candidatesEvaluated,
+      startedAt,
+      solverUsage: context.solverDriver.usage(),
+      updaterUsage: context.updaterDriver.usage(),
+      previousLedger: ledgerOffset,
+    })
   }
 
   async function initialize() {
@@ -863,6 +1279,7 @@ export function createCoworkBranchEvolutionDriver({
     context.runRoot = runRoot
     startedAt = Date.now()
     environment = createEnvironmentRunner({
+      repositoryRoot,
       environment: context.bundle.environment,
       benchmark: context.bundle.benchmark,
       target: context.bundle.target,
@@ -897,6 +1314,7 @@ export function createCoworkBranchEvolutionDriver({
     try {
       baselineRecords = await environment.runCandidatePartition({
         candidateId: champion.id,
+        candidateDigest: champion.digest,
         candidateWorkspace: champion.workspace,
         model: context.bundle.experiment.models.solver,
         partition: 'selection',
@@ -942,13 +1360,7 @@ export function createCoworkBranchEvolutionDriver({
         searchHistory: [],
         lastCandidateId: null,
         lastStepId: null,
-        ledger: buildLedger({
-          generations: 0,
-          candidatesEvaluated: 0,
-          startedAt,
-          solverUsage: context.solverDriver.usage(),
-          updaterUsage: context.updaterDriver.usage(),
-        }),
+        ledger: ledger(0),
         final: null,
       },
     }
@@ -961,6 +1373,185 @@ export function createCoworkBranchEvolutionDriver({
       writeJsonFile(join(runRoot, 'experiment.snapshot.json'), experimentSnapshot),
       persist(),
     ])
+    return coworkBranchProjection({ branchId, state })
+  }
+
+  async function restore() {
+    if (state !== null) {
+      await archiveIncompleteCoworkGeneration({
+        runRoot,
+        state,
+        preserveTrialCheckpoints:
+          context?.bundle.environment.protocol === 'omegause-officeval-docker-v1',
+      })
+      return coworkBranchProjection({ branchId, state })
+    }
+    if (runRootOverride === null || expectedBundleDigest === null) {
+      throw new ProtocolError('Cowork Branch 跨进程恢复需要冻结的 Run Root 和 Bundle Digest')
+    }
+
+    const expectedRunRoot = resolve(runRootOverride)
+    await assertPathKind(expectedRunRoot, `Cowork Branch ${branchId} Run Root`)
+    const canonicalParent = await realpath(dirname(expectedRunRoot))
+    runRoot = await realpath(expectedRunRoot)
+    if (runRoot !== join(canonicalParent, basename(expectedRunRoot))) {
+      throw new ProtocolError(`Cowork Branch ${branchId} Run Root 包含符号链接或别名`)
+    }
+    state = assertRestorableCoworkState(await readJsonFile(join(runRoot, 'state.json')), {
+      runId,
+      branchId,
+    })
+
+    const controllerRevision = await trustedControllerRevision(repositoryRoot)
+    if (controllerRevision !== state.spec.controllerRevision) {
+      throw new ProtocolError('Cowork Branch 恢复时 Controller Revision 已变化', [
+        `state=${state.spec.controllerRevision}`,
+        `current=${controllerRevision}`,
+      ])
+    }
+    context = await createContext({ repositoryRoot, experimentPath, gatewayScope: runId })
+    context.repositoryRoot = repositoryRoot
+    context.runId = runId
+    context.runRoot = runRoot
+    const frozenBundle = await assertPopulationBundleMatches({
+      bundle: context.bundle,
+      repositoryRoot,
+      expectedDigest: expectedBundleDigest,
+    })
+    assertSecrets(requiredSecrets(context.bundle))
+    validateModelGatewayEnvironment(context.bundle.environment.modelGateway)
+
+    const expectedExperimentPath = relative(repositoryRoot, context.absoluteExperimentPath).replaceAll('\\', '/')
+    if (state.spec.experimentPath !== expectedExperimentPath
+        || state.spec.targetSourceRevision !== context.targetSourceRevision
+        || state.spec.updaterSourceRevision !== context.updaterSourceRevision
+        || state.spec.configDigest !== jsonDigest(publicBundleSnapshot(context.bundle))
+        || canonicalJsonDigest(state.spec.recipe) !== canonicalJsonDigest(context.bundle.recipe)) {
+      throw new ProtocolError(`Cowork Branch ${branchId} 状态与当前冻结实验不一致`)
+    }
+
+    const promptPath = join(runRoot, 'trusted-inputs', 'updater-prompt.md')
+    await assertPathKind(promptPath, 'Cowork 冻结 Updater Prompt', 'file')
+    if (await readFile(promptPath, 'utf8') !== frozenBundle.updaterPromptSource) {
+      throw new ProtocolError('Cowork 冻结 Updater Prompt 内容已变化')
+    }
+    context.updaterPromptPath = promptPath
+
+    environment = createEnvironmentRunner({
+      repositoryRoot,
+      environment: context.bundle.environment,
+      benchmark: context.bundle.benchmark,
+      target: context.bundle.target,
+      solverDriver: context.solverDriver,
+      docker: context.docker,
+      runRoot,
+    })
+    const environmentStatus = await environment.preflight()
+    if (environmentStatus.sourceRevision !== state.spec.benchmarkSourceRevision) {
+      throw new ProtocolError('Cowork Branch 恢复时 Benchmark Source Revision 已变化')
+    }
+    await context.searchStrategy.preflight()
+    for (const instanceId of context.bundle.benchmark.allInstanceIds) await environment.taskLayout(instanceId)
+    await context.updaterDriver.ensureRuntime()
+
+    mutationCatalog = mutationCatalogFor(context.bundle.target)
+    const compatibilityPolicy = mutationPolicyFor(
+      context.bundle.target,
+      context.bundle.recipe.spec.moduleSearch.riskCeiling,
+    )
+    const [storedCatalog, storedPolicy] = await Promise.all([
+      readJsonFile(join(runRoot, 'mutation-catalog.json')),
+      readJsonFile(join(runRoot, 'mutation-policy.json')),
+    ])
+    if (canonicalJsonDigest(storedCatalog) !== canonicalJsonDigest(mutationCatalog)
+        || canonicalJsonDigest(storedPolicy) !== canonicalJsonDigest(compatibilityPolicy)) {
+      throw new ProtocolError('Cowork Branch 恢复时 Mutation 权限边界已变化')
+    }
+
+    const expectedSeeds = context.bundle.experiment.evolution.seeds.slice(
+      0,
+      context.bundle.experiment.evolution.trialsPerInstance,
+    )
+    if (canonicalJsonDigest(state.spec.seeds) !== canonicalJsonDigest(expectedSeeds)) {
+      throw new ProtocolError('Cowork Branch 恢复时 Trial Seeds 已变化')
+    }
+
+    materializedCandidates = new Map()
+    for (const record of state.spec.candidates) {
+      if (record.digest === null) {
+        if (record.status !== 'invalid-proposal') {
+          throw new ProtocolError(`Candidate ${record.id} 缺少 Digest`)
+        }
+        continue
+      }
+      if (typeof record.digest !== 'string' || !/^[0-9a-f]{64}$/u.test(record.digest)) {
+        throw new ProtocolError(`Candidate ${record.id} Digest 无效`)
+      }
+      const root = join(runRoot, 'candidates', record.id)
+      const workspace = join(root, 'workspace')
+      const manifest = await readJsonFile(join(root, 'manifest.json'))
+      if (manifest.metadata?.parentId !== record.parentId) {
+        throw new ProtocolError(`Candidate ${record.id} Parent 谱系不一致`)
+      }
+      await assertCandidateIntegrity({
+        candidateId: record.id,
+        workspace,
+        manifest,
+        sourceRevision: state.spec.targetSourceRevision,
+        expectedDigest: record.digest,
+        maximumFileBytes: context.bundle.target.mutation.limits.maximumFileBytes,
+        maximumTreeEntries: context.bundle.target.mutation.limits.maximumTreeEntries,
+        label: `恢复 Candidate ${record.id}`,
+      })
+      const semanticReport = await validateCandidate({ workspace, target: context.bundle.target })
+      if (!semanticReport.valid) {
+        throw new ProtocolError(`恢复 Candidate ${record.id} 语义检查失败`,
+          semanticReport.violations.map((item) => `${item.path}: ${item.reason}`))
+      }
+      materializedCandidates.set(record.id, {
+        id: record.id,
+        root,
+        workspace,
+        digest: record.digest,
+      })
+    }
+    champion = materializedCandidates.get(state.spec.championId)
+    if (!champion || !materializedCandidates.has(state.spec.baselineId)) {
+      throw new ProtocolError(`Cowork Branch ${branchId} 无法恢复 Baseline 或 Champion`)
+    }
+
+    peerEvidencePath = join(runRoot, 'public', 'evolution-log.jsonl')
+    const expectedEvidence = state.spec.searchHistory
+      .map((entry) => JSON.stringify({ branchId, ...entry }))
+      .join('\n') + (state.spec.searchHistory.length > 0 ? '\n' : '')
+    let currentEvidence = null
+    try {
+      await assertPathKind(peerEvidencePath, 'Cowork Evolution Log', 'file')
+      currentEvidence = await readFile(peerEvidencePath, 'utf8')
+    } catch (error) {
+      if (!(error instanceof ProtocolError) || !/\u4e0d\u5b58\u5728/u.test(error.message)) throw error
+    }
+    if (currentEvidence !== expectedEvidence) {
+      const recoveryRoot = join(runRoot, 'recovery')
+      await mkdir(recoveryRoot, { recursive: true, mode: 0o700 })
+      if (currentEvidence !== null) {
+        await rename(peerEvidencePath, join(
+          recoveryRoot,
+          `evolution-log-${new Date().toISOString().replace(/[:.]/gu, '-').toLowerCase()}-${randomUUID().slice(0, 8)}.jsonl`,
+        ))
+      }
+      await writeFile(peerEvidencePath, expectedEvidence, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+    }
+
+    startedAt = Date.now()
+    ledgerOffset = structuredClone(state.spec.ledger)
+    candidatesEvaluated = 0
+    await archiveIncompleteCoworkGeneration({
+      runRoot,
+      state,
+      preserveTrialCheckpoints:
+        context.bundle.environment.protocol === 'omegause-officeval-docker-v1',
+    })
     return coworkBranchProjection({ branchId, state })
   }
 
@@ -979,6 +1570,7 @@ export function createCoworkBranchEvolutionDriver({
     const generationRoot = join(runRoot, 'generations', `generation-${generation}`)
     await mkdir(generationRoot, { recursive: true })
     const moduleSearch = context.bundle.recipe.spec.moduleSearch
+    const searchStrategyStateBefore = structuredClone(state.spec.searchStrategyState)
     let proposed
     if (moduleSearch.authority === 'strategy-directed') {
       proposed = await context.searchStrategy.propose({
@@ -1044,6 +1636,7 @@ export function createCoworkBranchEvolutionDriver({
       onEvent({ stage: 'feedback', generation, message: `${branchId}/${mutationParent.id} 运行 feedback Partition` })
       const feedbackRecords = await environment.runCandidatePartition({
         candidateId: mutationParent.id,
+        candidateDigest: mutationParent.digest,
         candidateWorkspace: mutationParent.workspace,
         model: context.bundle.experiment.models.solver,
         partition: 'feedback',
@@ -1076,10 +1669,10 @@ export function createCoworkBranchEvolutionDriver({
         mutationPolicy: mutationLease,
       })
       materializedCandidates.set(proposal.id, proposal)
-      candidatesEvaluated += 1
       phase = 'selection'
       const baselineRecords = await environment.runCandidatePartition({
         candidateId: champion.id,
+        candidateDigest: champion.digest,
         candidateWorkspace: champion.workspace,
         model: context.bundle.experiment.models.solver,
         partition: 'selection',
@@ -1088,12 +1681,14 @@ export function createCoworkBranchEvolutionDriver({
       })
       const candidateRecords = await environment.runCandidatePartition({
         candidateId: proposal.id,
+        candidateDigest: proposal.digest,
         candidateWorkspace: proposal.workspace,
         model: context.bundle.experiment.models.solver,
         partition: 'selection',
         seeds: state.spec.seeds,
         outputPath: resultPath(runRoot, generation, proposal.id, 'selection'),
       })
+      candidatesEvaluated += 1
       const evaluation = evaluateBenchmark({
         benchmark: context.bundle.benchmark,
         policy: context.bundle.policy,
@@ -1101,13 +1696,7 @@ export function createCoworkBranchEvolutionDriver({
         baselineRecords,
         candidateRecords,
         partitions: ['selection'],
-        evolutionLedger: buildLedger({
-          generations: generation,
-          candidatesEvaluated,
-          startedAt,
-          solverUsage: context.solverDriver.usage(),
-          updaterUsage: context.updaterDriver.usage(),
-        }),
+        evolutionLedger: ledger(generation),
       })
       await writeJsonFile(join(proposal.root, 'evaluation.json'), evaluation)
       const candidateEvaluation = createEvaluationSummary({
@@ -1120,6 +1709,14 @@ export function createCoworkBranchEvolutionDriver({
       })
       const parentId = mutationParent.id
       const championBeforeId = champion.id
+      const baselineEvaluation = createEvaluationSummary({
+        candidateId: championBeforeId,
+        metric: context.bundle.policy.primaryMetric,
+        value: primaryMetricFromEvaluation(
+          evaluation.partitions.selection.baseline,
+          context.bundle.policy.primaryMetric,
+        ),
+      })
       if (evaluation.decision.eligible) champion = proposal
       else rejection = { stage: 'selection-gates', message: 'Candidate 未通过晋升 Gate', details: [] }
       const candidateRecord = {
@@ -1128,6 +1725,7 @@ export function createCoworkBranchEvolutionDriver({
         digest: proposal.digest,
         status: evaluation.decision.eligible ? 'promoted' : 'rejected',
         evaluation: candidateEvaluation,
+        baselineEvaluation,
         mutationPlanId: mutationPlan.metadata.id,
         regionIds: mutationPlan.spec.regionIds,
         decision: evaluation.decision,
@@ -1151,7 +1749,14 @@ export function createCoworkBranchEvolutionDriver({
     } catch (error) {
       // Feedback/Selection/Verifier 出错属于实验基础设施或可信评测失败，不能伪装成
       // 一个“0 分 Candidate”。只有 Updater 自己产生的非法或越界提案才记 invalid。
-      if (phase !== 'update' || !(error instanceof CandidateMutationError)) throw error
+      if (phase !== 'update' || !(error instanceof CandidateMutationError)) {
+        // 保留失败尝试已经消耗的 Token/时间，但不增加 Generation 或
+        // Candidate 评测数。跨进程恢复后会从该 Ledger 继续累加，不会把失败成本“洗掉”。
+        state.spec.searchStrategyState = searchStrategyStateBefore
+        state.spec.ledger = ledger(state.spec.generationsCompleted)
+        await persist()
+        throw error
+      }
       rejection = { stage: 'update-and-diff', message: error.message, details: error.details ?? [] }
       const rejectedId = proposal?.id ?? `g${String(generation).padStart(3, '0')}-${state.spec.mutationLevel}`
       if (!state.spec.candidates.some((candidate) => candidate.id === rejectedId)) {
@@ -1184,13 +1789,7 @@ export function createCoworkBranchEvolutionDriver({
     state.spec.generationsCompleted = generation
     state.spec.lastCandidateId = historyEntry.proposalId
     state.spec.lastStepId = stepId
-    state.spec.ledger = buildLedger({
-      generations: generation,
-      candidatesEvaluated,
-      startedAt,
-      solverUsage: context.solverDriver.usage(),
-      updaterUsage: context.updaterDriver.usage(),
-    })
+    state.spec.ledger = ledger(generation)
     await appendFile(peerEvidencePath, `${JSON.stringify({
       branchId,
       ...historyEntry,
@@ -1229,6 +1828,7 @@ export function createCoworkBranchEvolutionDriver({
 
   return {
     initialize,
+    restore,
     async inspect() {
       if (!state) throw new ProtocolError(`Cowork Branch ${branchId} 尚未初始化`)
       return coworkBranchProjection({ branchId, state })
@@ -1303,6 +1903,7 @@ export async function runEvolution({
   const startedAt = Date.now()
 
   const environment = createEnvironmentRunner({
+    repositoryRoot,
     environment: context.bundle.environment,
     benchmark: context.bundle.benchmark,
     target: context.bundle.target,
@@ -1310,15 +1911,17 @@ export async function runEvolution({
     docker: context.docker,
     runRoot,
   })
-  onEvent({ stage: 'preflight', message: '校验 Docker、DSH Source 与 SkillsBench Revision' })
+  onEvent({ stage: 'preflight', message: '校验 Docker、Target Source 与 Environment Revision' })
   const environmentStatus = await environment.preflight()
   await context.searchStrategy.preflight()
   for (const instanceId of context.bundle.benchmark.allInstanceIds) await environment.taskLayout(instanceId)
-  const updaterImageRevision = await context.docker.imageExists(context.bundle.updater.runtime.image)
-    ? await context.docker.imageLabel(context.bundle.updater.runtime.image, 'org.opencontainers.image.revision')
-    : null
-  if (updaterImageRevision !== context.updaterSourceRevision) {
-    onEvent({ stage: 'runtime-build', message: `构建 Updater Runtime ${context.bundle.updater.runtime.image}` })
+  if (context.bundle.updater.runtime.image) {
+    const updaterImageRevision = await context.docker.imageExists(context.bundle.updater.runtime.image)
+      ? await context.docker.imageLabel(context.bundle.updater.runtime.image, 'org.opencontainers.image.revision')
+      : null
+    if (updaterImageRevision !== context.updaterSourceRevision) {
+      onEvent({ stage: 'runtime-build', message: `构建 Updater Runtime ${context.bundle.updater.runtime.image}` })
+    }
   }
   await context.updaterDriver.ensureRuntime()
 
@@ -1412,6 +2015,7 @@ export async function runEvolution({
       onEvent({ stage: 'feedback', generation, message: `${mutationParent.id} 运行 feedback Partition` })
       const feedbackRecords = await environment.runCandidatePartition({
         candidateId: mutationParent.id,
+        candidateDigest: mutationParent.digest,
         candidateWorkspace: mutationParent.workspace,
         model: context.bundle.experiment.models.solver,
         partition: 'feedback',
@@ -1463,6 +2067,7 @@ export async function runEvolution({
         onEvent({ stage: 'selection', generation, message: `${champion.id} 与 ${proposal.id} 配对评测` })
         const baselineRecords = await environment.runCandidatePartition({
           candidateId: champion.id,
+          candidateDigest: champion.digest,
           candidateWorkspace: champion.workspace,
           model: context.bundle.experiment.models.solver,
           partition: 'selection',
@@ -1471,6 +2076,7 @@ export async function runEvolution({
         })
         const candidateRecords = await environment.runCandidatePartition({
           candidateId: proposal.id,
+          candidateDigest: proposal.digest,
           candidateWorkspace: proposal.workspace,
           model: context.bundle.experiment.models.solver,
           partition: 'selection',
@@ -1624,10 +2230,14 @@ export async function runPopulationEvolution({
   experimentPath,
   runId = createRunId('cowork-population'),
   onEvent = () => {},
+  baselineOnly = false,
 }) {
   safeRunId(runId)
   const controllerRevision = await trustedControllerRevision(repositoryRoot)
   const bundle = await loadExperimentBundle(resolve(experimentPath), repositoryRoot)
+  if (baselineOnly && bundle.recipe.spec.population.concurrency.n_branches !== 1) {
+    throw new ProtocolError('公共 H0 Baseline 只能使用单 Branch Recipe，避免重复评测同一 Candidate')
+  }
   const requestedRuntimeRoot = resolveInside(
     repositoryRoot,
     bundle.target.materialization.runtimeRoot,
@@ -1649,38 +2259,168 @@ export async function runPopulationEvolution({
     configDigest: frozenBundle.digest,
     fingerprint: canonicalJsonDigest({ controllerRevision, configDigest: frozenBundle.digest }),
   }
-  const orchestrator = new PopulationOrchestrator({
-    loadedCampaign,
+  const release = await acquireCampaignLock({
     campaignsRoot: populationsRoot,
     campaignId: runId,
-    frozenConfig,
-    secretValues: secretValuesFromEnvironment(requiredSecrets(bundle)),
-    progress: (event) => onEvent({ stage: event.type, ...event, message: event.type }),
-    createBranch({ branchId, branchesRoot }) {
-      return createCoworkBranchEvolutionDriver({
-        repositoryRoot,
-        experimentPath,
-        runId: `${runId}-${branchId}`,
-        branchId,
-        runRootOverride: join(branchesRoot, branchId, 'run'),
-        expectedBundleDigest: frozenBundle.digest,
-        onEvent,
-      })
-    },
+    command: 'experiment run',
   })
-  await orchestrator.initialize()
-  const state = await orchestrator.run()
-  if (state.status === 'PAUSED_INFRASTRUCTURE') {
-    throw new ProtocolError('Population 因基础设施故障暂停，拒绝把本次运行报告为成功', [
-      `runRoot=${orchestrator.store.root}`,
-    ])
+  try {
+    const orchestrator = new PopulationOrchestrator({
+      loadedCampaign,
+      campaignsRoot: populationsRoot,
+      campaignId: runId,
+      frozenConfig,
+      secretValues: secretValuesFromEnvironment(requiredSecrets(bundle)),
+      progress: (event) => onEvent({ stage: event.type, ...event, message: event.type }),
+      createBranch({ branchId, branchesRoot }) {
+        return createCoworkBranchEvolutionDriver({
+          repositoryRoot,
+          experimentPath,
+          runId: `${runId}-${branchId}`,
+          branchId,
+          runRootOverride: join(branchesRoot, branchId, 'run'),
+          expectedBundleDigest: frozenBundle.digest,
+          onEvent,
+        })
+      },
+    })
+    const initialized = await orchestrator.initialize()
+    const baselineResult = baselineOnly && initialized.status !== 'PAUSED_INFRASTRUCTURE'
+      ? await orchestrator.freezeBaseline()
+      : null
+    const state = baselineResult === null ? await orchestrator.run() : baselineResult.state
+    if (state.status === 'PAUSED_INFRASTRUCTURE') {
+      throw new ProtocolError('Population 因基础设施故障暂停，拒绝把本次运行报告为成功', [
+        `runRoot=${orchestrator.store.root}`,
+      ])
+    }
+    return {
+      runId,
+      runRoot: orchestrator.store.root,
+      championId: state.best.candidateId,
+      state,
+      population: true,
+      ...(baselineResult === null
+        ? {}
+        : { baseline: baselineResult.baseline, baselinePath: baselineResult.baselinePath }),
+    }
+  } finally {
+    await release()
   }
-  return {
-    runId,
-    runRoot: orchestrator.store.root,
-    championId: state.best.candidateId,
-    state,
-    population: true,
+}
+
+/** 从已冻结的 Population + Branch 检查点恢复 Cowork 实验。 */
+export async function resumePopulationEvolution({
+  repositoryRoot,
+  runDirectory,
+  onEvent = () => {},
+}) {
+  const requestedRunRoot = resolve(runDirectory)
+  await assertPathKind(requestedRunRoot, 'Population Run Root')
+  const runRoot = await realpath(requestedRunRoot)
+  const runId = safeRunId(basename(runRoot))
+  const parentState = await readJsonFile(join(runRoot, 'public', 'state.json'))
+  if (parentState?.kind !== 'PopulationCampaignState'
+      || parentState.campaignId !== runId
+      || parentState.status !== 'PAUSED_INFRASTRUCTURE'
+      || !Array.isArray(parentState.branches)
+      || parentState.branches.length === 0) {
+    throw new ProtocolError('Population Run 当前不是可恢复的 PAUSED_INFRASTRUCTURE')
+  }
+  if (parentState.branches.some(({ branchId }) => (
+    typeof branchId !== 'string' || !/^branch-[0-9]{3}$/u.test(branchId)
+  ))) {
+    throw new ProtocolError('Population Branch ID 无效')
+  }
+
+  const branchStates = await Promise.all(parentState.branches.map(async ({ branchId }) => (
+    assertRestorableCoworkState(await readJsonFile(
+      join(runRoot, 'branches', branchId, 'run', 'state.json'),
+    ), { runId: `${runId}-${branchId}`, branchId })
+  )))
+  const experimentPaths = new Set(branchStates.map((branchState) => branchState.spec.experimentPath))
+  if (experimentPaths.size !== 1) {
+    throw new ProtocolError('Population Branch 冻结的 Experiment Path 不一致')
+  }
+  const experimentPath = resolveInside(
+    repositoryRoot,
+    [...experimentPaths][0],
+    'Population Experiment Path',
+  )
+  const controllerRevision = await trustedControllerRevision(repositoryRoot)
+  if (branchStates.some((branchState) => branchState.spec.controllerRevision !== controllerRevision)) {
+    throw new ProtocolError('Population 恢复时 Controller Revision 与 Branch 冻结值不一致')
+  }
+
+  const bundle = await loadExperimentBundle(experimentPath, repositoryRoot)
+  const requestedRuntimeRoot = resolveInside(
+    repositoryRoot,
+    bundle.target.materialization.runtimeRoot,
+    'Target Runtime Root',
+  )
+  await assertPathKind(requestedRuntimeRoot, 'Target Runtime Root')
+  const runtimeRoot = await realpath(requestedRuntimeRoot)
+  const populationsRoot = join(runtimeRoot, 'populations')
+  const expectedRunRoot = join(await realpath(populationsRoot), runId)
+  if (runRoot !== expectedRunRoot) {
+    throw new ProtocolError('Population Run Root 不属于 Experiment 声明的受控 Runtime Root')
+  }
+
+  const frozenBundle = await capturePopulationBundle(bundle, repositoryRoot)
+  if (parentState.configDigest !== frozenBundle.digest) {
+    throw new ProtocolError('Population 恢复时 Bundle Digest 与父状态不一致')
+  }
+  const storedSnapshot = await readJsonFile(join(runRoot, 'public', 'config.snapshot.json'))
+  if (canonicalJsonDigest(storedSnapshot) !== canonicalJsonDigest(frozenBundle.snapshot)) {
+    throw new ProtocolError('Population 冻结 Config Snapshot 已变化')
+  }
+  const loadedCampaign = {
+    config: frozenBundle.snapshot,
+    recipe: bundle.recipe,
+    configDigest: frozenBundle.digest,
+    fingerprint: canonicalJsonDigest({ controllerRevision, configDigest: frozenBundle.digest }),
+  }
+
+  const release = await acquireCampaignLock({
+    campaignsRoot: populationsRoot,
+    campaignId: runId,
+    command: 'experiment resume',
+  })
+  try {
+    const orchestrator = new PopulationOrchestrator({
+      loadedCampaign,
+      campaignsRoot: populationsRoot,
+      campaignId: runId,
+      frozenConfig: frozenBundle.snapshot,
+      secretValues: secretValuesFromEnvironment(requiredSecrets(bundle)),
+      progress: (event) => onEvent({ stage: event.type, ...event, message: event.type }),
+      createBranch({ branchId, branchesRoot }) {
+        return createCoworkBranchEvolutionDriver({
+          repositoryRoot,
+          experimentPath,
+          runId: `${runId}-${branchId}`,
+          branchId,
+          runRootOverride: join(branchesRoot, branchId, 'run'),
+          expectedBundleDigest: frozenBundle.digest,
+          onEvent,
+        })
+      },
+    })
+    const state = await orchestrator.resume()
+    if (state.status === 'PAUSED_INFRASTRUCTURE') {
+      throw new ProtocolError('Population 再次因基础设施故障暂停，未计为评测失败', [
+        `runRoot=${orchestrator.store.root}`,
+      ])
+    }
+    return {
+      runId,
+      runRoot: orchestrator.store.root,
+      championId: state.best.candidateId,
+      state,
+      population: true,
+    }
+  } finally {
+    await release()
   }
 }
 
@@ -1692,10 +2432,16 @@ export async function runConfiguredEvolution(options) {
     : await runPopulationEvolution(options)
 }
 
-export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent = () => {} }) {
-  const runRoot = await realpath(resolve(runDirectory))
-  assertInside(resolve(repositoryRoot, '.rsi/runs'), runRoot, 'Evolution Run')
-  const state = await readJsonFile(join(runRoot, 'state.json'))
+/** 只跑单 Branch H0 selection，不调用 Updater、不进入进化轮次。 */
+export async function runConfiguredBaseline(options) {
+  const experiment = await loadExperimentBundle(resolve(options.experimentPath), options.repositoryRoot)
+  if (experiment.experiment.recipePath === null) {
+    throw new ProtocolError('H0 Baseline 命令需要显式 EvolutionRecipe 以固化完整实验身份')
+  }
+  return await runPopulationEvolution({ ...options, baselineOnly: true })
+}
+
+function assertEvolutionRunState(state) {
   if (
     state?.apiVersion !== 'harness-rsi/v1alpha1' ||
     state?.kind !== 'EvolutionRunState' ||
@@ -1705,17 +2451,213 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
   ) {
     throw new ProtocolError('指定目录不是合法的 Evolution Run')
   }
-  if (state.metadata.status !== 'completed') throw new ProtocolError('只有 completed Run 可以执行 Final Evaluation')
-  if (state.spec.final !== null) throw new ProtocolError('Final Partition 已经解封过；禁止重复访问')
+  return state
+}
+
+function populationFinalEvent(state, type, at, details = {}) {
+  return {
+    sequence: state.events.length + 1,
+    type,
+    at,
+    ...details,
+  }
+}
+
+async function savePopulationFinalState(authorization, final, type, details = {}) {
+  const at = new Date().toISOString()
+  const previousUpdatedAt = authorization.state.updatedAt
+  const next = {
+    ...authorization.state,
+    updatedAt: at,
+    final,
+    events: [
+      ...authorization.state.events,
+      populationFinalEvent(authorization.state, type, at, details),
+    ],
+  }
+  await authorization.store.saveState(next, { expectedUpdatedAt: previousUpdatedAt })
+  authorization.state = next
+  return next
+}
+
+async function loadPopulationFinalAuthorization({
+  repositoryRoot,
+  populationRoot,
+  recoverInfrastructure = false,
+}) {
+  const state = await readJsonFile(join(populationRoot, 'public', 'state.json'))
+  if (
+    state?.apiVersion !== 'harness-rsi/v1alpha1' ||
+    state?.kind !== 'PopulationCampaignState' ||
+    !Array.isArray(state.branches) ||
+    !Array.isArray(state.events)
+  ) {
+    throw new ProtocolError('指定目录不是合法的 Population Campaign')
+  }
+  if (!['CLOSED', 'REPORTED'].includes(state.status)) {
+    throw new ProtocolError('只有已关闭的 Population 可以执行 Final Evaluation')
+  }
+  if (!recoverInfrastructure && state.final !== null && state.final !== undefined) {
+    throw new ProtocolError('Population Final Partition 已经解封过；禁止重复访问')
+  }
+  if (recoverInfrastructure && (
+    state.final?.evaluated !== false
+    || typeof state.final?.attemptId !== 'string'
+    || typeof state.final?.failedAt !== 'string'
+    || state.final?.failure?.name !== 'FinalEvaluationError'
+  )) {
+    throw new ProtocolError('只能恢复已明确记录基础设施失败的 Population Final')
+  }
+  safeRunId(state.campaignId)
+  if (typeof state.configDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(state.configDigest)
+      || typeof state.configFingerprint !== 'string'
+      || !/^[a-f0-9]{64}$/u.test(state.configFingerprint)) {
+    throw new ProtocolError('Population 缺少可验证的冻结配置摘要')
+  }
+  const branchId = state.best?.branchId
+  if (typeof branchId !== 'string' || !/^branch-[0-9]{3}$/u.test(branchId)) {
+    throw new ProtocolError('Population 缺少合法的 Best Branch')
+  }
+  const matchingBranches = state.branches.filter((branch) => branch.branchId === branchId)
+  if (matchingBranches.length !== 1) throw new ProtocolError('Population Best Branch 无法唯一定位')
+  const bestBranch = matchingBranches[0]
+  for (const field of ['candidateId', 'digest', 'revision']) {
+    if (typeof state.best?.[field] !== 'string'
+        || state.best[field] !== bestBranch.incumbent?.[field]) {
+      throw new ProtocolError(`Population Best ${field} 与 Branch Incumbent 不一致`)
+    }
+  }
+
+  const store = new PopulationStore(dirname(populationRoot), basename(populationRoot))
+  if (store.root !== populationRoot) throw new ProtocolError('Population Root 解析结果不一致')
+  const report = await store.readReport()
+  if (
+    report.bestHarness?.kind !== 'BestHarnessImplementation' ||
+    report.bestHarness.branchId !== branchId ||
+    report.bestHarness.candidateId !== state.best.candidateId ||
+    report.bestHarness.digest !== state.best.digest ||
+    report.bestHarness.revision !== state.best.revision
+  ) {
+    throw new ProtocolError('Population Best Harness 报告与关闭状态不一致')
+  }
+
+  const branchesRoot = await realpath(store.branchesRoot)
+  const runRoot = await realpath(join(branchesRoot, branchId, 'run'))
+  assertInside(branchesRoot, runRoot, 'Population Best Branch Run')
+  const branchState = assertEvolutionRunState(await readJsonFile(join(runRoot, 'state.json')))
+  if (branchState.spec.branchId !== branchId) {
+    throw new ProtocolError('Population Best Branch 与子 Run 身份不一致')
+  }
+  if (recoverInfrastructure) {
+    if (branchState.metadata.status !== 'final-failed'
+        || branchState.spec.final?.evaluated !== false
+        || branchState.spec.final?.attemptId !== state.final.attemptId
+        || typeof branchState.spec.final?.failedAt !== 'string') {
+      throw new ProtocolError('Population 与 Best Branch 的 Final 失败状态不一致')
+    }
+  } else {
+    if (!['running', 'stopped', 'completed'].includes(branchState.metadata.status)) {
+      throw new ProtocolError(`Population Best Branch 不能执行 Final：${branchState.metadata.status}`)
+    }
+    if (branchState.spec.final !== null) {
+      throw new ProtocolError('Population Best Branch Final 已经解封过')
+    }
+  }
+  if (branchState.spec.championId !== state.best.candidateId) {
+    throw new ProtocolError('Population Best Candidate 与子 Run Champion 不一致')
+  }
+  const champion = branchState.spec.candidates.find((candidate) => (
+    candidate.id === branchState.spec.championId
+  ))
+  if (!champion || champion.digest !== state.best.digest) {
+    throw new ProtocolError('Population Best Candidate Digest 与子 Run 不一致')
+  }
+  const frozenControllerRevision = branchState.spec.controllerRevision
+  const expectedFingerprint = canonicalJsonDigest({
+    controllerRevision: frozenControllerRevision,
+    configDigest: state.configDigest,
+  })
+  if (expectedFingerprint !== state.configFingerprint) {
+    throw new ProtocolError('Population Bundle 与原 Controller Revision 的冻结指纹不一致')
+  }
+  const currentControllerRevision = await trustedControllerRevision(repositoryRoot)
+  await assertControllerRevisionForFinal({
+    repositoryRoot,
+    frozenRevision: frozenControllerRevision,
+    currentRevision: currentControllerRevision,
+    recoveryRequested: recoverInfrastructure,
+  })
+
+  let recovery = null
+  if (recoverInfrastructure) {
+    if (state.final.branchId !== branchId || state.final.candidateId !== state.best.candidateId) {
+      throw new ProtocolError('Population Final 失败记录与锁定 Champion 不一致')
+    }
+    const claim = await readJsonFile(join(populationRoot, 'final-attempt.json'))
+    if (claim?.apiVersion !== 'harness-rsi/v1alpha1'
+        || claim.kind !== 'FinalAttemptClaim'
+        || claim.metadata?.attemptId !== state.final.attemptId
+        || claim.metadata?.startedAt !== state.final.startedAt) {
+      throw new ProtocolError('原 Final Attempt Claim 与失败状态不一致')
+    }
+    if (await pathExists(join(store.reportRoot, 'final-evaluation.json'))) {
+      throw new ProtocolError('Final 报告已存在；禁止恢复')
+    }
+    recovery = {
+      failedFinal: structuredClone(branchState.spec.final),
+      recoveredFromAttemptId: state.final.attemptId,
+      evolutionControllerRevision: frozenControllerRevision,
+      finalizerControllerRevision: currentControllerRevision,
+    }
+  }
+  return {
+    root: populationRoot,
+    store,
+    state,
+    branchId,
+    runRoot,
+    branchState,
+    currentControllerRevision,
+    recovery,
+  }
+}
+
+async function finalizeCoworkRun({
+  repositoryRoot,
+  runRoot,
+  state,
+  population = null,
+  recovery = null,
+  onEvent = () => {},
+}) {
+  assertEvolutionRunState(state)
+  if (recovery !== null && population === null) {
+    throw new ProtocolError('Final Recovery 只支持有父层审计状态的 Population Run')
+  }
+  if (population === null && state.metadata.status !== 'completed') {
+    throw new ProtocolError('只有 completed Run 可以执行 Final Evaluation')
+  }
+  if (recovery === null && state.spec.final !== null) {
+    throw new ProtocolError('Final Partition 已经解封过；禁止重复访问')
+  }
+  if (recovery !== null && (
+    state.metadata.status !== 'final-failed'
+    || state.spec.final?.attemptId !== recovery.recoveredFromAttemptId
+  )) {
+    throw new ProtocolError('Final Recovery 与子 Run 失败状态不一致')
+  }
   safeRunId(state.metadata.id)
   const baselineId = safeCandidateId(state.spec.baselineId)
   const championId = safeCandidateId(state.spec.championId)
   const controllerRevision = await trustedControllerRevision(repositoryRoot)
-  if (controllerRevision !== state.spec.controllerRevision) {
+  if (recovery === null && controllerRevision !== state.spec.controllerRevision) {
     throw new ProtocolError('当前 Controller Revision 与 Run 冻结值不一致', [
       `run=${state.spec.controllerRevision ?? '(missing)'}`,
       `current=${controllerRevision}`,
     ])
+  }
+  if (recovery !== null && controllerRevision !== recovery.finalizerControllerRevision) {
+    throw new ProtocolError('Final Recovery 预授权的 Controller Revision 已变更')
   }
   const experimentPath = resolveInside(repositoryRoot, state.spec.experimentPath, 'Run Experiment Path')
   const context = await createContext({
@@ -1741,7 +2683,15 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
   if (jsonDigest(publicBundleSnapshot(context.bundle)) !== state.spec.configDigest) {
     throw new ProtocolError('当前 Experiment/Adapter/Benchmark/Policy 已在进化后变更')
   }
+  if (population !== null) {
+    await assertPopulationBundleMatches({
+      bundle: context.bundle,
+      repositoryRoot,
+      expectedDigest: population.state.configDigest,
+    })
+  }
   const environment = createEnvironmentRunner({
+    repositoryRoot,
     environment: context.bundle.environment,
     benchmark: context.bundle.benchmark,
     target: context.bundle.target,
@@ -1801,15 +2751,84 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
 
   const finalAttemptId = randomUUID()
   const finalStartedAt = new Date().toISOString()
-  await claimFinalAttempt(runRoot, { attemptId: finalAttemptId, startedAt: finalStartedAt })
-  state.metadata.status = 'finalizing'
-  state.spec.final = { evaluated: false, attemptId: finalAttemptId, startedAt: finalStartedAt }
-
   const generation = state.spec.generationsCompleted + 1
+  let recoveryArchive = null
+  let finalAudit = {}
+  if (recovery === null) {
+    await claimFinalAttempt(population?.root ?? runRoot, {
+      attemptId: finalAttemptId,
+      startedAt: finalStartedAt,
+    })
+  } else {
+    // 领取 Recovery 前先证明上次尝试没有任何 sealed-final 产物。原 Claim 不删除，
+    // Recovery Claim 也是一次性的，因此并发或二次失败都不会导致反复解封。
+    await inspectFailedFinalArtifacts({
+      runRoot,
+      failedAttemptId: recovery.recoveredFromAttemptId,
+      baselineId,
+      championId,
+      generationsCompleted: state.spec.generationsCompleted,
+    })
+    await claimFinalRecoveryAttempt(population.root, {
+      attemptId: finalAttemptId,
+      startedAt: finalStartedAt,
+      recoveredFromAttemptId: recovery.recoveredFromAttemptId,
+      evolutionControllerRevision: recovery.evolutionControllerRevision,
+      finalizerControllerRevision: recovery.finalizerControllerRevision,
+    })
+    recoveryArchive = await archiveFailedFinalAttempt({
+      runRoot,
+      failedAttemptId: recovery.recoveredFromAttemptId,
+      baselineId,
+      championId,
+      generationsCompleted: state.spec.generationsCompleted,
+    })
+    finalAudit = {
+      recoveredFrom: recovery.failedFinal,
+      recoveredFromAttemptId: recovery.recoveredFromAttemptId,
+      evolutionControllerRevision: recovery.evolutionControllerRevision,
+      finalizerControllerRevision: recovery.finalizerControllerRevision,
+      recoveryArchive: recoveryArchive === null
+        ? null
+        : relative(runRoot, recoveryArchive.root).replaceAll('\\', '/'),
+    }
+  }
+  if (population !== null) {
+    await savePopulationFinalState(population, {
+      evaluated: false,
+      attemptId: finalAttemptId,
+      startedAt: finalStartedAt,
+      branchId: population.branchId,
+      candidateId: championId,
+      ...(recovery === null ? {} : {
+        recoveredFromAttemptId: recovery.recoveredFromAttemptId,
+        evolutionControllerRevision: recovery.evolutionControllerRevision,
+        finalizerControllerRevision: recovery.finalizerControllerRevision,
+        recoveryArchive: finalAudit.recoveryArchive,
+      }),
+    }, recovery === null ? 'POPULATION_FINAL_STARTED' : 'POPULATION_FINAL_RECOVERY_STARTED', {
+      branchId: population.branchId,
+      candidateId: championId,
+      ...(recovery === null ? {} : {
+        recoveredFromAttemptId: recovery.recoveredFromAttemptId,
+        evolutionControllerRevision: recovery.evolutionControllerRevision,
+        finalizerControllerRevision: recovery.finalizerControllerRevision,
+      }),
+    })
+  }
+  state.metadata.status = 'finalizing'
+  state.spec.final = {
+    evaluated: false,
+    attemptId: finalAttemptId,
+    startedAt: finalStartedAt,
+    ...finalAudit,
+  }
+
   try {
     await writeJsonFile(join(runRoot, 'state.json'), state)
     const baselineFeedbackRecords = await environment.runCandidatePartition({
       candidateId: baselineId,
+      candidateDigest: h0State.digest,
       candidateWorkspace: h0Workspace,
       model: context.bundle.experiment.models.solver,
       partition: 'feedback',
@@ -1820,6 +2839,7 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
       ? baselineFeedbackRecords
       : await environment.runCandidatePartition({
           candidateId: championId,
+          candidateDigest: championState.digest,
           candidateWorkspace: championWorkspace,
           model: context.bundle.experiment.models.solver,
           partition: 'feedback',
@@ -1829,6 +2849,7 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
     onEvent({ stage: 'final-feedback', message: 'H0 与锁定 Champion 已完成 Feedback 回放' })
     const baselineRecords = await environment.runCandidatePartition({
       candidateId: baselineId,
+      candidateDigest: h0State.digest,
       candidateWorkspace: h0Workspace,
       model: context.bundle.experiment.models.solver,
       partition: 'final',
@@ -1840,6 +2861,7 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
       ? baselineRecords
       : await environment.runCandidatePartition({
           candidateId: championId,
+          candidateDigest: championState.digest,
           candidateWorkspace: championWorkspace,
           model: context.bundle.experiment.models.solver,
           partition: 'final',
@@ -1850,7 +2872,7 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
       benchmark: context.bundle.benchmark,
       policy: context.bundle.policy,
       run: {
-        id: state.metadata.id,
+        id: population?.state.campaignId ?? state.metadata.id,
         baselineRevision: h0Manifest.spec.treeDigest,
         candidateRevision: championManifest.spec.treeDigest,
       },
@@ -1860,8 +2882,9 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
       evolutionLedger: state.spec.ledger ?? null,
       allowSealed: true,
     })
-    const reportPath = join(runRoot, 'final-evaluation.json')
-    await writeJsonFile(reportPath, report)
+    const reportPath = population === null
+      ? join(runRoot, 'final-evaluation.json')
+      : await population.store.writeFinalReport(report)
     state.spec.final = {
       evaluated: true,
       attemptId: finalAttemptId,
@@ -1869,12 +2892,43 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
       completedAt: new Date().toISOString(),
       baselineId,
       candidateId: championId,
-      report: relative(runRoot, reportPath).replaceAll('\\', '/'),
+      ...finalAudit,
+      report: population === null
+        ? relative(runRoot, reportPath).replaceAll('\\', '/')
+        : `population://${population.state.campaignId}/report/final-evaluation.json`,
     }
     state.metadata.status = 'finalized'
     await writeJsonFile(join(runRoot, 'state.json'), state)
+    if (population !== null) {
+      await savePopulationFinalState(population, {
+        evaluated: true,
+        attemptId: finalAttemptId,
+        startedAt: finalStartedAt,
+        completedAt: state.spec.final.completedAt,
+        branchId: population.branchId,
+        baselineId,
+        candidateId: championId,
+        ...(recovery === null ? {} : {
+          recoveredFromAttemptId: recovery.recoveredFromAttemptId,
+          evolutionControllerRevision: recovery.evolutionControllerRevision,
+          finalizerControllerRevision: recovery.finalizerControllerRevision,
+          recoveryArchive: finalAudit.recoveryArchive,
+        }),
+        report: 'report/final-evaluation.json',
+        metrics: report.rsiMetrics,
+      }, 'POPULATION_FINAL_COMPLETED', {
+        branchId: population.branchId,
+        baselineId,
+        candidateId: championId,
+        report: 'report/final-evaluation.json',
+        ...(recovery === null ? {} : {
+          recoveredFromAttemptId: recovery.recoveredFromAttemptId,
+          finalizerControllerRevision: recovery.finalizerControllerRevision,
+        }),
+      })
+    }
     onEvent({ stage: 'finalized', message: `Final 报告已写入 ${reportPath}` })
-    return { runId: state.metadata.id, reportPath, report }
+    return { runId: population?.state.campaignId ?? state.metadata.id, reportPath, report }
   } catch (error) {
     state.metadata.status = 'final-failed'
     state.spec.final = {
@@ -1883,6 +2937,27 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
       failure: { message: error.message, details: error.details ?? [] },
     }
     await writeJsonFile(join(runRoot, 'state.json'), state)
+    if (population !== null) {
+      // Population public state/event 不回显 Final 任务、Verifier 或上游错误细节。
+      const failure = {
+        name: 'FinalEvaluationError',
+        message: 'Final Evaluation failed; inspect trusted Controller logs',
+      }
+      await savePopulationFinalState(population, {
+        ...(population.state.final ?? {}),
+        evaluated: false,
+        failedAt: state.spec.final.failedAt,
+        failure,
+      }, 'POPULATION_FINAL_FAILED', {
+        branchId: population.branchId,
+        candidateId: championId,
+        failure,
+        ...(recovery === null ? {} : {
+          recoveredFromAttemptId: recovery.recoveredFromAttemptId,
+          finalizerControllerRevision: recovery.finalizerControllerRevision,
+        }),
+      })
+    }
     throw error
   } finally {
     const cleanupErrors = await context.modelGateway.stop()
@@ -1890,4 +2965,34 @@ export async function finalizeEvolution({ repositoryRoot, runDirectory, onEvent 
       onEvent({ stage: 'cleanup-warning', message: `Model Gateway 清理失败：${cleanupErrors.join('；')}` })
     }
   }
+}
+
+export async function finalizeEvolution({
+  repositoryRoot,
+  runDirectory,
+  recoverInfrastructure = false,
+  onEvent = () => {},
+}) {
+  const runRoot = await realpath(resolve(runDirectory))
+  assertInside(resolve(repositoryRoot, '.rsi/runs'), runRoot, 'Evolution Run')
+  if (await pathExists(join(runRoot, 'public', 'state.json'))) {
+    const population = await loadPopulationFinalAuthorization({
+      repositoryRoot,
+      populationRoot: runRoot,
+      recoverInfrastructure,
+    })
+    return await finalizeCoworkRun({
+      repositoryRoot,
+      runRoot: population.runRoot,
+      state: population.branchState,
+      population,
+      recovery: population.recovery,
+      onEvent,
+    })
+  }
+  if (recoverInfrastructure) {
+    throw new ProtocolError('Final Recovery 只支持 Population Run')
+  }
+  const state = await readJsonFile(join(runRoot, 'state.json'))
+  return await finalizeCoworkRun({ repositoryRoot, runRoot, state, onEvent })
 }

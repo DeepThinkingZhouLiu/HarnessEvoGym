@@ -16,6 +16,7 @@ const USAGE_SNAPSHOT_FIELDS = [...USAGE_COUNTER_FIELDS, 'activeRequests']
 const AGENT_ROLES = new Set(['solver', 'updater'])
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u
 const MAX_TOKENS_FIELDS = new Set(['max_tokens', 'max_completion_tokens'])
+const REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 const ROLE_TOKEN_PATTERN = /^[0-9a-f]{64}$/u
 
 function validateUsageSnapshot(value) {
@@ -59,6 +60,11 @@ export async function buildModelGatewayImage({ config, docker, repositoryRoot })
 }
 
 export function validateModelGatewayEnvironment(config) {
+  if (!Number.isSafeInteger(config.maximumUpstreamRetries ?? 2)
+      || (config.maximumUpstreamRetries ?? 2) < 0
+      || (config.maximumUpstreamRetries ?? 2) > 5) {
+    throw new ProtocolError('Model Gateway maximumUpstreamRetries 必须是 0..5 的整数')
+  }
   const apiKey = process.env[config.upstreamApiKeyEnvironment]
   const baseUrl = process.env[config.upstreamBaseUrlEnvironment]
   if (!apiKey || !baseUrl) {
@@ -108,10 +114,15 @@ function normalizeRolePolicy(role, policy) {
   if (!MAX_TOKENS_FIELDS.has(policy.maxTokensField)) {
     throw new ProtocolError(`${role} Model Gateway Policy maxTokensField 无效`)
   }
+  if (policy.reasoningEffort !== null && policy.reasoningEffort !== undefined
+      && !REASONING_EFFORTS.has(policy.reasoningEffort)) {
+    throw new ProtocolError(`${role} Model Gateway Policy reasoningEffort 无效`)
+  }
   return Object.freeze({
     model: policy.model,
     maxTokens: policy.maxTokens,
     maxTokensField: policy.maxTokensField,
+    reasoningEffort: policy.reasoningEffort ?? null,
   })
 }
 
@@ -176,6 +187,7 @@ export class ModelGateway {
           UPSTREAM_BASE_URL_ENV: this.config.upstreamBaseUrlEnvironment,
           GATEWAY_MAX_REQUESTS: String(this.config.maximumRequestsPerRun),
           GATEWAY_MAX_CONCURRENT_REQUESTS: String(this.config.maximumConcurrentRequests),
+          GATEWAY_MAX_UPSTREAM_RETRIES: String(this.config.maximumUpstreamRetries ?? 2),
         },
         secretEnvironment: {
           GATEWAY_TOKEN: tokens.legacy,

@@ -17,7 +17,7 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
 test('Cowork Experiment 分别固定 Target/Updater Source 和模型上限', async () => {
   const bundle = await loadExperimentBundle(
-    resolve(repositoryRoot, 'experiments/cowork-skillsbench-dsh-l1.json'),
+    resolve(repositoryRoot, 'experiments/cowork-omegause-dsh-l1.json'),
     repositoryRoot,
   )
   assert.equal(bundle.target.source.revision.length, 40)
@@ -28,16 +28,12 @@ test('Cowork Experiment 分别固定 Target/Updater Source 和模型上限', asy
   assert.equal(bundle.experiment.models.solver.model, 'gpt-5.6-terra')
   assert.equal(bundle.experiment.models.updater.model, 'gpt-5.6-terra')
   assert.equal(bundle.environment.modelGateway.upstreamApiKeyEnvironment, 'RSI_PROVIDER_API_KEY')
-  assert.equal(bundle.environment.modelGateway.maximumRequestsPerRun, 512)
-  assert.deepEqual(bundle.environment.verifier.proxyEnvironment, [])
-  assert.equal(
-    bundle.environment.verifier.dependencyEnvironment.UV_DOWNLOAD_URL,
-    'RSI_VERIFIER_UV_DOWNLOAD_URL',
-  )
-  assert.deepEqual(bundle.environment.verifier.requiredEvidenceCandidates, ['/logs/verifier/ctrf.json'])
-  assert.equal(bundle.environment.verifier.maximumAttempts, 2)
+  assert.equal(bundle.environment.modelGateway.maximumRequestsPerRun, 4096)
+  assert.equal(bundle.environment.modelGateway.maximumUpstreamRetries, 5)
+  assert.equal(bundle.environment.protocol, 'omegause-officeval-docker-v1')
+  assert.equal(bundle.environment.verifier.timeoutSeconds, 300)
   assert.equal(bundle.environment.feedback.maximumHistoryEntries, 10)
-  assert.equal(bundle.environment.feedback.maximumArtifactEntriesPerCase, 100)
+  assert.equal(bundle.environment.feedback.maximumArtifactEntriesPerCase, 200)
   assert.equal(bundle.environment.task.workspaceLimits.maximumChangedBytes, 536870912)
   assert.equal(bundle.target.mutation.limits.maximumTreeEntries, 1000)
   assert.equal(bundle.target.mutation.semanticChecks.skills.requiredNamePrefix, 'cowork-')
@@ -49,11 +45,18 @@ test('Cowork Experiment 分别固定 Target/Updater Source 和模型上限', asy
 })
 
 test('旧 Cowork Experiment 不声明 Strategy 时保持线性策略兼容', async () => {
-  const config = await readConfigFile(resolve(repositoryRoot, 'experiments/cowork-skillsbench-dsh-l1.json'))
+  const config = await readConfigFile(resolve(repositoryRoot, 'experiments/cowork-omegause-dsh-l1.json'))
   delete config.spec.adapters.strategy
   const experiment = validateExperiment(config)
   assert.equal(experiment.adapters.strategy, null)
   assert.equal(defaultSearchStrategyAdapter().id, 'linear-hill-climb')
+})
+
+test('Evolution Experiment 只接受可审计的模型思考深度', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'experiments/cowork-msa-rsi-linear-single.json'))
+  assert.equal(validateExperiment(config).models.solver.reasoningEffort, 'high')
+  config.spec.models.solver.reasoningEffort = 'untrusted-auto'
+  assert.throws(() => validateExperiment(config), /reasoningEffort 无效/u)
 })
 
 test('DSH Driver 同时接受旧协议名和带版本协议名', async () => {
@@ -68,26 +71,39 @@ test('DSH Driver 同时接受旧协议名和带版本协议名', async () => {
   assert.equal(validateUpdaterAdapter(updater).protocol, 'dsh-headless-docker-v1')
 })
 
-test('Environment Adapter 拒绝让 Verifier 继承非代理宿主变量', async () => {
-  const config = await readConfigFile(resolve(repositoryRoot, 'environments/skillsbench-cowork.yml'))
-  config.spec.verifier.proxyEnvironment.push('HOME')
-  assert.throws(() => validateEnvironmentAdapter(config), /只能继承标准代理环境变量/u)
+test('Codex Updater 固定官方 distribution、版本与内容摘要', async () => {
+  const bundle = await loadExperimentBundle(
+    resolve(repositoryRoot, 'experiments/cowork-msa-rsi-linear-single-l2-one-generation-codex.json'),
+    repositoryRoot,
+  )
+  assert.equal(bundle.updater.protocol, 'codex-exec-v1')
+  assert.equal(bundle.updater.source, null)
+  assert.equal(bundle.updater.runtime.package, '@openai/codex')
+  assert.equal(bundle.updater.runtime.version, '0.149.1')
+  assert.equal(bundle.updater.runtime.providerId, 'zcloud')
+  assert.equal(bundle.updater.runtime.distributionDigest.length, 64)
+
+  const config = await readConfigFile(resolve(repositoryRoot, 'adapters/updaters/codex-cli.yml'))
+  config.spec.runtime.executable = 'codex'
+  assert.throws(() => validateUpdaterAdapter(config), /必须是绝对路径/u)
 })
 
-test('Environment Adapter 拒绝向 Verifier 注入任意依赖变量', async () => {
-  const config = await readConfigFile(resolve(repositoryRoot, 'environments/skillsbench-cowork.yml'))
-  config.spec.verifier.dependencyEnvironment.LD_PRELOAD = 'RSI_VERIFIER_LD_PRELOAD'
-  assert.throws(() => validateEnvironmentAdapter(config), /不允许注入依赖环境变量/u)
+test('OmegaUse Environment Adapter 拒绝给 Verifier 增加宿主环境继承入口', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval.yml'))
+  config.spec.verifier.proxyEnvironment = ['HTTP_PROXY']
+  assert.throws(() => validateEnvironmentAdapter(config), /未知字段/u)
 })
 
-test('Environment Adapter 拒绝宿主路径中的评分证据与过量重试', async () => {
-  const config = await readConfigFile(resolve(repositoryRoot, 'environments/skillsbench-cowork.yml'))
-  config.spec.verifier.requiredEvidenceCandidates = ['/tmp/ctrf.json']
-  assert.throws(() => validateEnvironmentAdapter(config), /必须位于 \/logs\//u)
+test('OmegaUse Environment Adapter 要求 Dataset 与 Evaluator 使用不同根变量', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval.yml'))
+  config.spec.source.evaluatorRootEnvironment = config.spec.source.datasetRootEnvironment
+  assert.throws(() => validateEnvironmentAdapter(config), /必须使用不同/u)
+})
 
-  config.spec.verifier.requiredEvidenceCandidates = ['/logs/verifier/ctrf.json']
-  config.spec.verifier.maximumAttempts = 4
-  assert.throws(() => validateEnvironmentAdapter(config), /maximumAttempts/u)
+test('OmegaUse Environment Adapter 要求 Source Manifest 与 Revision 完整固定', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval.yml'))
+  config.spec.source.manifestDigest = 'floating'
+  assert.throws(() => validateEnvironmentAdapter(config), /64 位小写 SHA-256/u)
 })
 
 test('Model Provider Adapter 拒绝重复模型目录', async () => {
@@ -97,19 +113,33 @@ test('Model Provider Adapter 拒绝重复模型目录', async () => {
 })
 
 test('Environment Adapter 拒绝把 Model Gateway 命名为 localhost', async () => {
-  const config = await readConfigFile(resolve(repositoryRoot, 'environments/skillsbench-cowork.yml'))
+  const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval.yml'))
   config.spec.modelGateway.alias = 'localhost'
-  assert.throws(() => validateEnvironmentAdapter(config), /不能使用 localhost/u)
+  assert.throws(() => validateEnvironmentAdapter(config), /非 localhost/u)
 })
 
 test('Environment Adapter 拒绝互相矛盾的工作区预算', async () => {
-  const config = await readConfigFile(resolve(repositoryRoot, 'environments/skillsbench-cowork.yml'))
+  const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval.yml'))
+  config.spec.task.workspaceLimits.maximumFiles = 1000
   config.spec.task.workspaceLimits.maximumChangedFiles = config.spec.task.workspaceLimits.maximumFiles + 1
-  assert.throws(() => validateEnvironmentAdapter(config), /maximumChangedFiles 不能大于 maximumFiles/u)
+  assert.throws(() => validateEnvironmentAdapter(config), /子上限不能超过对应总上限/u)
+})
+
+test('OmegaUse Environment 并发 Trial 不能超过可审计上限', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval.yml'))
+  assert.equal(validateEnvironmentAdapter(config).task.maximumConcurrentTrials, 4)
+  config.spec.task.maximumConcurrentTrials = 9
+  assert.throws(() => validateEnvironmentAdapter(config), /maximumConcurrentTrials/u)
+})
+
+test('Environment Adapter 将上游模型额外重试限制在 0..5 次', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval.yml'))
+  config.spec.modelGateway.maximumUpstreamRetries = 6
+  assert.throws(() => validateEnvironmentAdapter(config), /maximumUpstreamRetries/u)
 })
 
 test('Environment Adapter 拒绝与可信评分挂载冲突的工作区', async () => {
-  const config = await readConfigFile(resolve(repositoryRoot, 'environments/skillsbench-cowork.yml'))
+  const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval.yml'))
   config.spec.task.workspacePath = '/logs/submission'
   assert.throws(() => validateEnvironmentAdapter(config), /RSI 保留挂载冲突/u)
 })

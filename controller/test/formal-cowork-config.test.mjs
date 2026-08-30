@@ -85,3 +85,38 @@ test('Cowork L1+L2 单轮 Probe 使用正式题集并只产生一个 Candidate',
   assert.equal(bundle.experiment.models.solver.reasoningEffort, 'high')
   assert.equal(bundle.experiment.models.updater.reasoningEffort, 'high')
 })
+
+test('正式 Codex 五 Mode 使用 32 总预算、双 Branch 和受控跨 Mode 并发', async () => {
+  for (const mode of MODES) {
+    const bundle = await loadExperimentBundle(
+      resolve(REPOSITORY_ROOT, `experiments/cowork-msa-rsi-formal32-codex-${mode}.json`),
+      REPOSITORY_ROOT,
+    )
+    const population = bundle.recipe.spec.population
+    assert.equal(population.mode, mode)
+    assert.equal(population.concurrency.n_branches, mode === 'single' ? 1 : 2)
+    assert.equal(population.budget.total_budget, 32)
+    assert.equal(createBudgetPlan(population).totalBudget, 32)
+    assert.equal(population.budget.beta, ['competition', 'combined'].includes(mode) ? 0.5 : 0)
+    assert.equal(bundle.recipe.spec.moduleSearch.authority, 'strategy-directed')
+    assert.equal(bundle.recipe.spec.moduleSearch.strategy, 'linear-hill-climb')
+    assert.equal(bundle.recipe.spec.moduleSearch.riskCeiling, 'l2')
+    assert.equal(bundle.experiment.evolution.mutationLevel, 'l2')
+    assert.equal(bundle.experiment.evolution.generations, 32)
+    assert.equal(bundle.updater.id, 'codex-cli')
+    assert.equal(bundle.updater.protocol, 'codex-exec-v1')
+    assert.equal(bundle.target.id, 'msa-minimal-cowork-rsi')
+    assert.equal(bundle.environment.id, 'omegause-officeval')
+    assert.equal(bundle.environment.task.maximumConcurrentTrials, 2)
+    assert.equal(bundle.experiment.models.solver.model, 'gpt-5.6-terra')
+    assert.equal(bundle.experiment.models.updater.model, 'gpt-5.6-terra')
+    assert.equal(bundle.experiment.models.solver.reasoningEffort, 'high')
+    assert.equal(bundle.experiment.models.updater.reasoningEffort, 'high')
+    assert.equal(bundle.experiment.evolution.trialsPerInstance, 1)
+    assert.deepEqual(bundle.experiment.evolution.seeds, [20260827])
+    assert.equal(bundle.benchmark.partitions.feedback.instanceIds.length, 55)
+    assert.equal(bundle.benchmark.partitions.selection.instanceIds.length, 18)
+    assert.equal(bundle.benchmark.partitions.final.instanceIds.length, 18)
+    assert.equal(bundle.benchmark.partitions.final.visibility, 'sealed')
+  }
+})

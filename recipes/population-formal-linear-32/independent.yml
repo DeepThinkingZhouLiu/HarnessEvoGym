@@ -1,0 +1,14 @@
+apiVersion: harness-rsi/v1alpha1
+kind: EvolutionRecipe
+spec:
+  population:
+    mode: independent
+    concurrency: { n_branches: 2 }
+    # 两个 Branch 平分 32 个 Candidate Credit，各自最多消耗 16 次。
+    budget: { total_budget: 32, beta: 0 }
+    peer_sharing: { enabled: false }
+    competition: { enabled: false }
+  moduleSearch:
+    authority: strategy-directed
+    riskCeiling: l2
+    strategy: linear-hill-climb

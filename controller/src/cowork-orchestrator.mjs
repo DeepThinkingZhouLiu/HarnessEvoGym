@@ -348,12 +348,15 @@ async function createContext({
     source: bundle.target.source,
     label: 'Target Source',
   })
-  const updaterSource = bundle.updater.source.path === bundle.target.source.path
-    ? targetSource
-    : await resolvePinnedSource(repositoryRoot, bundle.updater.source, 'Updater Source')
-  if (updaterSource.revision !== bundle.updater.source.revision) {
+  const updaterSource = bundle.updater.source === null
+    ? null
+    : (bundle.updater.source.path === bundle.target.source.path
+        ? targetSource
+        : await resolvePinnedSource(repositoryRoot, bundle.updater.source, 'Updater Source'))
+  if (updaterSource !== null && updaterSource.revision !== bundle.updater.source.revision) {
     throw new ProtocolError('Updater Adapter Revision 与复用的 Target Source Revision 不一致')
   }
+  const updaterSourceRevision = updaterSource?.revision ?? bundle.updater.runtime.distributionDigest
   const baselineTemplate = bundle.target.materialization.baselinePath
     ? resolveInside(repositoryRoot, bundle.target.materialization.baselinePath, 'Target Baseline Path')
     : null
@@ -362,7 +365,7 @@ async function createContext({
     ...(['dsh-headless-docker', 'dsh-headless-docker-v1'].includes(bundle.target.solver.protocol)
       ? [['Target Solver', bundle.target.solver.runtime, targetSource]]
       : []),
-    ['Updater', bundle.updater.runtime, updaterSource],
+    ...(updaterSource === null ? [] : [['Updater', bundle.updater.runtime, updaterSource]]),
   ]) {
     const sourcePackage = await readJsonFile(join(source.root, 'apps/cli/package.json'))
     if (runtime.package !== sourcePackage.name || runtime.version !== sourcePackage.version) {
@@ -378,11 +381,13 @@ async function createContext({
       'Target Runtime Dockerfile',
       'file',
     ),
-    assertPathKind(
-      resolveInside(repositoryRoot, bundle.updater.runtime.dockerfile, 'Updater Runtime Dockerfile'),
-      'Updater Runtime Dockerfile',
-      'file',
-    ),
+    ...(bundle.updater.runtime.dockerfile
+      ? [assertPathKind(
+          resolveInside(repositoryRoot, bundle.updater.runtime.dockerfile, 'Updater Runtime Dockerfile'),
+          'Updater Runtime Dockerfile',
+          'file',
+        )]
+      : []),
     assertPathKind(
       resolveInside(repositoryRoot, bundle.updater.promptPath, 'Updater Prompt'),
       'Updater Prompt',
@@ -424,8 +429,8 @@ async function createContext({
     provider: bundle.provider,
     docker,
     repositoryRoot,
-    sourceRevision: updaterSource.revision,
-    sourcePath: bundle.updater.source.path,
+    sourceRevision: updaterSourceRevision,
+    sourcePath: bundle.updater.source?.path ?? null,
     modelGateway,
   })
   const runRoot = runRootOverride
@@ -434,8 +439,8 @@ async function createContext({
     sourceRoot: targetSource.root,
     targetSourceRoot: targetSource.root,
     targetSourceRevision: targetSource.revision,
-    updaterSourceRoot: updaterSource.root,
-    updaterSourceRevision: updaterSource.revision,
+    updaterSourceRoot: updaterSource?.root ?? null,
+    updaterSourceRevision,
     baselineTemplate,
     sourceRevision: targetSource.revision,
     docker,
@@ -495,7 +500,7 @@ export async function buildExperimentRuntime({ repositoryRoot, experimentPath })
     repositoryRoot,
   })
   return {
-    image: context.bundle.updater.runtime.image,
+    image: context.bundle.updater.runtime.image ?? null,
     gatewayImage,
     package: `${context.bundle.updater.runtime.package}@${context.bundle.updater.runtime.version}`,
     sourceRevision: context.updaterSourceRevision,
@@ -1900,11 +1905,13 @@ export async function runEvolution({
   const environmentStatus = await environment.preflight()
   await context.searchStrategy.preflight()
   for (const instanceId of context.bundle.benchmark.allInstanceIds) await environment.taskLayout(instanceId)
-  const updaterImageRevision = await context.docker.imageExists(context.bundle.updater.runtime.image)
-    ? await context.docker.imageLabel(context.bundle.updater.runtime.image, 'org.opencontainers.image.revision')
-    : null
-  if (updaterImageRevision !== context.updaterSourceRevision) {
-    onEvent({ stage: 'runtime-build', message: `构建 Updater Runtime ${context.bundle.updater.runtime.image}` })
+  if (context.bundle.updater.runtime.image) {
+    const updaterImageRevision = await context.docker.imageExists(context.bundle.updater.runtime.image)
+      ? await context.docker.imageLabel(context.bundle.updater.runtime.image, 'org.opencontainers.image.revision')
+      : null
+    if (updaterImageRevision !== context.updaterSourceRevision) {
+      onEvent({ stage: 'runtime-build', message: `构建 Updater Runtime ${context.bundle.updater.runtime.image}` })
+    }
   }
   await context.updaterDriver.ensureRuntime()
 

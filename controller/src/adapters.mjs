@@ -12,7 +12,7 @@ import {
   readConfigFile,
   resolveInside,
 } from './config.mjs'
-import { posix } from 'node:path'
+import { isAbsolute, posix } from 'node:path'
 import { normalizeMutationCatalogConfiguration } from './mutation-catalog.mjs'
 import { normalizeRelativePath } from './path-policy.mjs'
 import { ProtocolError, readJsonFile, validateBenchmark, validateEvaluationPolicy } from './protocol.mjs'
@@ -53,6 +53,47 @@ function validateRuntime(raw, label) {
     version: expectText(runtime.version, `${label}.version`),
     profile: expectText(runtime.profile, `${label}.profile`),
     preset: expectText(runtime.preset, `${label}.preset`),
+    secretEnvironment,
+  }
+}
+
+function absoluteRuntimePath(value, label) {
+  const pathValue = expectText(value, label)
+  if (!isAbsolute(pathValue) || pathValue.includes('\0')) {
+    throw new ProtocolError(`${label} 必须是绝对路径`)
+  }
+  return pathValue
+}
+
+function validateCodexUpdaterRuntime(raw, label) {
+  const runtime = expectObject(raw, label)
+  const secretEnvironment = expectStringArray(runtime.secretEnvironment, `${label}.secretEnvironment`)
+  for (const name of secretEnvironment) {
+    if (!ENVIRONMENT_NAME.test(name)) throw new ProtocolError(`${label}.secretEnvironment 包含非法名称：${name}`)
+  }
+  const providerId = expectText(runtime.providerId, `${label}.providerId`)
+  if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(providerId)) {
+    throw new ProtocolError(`${label}.providerId 不是合法 Codex Provider 标识`)
+  }
+  const version = expectText(runtime.version, `${label}.version`)
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version)) {
+    throw new ProtocolError(`${label}.version 必须是固定语义版本`)
+  }
+  return {
+    executable: absoluteRuntimePath(runtime.executable, `${label}.executable`),
+    distributionRoot: absoluteRuntimePath(runtime.distributionRoot, `${label}.distributionRoot`),
+    nodeBinary: absoluteRuntimePath(runtime.nodeBinary, `${label}.nodeBinary`),
+    bwrapPath: absoluteRuntimePath(runtime.bwrapPath, `${label}.bwrapPath`),
+    setprivPath: absoluteRuntimePath(runtime.setprivPath, `${label}.setprivPath`),
+    package: expectText(runtime.package, `${label}.package`),
+    version,
+    distributionDigest: sha256Digest(runtime.distributionDigest, `${label}.distributionDigest`),
+    providerId,
+    maximumModelRequests: expectNumber(
+      runtime.maximumModelRequests ?? 64,
+      `${label}.maximumModelRequests`,
+      { integer: true, min: 1, max: 128 },
+    ),
     secretEnvironment,
   }
 }
@@ -403,19 +444,32 @@ export function validateUpdaterAdapter(input) {
   const id = metadataId(input, 'UpdaterAdapter')
   const spec = expectObject(input.spec, 'UpdaterAdapter.spec')
   const protocol = expectText(spec.protocol, 'UpdaterAdapter.spec.protocol')
-  if (!['dsh-headless-docker', 'dsh-headless-docker-v1'].includes(protocol)) {
+  if (!['dsh-headless-docker', 'dsh-headless-docker-v1', 'codex-exec-v1'].includes(protocol)) {
     throw new ProtocolError(`当前未实现 Updater Protocol：${protocol}`)
   }
   const prompt = expectObject(spec.prompt, 'UpdaterAdapter.spec.prompt')
-  const source = expectObject(spec.source, 'UpdaterAdapter.spec.source')
-  const sourceKind = expectText(source.kind, 'UpdaterAdapter.spec.source.kind')
-  if (sourceKind !== 'git-submodule') throw new ProtocolError('当前 UpdaterAdapter 只支持 git-submodule Source')
   const output = expectObject(spec.output, 'UpdaterAdapter.spec.output')
   const mutationReportName = relativePath(
     expectObject(output.mutationReport, 'UpdaterAdapter.spec.output.mutationReport').name,
     'UpdaterAdapter.spec.output.mutationReport.name',
   )
   if (mutationReportName.includes('/')) throw new ProtocolError('Mutation Report name 必须是单个文件名')
+  if (protocol === 'codex-exec-v1') {
+    if (spec.source !== undefined) throw new ProtocolError('Codex Updater 不接受 Source；运行时由固定 distribution 提供')
+    return {
+      apiVersion: API_VERSION,
+      kind: 'UpdaterAdapter',
+      id,
+      protocol,
+      source: null,
+      runtime: validateCodexUpdaterRuntime(spec.runtime, 'UpdaterAdapter.spec.runtime'),
+      promptPath: relativePath(prompt.path, 'UpdaterAdapter.spec.prompt.path'),
+      mutationReportName,
+    }
+  }
+  const source = expectObject(spec.source, 'UpdaterAdapter.spec.source')
+  const sourceKind = expectText(source.kind, 'UpdaterAdapter.spec.source.kind')
+  if (sourceKind !== 'git-submodule') throw new ProtocolError('当前 UpdaterAdapter 只支持 git-submodule Source')
   return {
     apiVersion: API_VERSION,
     kind: 'UpdaterAdapter',

@@ -11,6 +11,7 @@ import {
   stageUpdaterContext,
 } from './runtimes/dsh.mjs'
 import { createMsaMinimalCoworkSolverDriver } from './runtimes/msa-minimal-cowork.mjs'
+import { createCodexUpdaterDriver } from './runtimes/codex-updater.mjs'
 
 const DRIVER_PROTOCOL = /^[a-z0-9]+(?:-[a-z0-9]+)*-v[0-9]+$/u
 const ENVIRONMENT_FACTORIES = new Map()
@@ -255,6 +256,7 @@ registerEnvironmentDriver('text-reasoning-deterministic-v1', (options) => new Te
 registerSolverDriver('dsh-headless-docker-v1', createDshSolverDriver)
 registerSolverDriver('msa-minimal-docker-v1', createMsaMinimalCoworkSolverDriver)
 registerUpdaterDriver('dsh-headless-docker-v1', createDshUpdaterDriver)
+registerUpdaterDriver('codex-exec-v1', createCodexUpdaterDriver)
 
 export function createSolverDriver(options) {
   const protocol = options.target.solver.protocol === 'dsh-headless-docker'

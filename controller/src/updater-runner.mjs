@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { relayWrappedInvocation } from './model-gateway-relay.mjs'
@@ -31,6 +31,8 @@ export const UPDATER_SANDBOX_PATHS = Object.freeze({
   feedback: '/opt/harness-rsi/feedback',
   evolutionLog: '/opt/harness-rsi/evolution-log.jsonl',
   peerLogs: '/opt/harness-rsi/peer-logs',
+  upstream: '/opt/harness-rsi/upstream',
+  output: '/opt/harness-rsi/output',
   runtimePatch: '/opt/harness-rsi/runtime.patch.yml',
   nodeToolchain: '/opt/harness-rsi/node-toolchain',
   run: '/work',
@@ -85,6 +87,7 @@ export function buildUpdaterInvocation({
   nodeBinary,
   updaterRuntime,
   codexPath,
+  codexDistributionRoot,
   updaterProvider,
   updaterModel,
   updaterReasoningEffort,
@@ -99,10 +102,13 @@ export function buildUpdaterInvocation({
   uid,
   gid,
   feedbackRoot,
+  upstreamRoot,
+  outputRoot,
   evolutionLogPath,
   peerLogs = [],
   bwrapPath,
   setprivPath = '/usr/bin/setpriv',
+  gatewayRelayPath,
   baseEnv = process.env,
 }) {
   if (!UPDATER_BACKENDS.has(backend)) {
@@ -138,10 +144,20 @@ export function buildUpdaterInvocation({
   const nodeToolchain = executableDistributionRoot(node)
   const codex = backend === 'codex-cli' ? resolve(codexPath) : null
   const runtime = backend === 'codex-cli'
-    ? executableDistributionRoot(codex)
+    ? (codexDistributionRoot === undefined
+        ? executableDistributionRoot(codex)
+        : resolve(codexDistributionRoot))
     : resolve(updaterRuntime)
   if (runtime === null) throw new ProtocolError('Codex CLI 必须来自可挂载的独立 distribution')
-  const relaySourcePath = join(dirname(patch), 'model-gateway-relay.mjs')
+  if (backend === 'codex-cli') {
+    const codexRelativePath = relative(runtime, codex)
+    if (codexRelativePath === '..' || codexRelativePath.startsWith(`..${sep}`)) {
+      throw new ProtocolError('Codex CLI executable 必须位于固定 distribution 内')
+    }
+  }
+  const relaySourcePath = gatewayRelayPath === undefined
+    ? join(dirname(patch), 'model-gateway-relay.mjs')
+    : resolve(gatewayRelayPath)
   const isolatedGateway = gatewaySocketPath !== undefined
   if (isolatedGateway) {
     const socket = resolve(gatewaySocketPath)
@@ -192,6 +208,7 @@ export function buildUpdaterInvocation({
         '--ignore-user-config',
         '--ignore-rules',
         '--ephemeral',
+        '--json',
         '--skip-git-repo-check',
         '--dangerously-bypass-approvals-and-sandbox',
         '--model', updaterModel,
@@ -201,6 +218,8 @@ export function buildUpdaterInvocation({
         '--config', `model_providers.${updaterProvider}.base_url=${toml(gatewayUrl)}`,
         '--config', `model_providers.${updaterProvider}.env_key=${toml('RSI_MODEL_GATEWAY_DUMMY_KEY')}`,
         '--config', `model_providers.${updaterProvider}.wire_api=${toml('responses')}`,
+        '--config', `model_providers.${updaterProvider}.request_max_retries=5`,
+        '--config', `model_providers.${updaterProvider}.stream_max_retries=5`,
         '--cd', workspace,
         prompt,
       ],
@@ -281,6 +300,16 @@ export function buildUpdaterInvocation({
         readOnly: true,
       },
       ...normalizedPeerLogs,
+      ...(upstreamRoot === undefined ? [] : [{
+        source: resolve(upstreamRoot),
+        destination: UPDATER_SANDBOX_PATHS.upstream,
+        readOnly: true,
+      }]),
+      ...(outputRoot === undefined ? [] : [{
+        source: resolve(outputRoot),
+        destination: UPDATER_SANDBOX_PATHS.output,
+        readOnly: false,
+      }]),
       { source: run, destination: UPDATER_SANDBOX_PATHS.run, readOnly: false },
       ...(backend === 'deepseek-harness' ? [{
         source: patch,

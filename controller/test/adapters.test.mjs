@@ -71,6 +71,23 @@ test('DSH Driver 同时接受旧协议名和带版本协议名', async () => {
   assert.equal(validateUpdaterAdapter(updater).protocol, 'dsh-headless-docker-v1')
 })
 
+test('Codex Updater 固定官方 distribution、版本与内容摘要', async () => {
+  const bundle = await loadExperimentBundle(
+    resolve(repositoryRoot, 'experiments/cowork-msa-rsi-linear-single-l2-one-generation-codex.json'),
+    repositoryRoot,
+  )
+  assert.equal(bundle.updater.protocol, 'codex-exec-v1')
+  assert.equal(bundle.updater.source, null)
+  assert.equal(bundle.updater.runtime.package, '@openai/codex')
+  assert.equal(bundle.updater.runtime.version, '0.149.1')
+  assert.equal(bundle.updater.runtime.providerId, 'zcloud')
+  assert.equal(bundle.updater.runtime.distributionDigest.length, 64)
+
+  const config = await readConfigFile(resolve(repositoryRoot, 'adapters/updaters/codex-cli.yml'))
+  config.spec.runtime.executable = 'codex'
+  assert.throws(() => validateUpdaterAdapter(config), /必须是绝对路径/u)
+})
+
 test('OmegaUse Environment Adapter 拒绝给 Verifier 增加宿主环境继承入口', async () => {
   const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval.yml'))
   config.spec.verifier.proxyEnvironment = ['HTTP_PROXY']

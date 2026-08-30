@@ -222,6 +222,23 @@ L2/L3 并把 Candidate 视为主动恶意代码，还应在 Model Gateway 增加
 多 Branch Mode 还会多做一次 H0 基线评测，所以最终比较时必须同时
 报告 Solver/Updater Token 和墙钟时间，不能只看最终分数。
 
+### Codex 0.149 Updater 对照实验
+
+`adapters/updaters/codex-cli.yml` 把 Updater 从 DSH 换成官方 Codex CLI 0.149.1，
+并固定 npm distribution 的绝对路径、包版本和完整 SHA-256 摘要。Codex 使用隔离的
+`CODEX_HOME`，忽略用户配置与 Rules；它只读 feedback 和上游 Harness 源码，只能写
+当前 Candidate 与独立 Mutation Report 目录。真实 Provider Key 只由 Controller-owned
+Responses Gateway 持有，Codex 通过无网络 Bubblewrap 内的 Unix socket relay 调用
+`gpt-5.6-terra/high`。Provider 请求和流中断最多重试 5 次。
+
+可运行配置是
+`experiments/cowork-msa-rsi-linear-single-l2-one-generation-codex.json`：从全新 H0
+开始，使用 Single + `linear-hill-climb`，开放 MSA Cowork L1+L2，只生成一个
+Candidate；feedback/selection 仍为同一组 55/18 OmegaUse-OfficeVal 任务，因此可用于和
+DSH Updater 做同协议对照。自构建 `codex-dev --provider zcloud` 在模型协议上也可用，
+但正式实验不能读取个人 `~/.codex`；应先把它安装到独立只读目录，固定版本和摘要，再用
+新的 Updater Adapter 替换本配置，不要直接复用开发中的可变二进制。
+
 ### 模式与 Budget
 
 ```yaml

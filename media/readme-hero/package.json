@@ -1,0 +1,17 @@
+{
+  "name": "@harness-evo-gym/readme-hero",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "studio": "remotion studio src/index.ts --no-open",
+    "render:mp4": "remotion render src/index.ts HarnessEvoGymHero ../../docs/assets/harness-evo-gym-loop.mp4 --codec=h264 --crf=18",
+    "render:gif": "remotion render src/index.ts HarnessEvoGymHero ../../docs/assets/harness-evo-gym-loop.gif --codec=gif --every-nth-frame=2",
+    "render:still": "remotion still src/index.ts HarnessEvoGymHero ../../docs/assets/harness-evo-gym-hero.png --frame=140"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.506",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "remotion": "4.0.506"
+  }
+}

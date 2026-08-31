@@ -8,7 +8,11 @@ import { fileURLToPath } from 'node:url'
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const CONTROLLER_PATH = join(REPOSITORY_ROOT, 'controller', 'src', 'cli.mjs')
-const SUITE_ID = 'cowork-formal32-codex-terra-high-seed20260827-v1'
+const DEFAULT_SUITE_ID = 'cowork-formal32-codex-terra-high-seed20260827-v1'
+const SUITE_ID = process.env.RSI_FORMAL_SUITE_ID?.trim() || DEFAULT_SUITE_ID
+if (!/^[a-z0-9][a-z0-9._-]{2,119}$/u.test(SUITE_ID)) {
+  throw new Error('RSI_FORMAL_SUITE_ID 只能包含小写字母、数字、点、下划线和连字符')
+}
 const OUTPUT_ROOT = join(REPOSITORY_ROOT, '.rsi', 'experiment-suites', SUITE_ID)
 const RUNS_ROOT = join(REPOSITORY_ROOT, '.rsi', 'runs', 'populations')
 const RETRY_DELAY_MS = 60_000

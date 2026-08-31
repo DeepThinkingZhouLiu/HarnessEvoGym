@@ -157,6 +157,38 @@ async function runController(campaign, action) {
   return result
 }
 
+async function buildSharedRuntime() {
+  const log = createWriteStream(join(OUTPUT_ROOT, 'runtime-build.log'), {
+    flags: 'a',
+    mode: 0o600,
+  })
+  log.write(`${JSON.stringify({ type: 'suite-runtime-build-started', at: now() })}\n`)
+  const child = spawn(process.execPath, [
+    CONTROLLER_PATH,
+    'runtime',
+    'build',
+    '--experiment',
+    CAMPAIGNS[0].config,
+  ], {
+    cwd: REPOSITORY_ROOT,
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  activeChildren.add(child)
+  child.stdout.pipe(log, { end: false })
+  child.stderr.pipe(log, { end: false })
+  const result = await new Promise((resolvePromise, reject) => {
+    child.once('error', reject)
+    child.once('exit', (code, signal) => resolvePromise({ code, signal }))
+  })
+  activeChildren.delete(child)
+  log.write(`${JSON.stringify({ type: 'suite-runtime-build-completed', at: now(), ...result })}\n`)
+  await new Promise((resolvePromise) => log.end(resolvePromise))
+  if (result.code !== 0 || result.signal !== null) {
+    throw new Error(`正式实验 Runtime 预构建失败：code=${result.code} signal=${result.signal}`)
+  }
+}
+
 async function runCampaign(campaign) {
   while (true) {
     assertNotInterrupted()
@@ -203,6 +235,8 @@ async function main() {
   assertEnvironment()
   await mkdir(OUTPUT_ROOT, { recursive: true, mode: 0o700 })
   await writeSuiteState()
+  await buildSharedRuntime()
+  assertNotInterrupted()
   const queue = [...CAMPAIGNS]
   await Promise.all(Array.from(
     { length: Math.min(maximumConcurrentModes(), queue.length) },

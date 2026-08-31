@@ -1,4 +1,5 @@
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { resolve } from 'node:path'
 import { ProtocolError } from './protocol.mjs'
@@ -18,6 +19,10 @@ const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u
 const MAX_TOKENS_FIELDS = new Set(['max_tokens', 'max_completion_tokens'])
 const REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 const ROLE_TOKEN_PATTERN = /^[0-9a-f]{64}$/u
+const GATEWAY_DEFINITION_LABEL = 'io.harness-rsi.model-gateway-definition-digest'
+const GATEWAY_VERSION_LABEL = 'io.harness-rsi.model-gateway'
+const GATEWAY_VERSION = 'v1'
+const GATEWAY_BUILDS = new Map()
 
 function validateUsageSnapshot(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -50,13 +55,73 @@ export function diffModelUsage(before, after) {
   }
 }
 
-export async function buildModelGatewayImage({ config, docker, repositoryRoot }) {
+async function gatewayDefinition(repositoryRoot, dockerfile) {
+  const dockerfilePath = resolve(repositoryRoot, dockerfile)
+  const serverPath = resolve(repositoryRoot, 'docker/model-gateway/server.mjs')
+  let dockerfileSource
+  let serverSource
+  try {
+    [dockerfileSource, serverSource] = await Promise.all([
+      readFile(dockerfilePath),
+      readFile(serverPath),
+    ])
+  } catch (error) {
+    throw new ProtocolError('Model Gateway 镜像定义不可读', [error.message])
+  }
+  const digest = createHash('sha256')
+    .update('Dockerfile\0')
+    .update(dockerfileSource)
+    .update('\0server.mjs\0')
+    .update(serverSource)
+    .digest('hex')
+  return {
+    digest,
+    dockerfilePath,
+    serverDigest: createHash('sha256').update(serverSource).digest('hex'),
+  }
+}
+
+async function ensureModelGatewayImage({ config, docker, repositoryRoot, definition }) {
+  if (await docker.imageExists(config.image)) {
+    const definitionDigest = await docker.imageLabel(config.image, GATEWAY_DEFINITION_LABEL)
+    if (definitionDigest === definition.digest) return config.image
+
+    // 兼容本次摘要标签上线前构建的 v1 镜像：只有容器内服务文件
+    // 与当前受信源码完全一致时才复用，避免离线环境无谓重建。
+    const version = await docker.imageLabel(config.image, GATEWAY_VERSION_LABEL)
+    if (definitionDigest === null && version === GATEWAY_VERSION) {
+      const imageServerDigest = await docker.imageFileDigest(config.image, '/app/server.mjs')
+      if (imageServerDigest === definition.serverDigest) return config.image
+    }
+  }
+
   await docker.build({
     context: repositoryRoot,
-    dockerfile: resolve(repositoryRoot, config.dockerfile),
+    dockerfile: definition.dockerfilePath,
     tag: config.image,
+    labels: {
+      [GATEWAY_DEFINITION_LABEL]: definition.digest,
+      [GATEWAY_VERSION_LABEL]: GATEWAY_VERSION,
+    },
   })
   return config.image
+}
+
+export async function buildModelGatewayImage({ config, docker, repositoryRoot }) {
+  const key = `${resolve(repositoryRoot)}\0${config.image}`
+  if (!GATEWAY_BUILDS.has(key)) {
+    const build = (async () => {
+      const definition = await gatewayDefinition(repositoryRoot, config.dockerfile)
+      return await ensureModelGatewayImage({ config, docker, repositoryRoot, definition })
+    })()
+    GATEWAY_BUILDS.set(key, build)
+  }
+  const build = GATEWAY_BUILDS.get(key)
+  try {
+    return await build
+  } finally {
+    if (GATEWAY_BUILDS.get(key) === build) GATEWAY_BUILDS.delete(key)
+  }
 }
 
 export function validateModelGatewayEnvironment(config) {

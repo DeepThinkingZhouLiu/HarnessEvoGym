@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  buildModelGatewayImage,
   diffModelUsage,
   ModelGateway,
   validateModelGatewayEnvironment,
 } from '../src/cowork-model-gateway.mjs'
+import { REPOSITORY_ROOT } from '../src/config.mjs'
 
 test('Model Gateway 只把一次性令牌和内部地址交给 Agent', async () => {
   const originalKey = process.env.TEST_RSI_API_KEY
@@ -13,6 +15,7 @@ test('Model Gateway 只把一次性令牌和内部地址交给 Agent', async () 
   process.env.TEST_RSI_BASE_URL = 'https://provider.example/v1'
   const calls = []
   const docker = {
+    async imageExists() { return false },
     async build(options) { calls.push(['build', options]) },
     async createNetwork() { return { id: 'network-id', name: 'internal-net' } },
     async runDetached(options) {
@@ -62,7 +65,7 @@ test('Model Gateway 只把一次性令牌和内部地址交给 Agent', async () 
       resources: { cpus: 1, memory: '512m', pids: 128 },
     },
     docker,
-    repositoryRoot: '/repo',
+    repositoryRoot: REPOSITORY_ROOT,
     scopeId: 'run-one',
   })
   try {
@@ -134,6 +137,53 @@ test('Model Gateway 只把一次性令牌和内部地址交给 Agent', async () 
     if (originalUrl === undefined) delete process.env.TEST_RSI_BASE_URL
     else process.env.TEST_RSI_BASE_URL = originalUrl
   }
+})
+
+test('Model Gateway 并发准备只构建一次且绑定定义摘要', async () => {
+  const calls = []
+  const docker = {
+    async imageExists() { return false },
+    async build(options) {
+      calls.push(options)
+      await new Promise((resolvePromise) => setImmediate(resolvePromise))
+    },
+  }
+  const config = {
+    image: 'gateway:concurrent-test',
+    dockerfile: 'docker/model-gateway/Dockerfile',
+  }
+  await Promise.all(Array.from({ length: 5 }, () => buildModelGatewayImage({
+    config,
+    docker,
+    repositoryRoot: REPOSITORY_ROOT,
+  })))
+  assert.equal(calls.length, 1)
+  assert.match(
+    calls[0].labels['io.harness-rsi.model-gateway-definition-digest'],
+    /^[0-9a-f]{64}$/u,
+  )
+  assert.equal(calls[0].labels['io.harness-rsi.model-gateway'], 'v1')
+})
+
+test('Model Gateway 可复用服务文件一致的旧 v1 镜像', async () => {
+  let builds = 0
+  const docker = {
+    async imageExists() { return true },
+    async imageLabel(_image, label) {
+      if (label === 'io.harness-rsi.model-gateway') return 'v1'
+      return null
+    },
+    async imageFileDigest() {
+      return 'da3e1e846e41739162cbd2d71546810b55316ba136f9d4f0034cd7809d65da49'
+    },
+    async build() { builds += 1 },
+  }
+  await buildModelGatewayImage({
+    config: { image: 'gateway:legacy-test', dockerfile: 'docker/model-gateway/Dockerfile' },
+    docker,
+    repositoryRoot: REPOSITORY_ROOT,
+  })
+  assert.equal(builds, 0)
 })
 
 test('Model Gateway Usage 差分会把未知响应标成不完整', () => {

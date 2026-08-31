@@ -97,6 +97,33 @@ export class DockerClient {
     return value
   }
 
+  async imageFileDigest(image, pathValue) {
+    if (typeof pathValue !== 'string' || !pathValue.startsWith('/') || /[\u0000-\u001f\u007f]/u.test(pathValue)) {
+      throw new ProtocolError('Docker Image 文件路径必须是安全的绝对路径')
+    }
+    const result = await runProcess(this.binary, [
+      'run',
+      '--rm',
+      '--pull',
+      'never',
+      '--network',
+      'none',
+      '--cap-drop',
+      'ALL',
+      '--security-opt',
+      'no-new-privileges:true',
+      '--read-only',
+      '--entrypoint',
+      'sha256sum',
+      image,
+      '--',
+      pathValue,
+    ], { timeoutMs: 60_000 })
+    const match = result.stdout.match(/^([0-9a-f]{64})\s+/u)
+    if (!match) throw new ProtocolError(`Docker Image 文件摘要无效：${image}:${pathValue}`)
+    return match[1]
+  }
+
   async build({ context, dockerfile, tag, buildArgs = {}, labels = {}, timeoutMs = 1_800_000 }) {
     const args = ['build', '--pull=false', '--file', dockerfile, '--tag', tag]
     for (const [name, value] of Object.entries(buildArgs)) {

@@ -120,3 +120,41 @@ test('正式 Codex 五 Mode 使用 32 总预算、双 Branch 和受控跨 Mode �
     assert.equal(bundle.benchmark.partitions.final.visibility, 'sealed')
   }
 })
+
+test('筛选五 Mode 共用固定 12/8 题集、4 总预算和 12 步 Solver', async () => {
+  const expectedFeedback = [
+    'officeval_003', 'officeval_007', 'officeval_017', 'officeval_032',
+    'officeval_041', 'officeval_042', 'officeval_068', 'officeval_073',
+    'officeval_082', 'officeval_086', 'officeval_090', 'officeval_095',
+  ]
+  const expectedSelection = [
+    'officeval_002', 'officeval_034', 'officeval_040', 'officeval_058',
+    'officeval_062', 'officeval_076', 'officeval_087', 'officeval_100',
+  ]
+  for (const mode of MODES) {
+    const bundle = await loadExperimentBundle(
+      resolve(REPOSITORY_ROOT, `experiments/cowork-msa-rsi-pilot4-codex-${mode}.json`),
+      REPOSITORY_ROOT,
+    )
+    const population = bundle.recipe.spec.population
+    assert.equal(population.mode, mode)
+    assert.equal(population.concurrency.n_branches, mode === 'single' ? 1 : 2)
+    assert.equal(population.budget.total_budget, 4)
+    assert.equal(createBudgetPlan(population).totalBudget, 4)
+    assert.equal(population.budget.beta, ['competition', 'combined'].includes(mode) ? 0.5 : 0)
+    assert.equal(bundle.recipe.spec.moduleSearch.strategy, 'linear-hill-climb')
+    assert.equal(bundle.recipe.spec.moduleSearch.riskCeiling, 'l2')
+    assert.equal(bundle.experiment.evolution.generations, 4)
+    assert.equal(bundle.target.solver.runtime.maximumSteps, 12)
+    assert.equal(bundle.updater.id, 'codex-cli')
+    assert.equal(bundle.experiment.models.solver.model, 'gpt-5.6-terra')
+    assert.equal(bundle.experiment.models.updater.model, 'gpt-5.6-terra')
+    assert.equal(bundle.experiment.models.solver.reasoningEffort, 'high')
+    assert.equal(bundle.experiment.models.updater.reasoningEffort, 'high')
+    assert.equal(bundle.benchmark.id, 'cowork-omegause-officeval-pilot-v1')
+    assert.deepEqual(bundle.benchmark.partitions.feedback.instanceIds, expectedFeedback)
+    assert.deepEqual(bundle.benchmark.partitions.selection.instanceIds, expectedSelection)
+    assert.equal(bundle.benchmark.partitions.final.instanceIds.length, 18)
+    assert.equal(bundle.benchmark.partitions.final.visibility, 'sealed')
+  }
+})

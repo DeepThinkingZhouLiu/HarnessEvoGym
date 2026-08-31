@@ -8,7 +8,22 @@ import { fileURLToPath } from 'node:url'
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const CONTROLLER_PATH = join(REPOSITORY_ROOT, 'controller', 'src', 'cli.mjs')
-const DEFAULT_SUITE_ID = 'cowork-formal32-codex-terra-high-seed20260827-v1'
+const SUITE_PROFILES = Object.freeze({
+  formal32: Object.freeze({
+    defaultSuiteId: 'cowork-formal32-codex-terra-high-seed20260827-v1',
+    experimentStem: 'cowork-msa-rsi-formal32-codex',
+  }),
+  pilot4: Object.freeze({
+    defaultSuiteId: 'cowork-pilot4-codex-terra-high-seed20260827-v1',
+    experimentStem: 'cowork-msa-rsi-pilot4-codex',
+  }),
+})
+const PROFILE_ID = process.env.RSI_COWORK_SUITE_PROFILE?.trim() || 'formal32'
+const SUITE_PROFILE = SUITE_PROFILES[PROFILE_ID]
+if (SUITE_PROFILE === undefined) {
+  throw new Error(`RSI_COWORK_SUITE_PROFILE 必须是：${Object.keys(SUITE_PROFILES).join(', ')}`)
+}
+const DEFAULT_SUITE_ID = SUITE_PROFILE.defaultSuiteId
 const SUITE_ID = process.env.RSI_FORMAL_SUITE_ID?.trim() || DEFAULT_SUITE_ID
 if (!/^[a-z0-9][a-z0-9._-]{2,119}$/u.test(SUITE_ID)) {
   throw new Error('RSI_FORMAL_SUITE_ID 只能包含小写字母、数字、点、下划线和连字符')
@@ -30,7 +45,7 @@ const CAMPAIGNS = Object.freeze([
   'combined',
 ].map((mode) => Object.freeze({
   mode,
-  config: join(REPOSITORY_ROOT, 'experiments', `cowork-msa-rsi-formal32-codex-${mode}.json`),
+  config: join(REPOSITORY_ROOT, 'experiments', `${SUITE_PROFILE.experimentStem}-${mode}.json`),
   runId: `${SUITE_ID}-${mode}`,
 })))
 

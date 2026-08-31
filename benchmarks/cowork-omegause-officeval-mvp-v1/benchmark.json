@@ -1,0 +1,38 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "Benchmark",
+  "metadata": {
+    "id": "cowork-omegause-officeval-mvp-v1",
+    "name": "OmegaUse-OfficeVal two-task RSI path MVP"
+  },
+  "spec": {
+    "source": {
+      "adapter": "omegause-officeval",
+      "dataset": "baidu-frontier-research/OmegaUse-OfficeVal",
+      "split": "mvp-1-feedback-1-selection-1-sealed-placeholder",
+      "revision": "8bf749b53988822a90520eba4761c6c311e17dd0e13bd78658b261a921128291"
+    },
+    "evaluator": {
+      "adapter": "omegause-officeval",
+      "resultFormat": "harness-rsi/solver-result-jsonl-v2"
+    },
+    "partitions": {
+      "feedback": {
+        "visibility": "detailed",
+        "expectedCount": 1,
+        "instanceIds": ["officeval_060"]
+      },
+      "selection": {
+        "visibility": "aggregate-only",
+        "expectedCount": 1,
+        "instanceIds": ["officeval_003"]
+      },
+      "final": {
+        "visibility": "sealed",
+        "expectedCount": 1,
+        "instanceIds": ["officeval_090"]
+      }
+    },
+    "expectedTotal": 3
+  }
+}

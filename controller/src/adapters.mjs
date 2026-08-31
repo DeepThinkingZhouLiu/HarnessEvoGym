@@ -12,7 +12,7 @@ import {
   readConfigFile,
   resolveInside,
 } from './config.mjs'
-import { isAbsolute, posix } from 'node:path'
+import { isAbsolute, posix, relative, resolve } from 'node:path'
 import { normalizeMutationCatalogConfiguration } from './mutation-catalog.mjs'
 import { normalizeRelativePath } from './path-policy.mjs'
 import { ProtocolError, readJsonFile, validateBenchmark, validateEvaluationPolicy } from './protocol.mjs'
@@ -1182,7 +1182,12 @@ export function validateExperiment(input) {
 }
 
 export async function loadExperimentBundle(experimentPath, repositoryRoot) {
-  const experiment = validateExperiment(await readConfigFile(experimentPath))
+  const absoluteExperimentPath = resolve(experimentPath)
+  const relativeExperimentPath = normalizeRelativePath(
+    relative(resolve(repositoryRoot), absoluteExperimentPath).replaceAll('\\', '/'),
+    'EvolutionExperiment 路径',
+  )
+  const experiment = validateExperiment(await readConfigFile(absoluteExperimentPath))
   const benchmarkPath = resolveInside(repositoryRoot, experiment.benchmarkPath, 'Benchmark 路径')
   const policyPath = resolveInside(repositoryRoot, experiment.policyPath, 'Evaluation Policy 路径')
   const recipePath = experiment.recipePath === null
@@ -1285,7 +1290,18 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
       upstreamBaseUrlEnvironment: provider.credentials.baseUrlEnvironment,
     },
   }
-  return { experiment, recipe, target, updater, environment: resolvedEnvironment, provider, strategy, benchmark, policy }
+  return {
+    experimentPath: relativeExperimentPath,
+    experiment,
+    recipe,
+    target,
+    updater,
+    environment: resolvedEnvironment,
+    provider,
+    strategy,
+    benchmark,
+    policy,
+  }
 }
 
 export async function validateAnyAdapter(input) {

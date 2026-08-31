@@ -711,6 +711,9 @@ export async function capturePopulationBundle(bundle, repositoryRoot) {
   const snapshot = {
     ...publicBundleSnapshot(bundle),
     trustedInputs: {
+      ...(bundle.experimentPath
+        ? { experiment: { path: bundle.experimentPath } }
+        : {}),
       updaterPrompt: {
         path: bundle.updater.promptPath,
         bytes: Buffer.byteLength(updaterPromptSource, 'utf8'),
@@ -1180,7 +1183,7 @@ function assertRestorableCoworkState(value, { runId, branchId }) {
   if (!value || value.apiVersion !== 'harness-rsi/v1alpha1'
       || value.kind !== 'EvolutionRunState'
       || value.metadata?.id !== runId
-      || !['running', 'stopped'].includes(value.metadata?.status)
+      || !['baseline-running', 'running', 'stopped'].includes(value.metadata?.status)
       || value.spec?.branchId !== branchId
       || !Array.isArray(value.spec.candidates)
       || !Array.isArray(value.spec.searchHistory)
@@ -1310,30 +1313,14 @@ export function createCoworkBranchEvolutionDriver({
     if (seeds.length !== context.bundle.experiment.evolution.trialsPerInstance) {
       throw new ProtocolError('Experiment 的 seeds 数量少于 trialsPerInstance')
     }
-    let baselineRecords
-    try {
-      baselineRecords = await environment.runCandidatePartition({
-        candidateId: champion.id,
-        candidateDigest: champion.digest,
-        candidateWorkspace: champion.workspace,
-        model: context.bundle.experiment.models.solver,
-        partition: 'selection',
-        seeds,
-        outputPath: resultPath(runRoot, 0, champion.id, 'selection'),
-      })
-    } finally {
-      await context.modelGateway.stop()
-    }
-    const baselineEvaluation = createEvaluationSummary({
-      candidateId: champion.id,
-      metric: context.bundle.policy.primaryMetric,
-      value: primaryMetricFromRecords(baselineRecords, context.bundle.policy.primaryMetric),
-    })
-    const experimentRelativePath = relative(repositoryRoot, context.absoluteExperimentPath).replaceAll('\\', '/')
+    const experimentRelativePath = relative(
+      repositoryRoot,
+      context.absoluteExperimentPath,
+    ).replaceAll('\\', '/')
     state = {
       apiVersion: 'harness-rsi/v1alpha1',
       kind: 'EvolutionRunState',
-      metadata: { id: runId, status: 'running' },
+      metadata: { id: runId, status: 'baseline-running' },
       spec: {
         branchId,
         experimentPath: experimentRelativePath,
@@ -1355,7 +1342,7 @@ export function createCoworkBranchEvolutionDriver({
           parentId: null,
           digest: champion.digest,
           status: 'baseline',
-          evaluation: baselineEvaluation,
+          evaluation: null,
         }],
         searchHistory: [],
         lastCandidateId: null,
@@ -1373,6 +1360,34 @@ export function createCoworkBranchEvolutionDriver({
       writeJsonFile(join(runRoot, 'experiment.snapshot.json'), experimentSnapshot),
       persist(),
     ])
+
+    let baselineRecords
+    try {
+      baselineRecords = await environment.runCandidatePartition({
+        candidateId: champion.id,
+        candidateDigest: champion.digest,
+        candidateWorkspace: champion.workspace,
+        model: context.bundle.experiment.models.solver,
+        partition: 'selection',
+        seeds,
+        outputPath: resultPath(runRoot, 0, champion.id, 'selection'),
+      })
+    } catch (error) {
+      state.spec.ledger = ledger(0)
+      await persist()
+      throw error
+    } finally {
+      await context.modelGateway.stop()
+    }
+    const baselineEvaluation = createEvaluationSummary({
+      candidateId: champion.id,
+      metric: context.bundle.policy.primaryMetric,
+      value: primaryMetricFromRecords(baselineRecords, context.bundle.policy.primaryMetric),
+    })
+    state.metadata.status = 'running'
+    state.spec.candidates[0].evaluation = baselineEvaluation
+    state.spec.ledger = ledger(0)
+    await persist()
     return coworkBranchProjection({ branchId, state })
   }
 
@@ -1391,13 +1406,36 @@ export function createCoworkBranchEvolutionDriver({
     }
 
     const expectedRunRoot = resolve(runRootOverride)
+    if (!await pathExists(expectedRunRoot)) return initialize()
     await assertPathKind(expectedRunRoot, `Cowork Branch ${branchId} Run Root`)
     const canonicalParent = await realpath(dirname(expectedRunRoot))
     runRoot = await realpath(expectedRunRoot)
     if (runRoot !== join(canonicalParent, basename(expectedRunRoot))) {
       throw new ProtocolError(`Cowork Branch ${branchId} Run Root 包含符号链接或别名`)
     }
-    state = assertRestorableCoworkState(await readJsonFile(join(runRoot, 'state.json')), {
+    const statePath = join(runRoot, 'state.json')
+    if (!await pathExists(statePath)) {
+      // 新版会在首道 Baseline 题前先固化 state。若故障更早，则保留
+      // 整个半成品目录供审计，再从冻结 Experiment 干净重建 Branch。
+      const recoveryRoot = join(canonicalParent, 'baseline-recovery')
+      await mkdir(recoveryRoot, { recursive: true, mode: 0o700 })
+      const archivedAt = new Date().toISOString()
+      const archiveRoot = join(
+        recoveryRoot,
+        `${archivedAt.replace(/[:.]/gu, '-').toLowerCase()}-${randomUUID().slice(0, 8)}`,
+      )
+      await rename(runRoot, archiveRoot)
+      await writeJsonFile(join(archiveRoot, 'recovery-manifest.json'), {
+        apiVersion: 'harness-rsi/v1alpha1',
+        kind: 'CoworkBaselineRecoveryArchive',
+        metadata: { branchId, archivedAt },
+        spec: { reason: 'missing-branch-state-before-baseline' },
+      })
+      state = null
+      runRoot = null
+      return initialize()
+    }
+    state = assertRestorableCoworkState(await readJsonFile(statePath), {
       runId,
       branchId,
     })
@@ -1546,6 +1584,41 @@ export function createCoworkBranchEvolutionDriver({
     startedAt = Date.now()
     ledgerOffset = structuredClone(state.spec.ledger)
     candidatesEvaluated = 0
+    if (state.metadata.status === 'baseline-running') {
+      const baselineRecord = state.spec.candidates.find((record) => record.id === state.spec.baselineId)
+      if (state.spec.generationsCompleted !== 0
+          || state.spec.searchHistory.length !== 0
+          || baselineRecord?.evaluation !== null) {
+        throw new ProtocolError(`Cowork Branch ${branchId} Baseline 恢复状态不一致`)
+      }
+      let baselineRecords
+      try {
+        baselineRecords = await environment.runCandidatePartition({
+          candidateId: champion.id,
+          candidateDigest: champion.digest,
+          candidateWorkspace: champion.workspace,
+          model: context.bundle.experiment.models.solver,
+          partition: 'selection',
+          seeds: state.spec.seeds,
+          outputPath: resultPath(runRoot, 0, champion.id, 'selection'),
+        })
+      } catch (error) {
+        state.spec.ledger = ledger(0)
+        await persist()
+        throw error
+      } finally {
+        await context.modelGateway.stop()
+      }
+      baselineRecord.evaluation = createEvaluationSummary({
+        candidateId: champion.id,
+        metric: context.bundle.policy.primaryMetric,
+        value: primaryMetricFromRecords(baselineRecords, context.bundle.policy.primaryMetric),
+      })
+      state.metadata.status = 'running'
+      state.spec.ledger = ledger(0)
+      await persist()
+      return coworkBranchProjection({ branchId, state })
+    }
     await archiveIncompleteCoworkGeneration({
       runRoot,
       state,
@@ -2333,14 +2406,21 @@ export async function resumePopulationEvolution({
     throw new ProtocolError('Population Branch ID 无效')
   }
 
-  const branchStates = await Promise.all(parentState.branches.map(async ({ branchId }) => (
-    assertRestorableCoworkState(await readJsonFile(
-      join(runRoot, 'branches', branchId, 'run', 'state.json'),
-    ), { runId: `${runId}-${branchId}`, branchId })
-  )))
+  const storedSnapshot = await readJsonFile(join(runRoot, 'public', 'config.snapshot.json'))
+  const branchStates = []
+  for (const { branchId } of parentState.branches) {
+    const statePath = join(runRoot, 'branches', branchId, 'run', 'state.json')
+    if (!await pathExists(statePath)) continue
+    branchStates.push(assertRestorableCoworkState(await readJsonFile(statePath), {
+      runId: `${runId}-${branchId}`,
+      branchId,
+    }))
+  }
+  const snapshotExperimentPath = storedSnapshot.trustedInputs?.experiment?.path
   const experimentPaths = new Set(branchStates.map((branchState) => branchState.spec.experimentPath))
+  if (typeof snapshotExperimentPath === 'string') experimentPaths.add(snapshotExperimentPath)
   if (experimentPaths.size !== 1) {
-    throw new ProtocolError('Population Branch 冻结的 Experiment Path 不一致')
+    throw new ProtocolError('Population 无法唯一确定冻结的 Experiment Path')
   }
   const experimentPath = resolveInside(
     repositoryRoot,
@@ -2370,7 +2450,6 @@ export async function resumePopulationEvolution({
   if (parentState.configDigest !== frozenBundle.digest) {
     throw new ProtocolError('Population 恢复时 Bundle Digest 与父状态不一致')
   }
-  const storedSnapshot = await readJsonFile(join(runRoot, 'public', 'config.snapshot.json'))
   if (canonicalJsonDigest(storedSnapshot) !== canonicalJsonDigest(frozenBundle.snapshot)) {
     throw new ProtocolError('Population 冻结 Config Snapshot 已变化')
   }

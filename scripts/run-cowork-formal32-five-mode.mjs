@@ -32,14 +32,33 @@ const CAMPAIGNS = Object.freeze([
 
 const activeChildren = new Set()
 const campaignStates = new Map(CAMPAIGNS.map(({ mode }) => [mode, { status: 'QUEUED' }]))
+const sleepWaiters = new Set()
 let stateWrite = Promise.resolve()
+let shutdownSignal = null
 
 function now() {
   return new Date().toISOString()
 }
 
 function sleep(milliseconds) {
-  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds))
+  return new Promise((resolvePromise) => {
+    if (shutdownSignal !== null) {
+      resolvePromise()
+      return
+    }
+    let timer
+    const wake = () => {
+      clearTimeout(timer)
+      sleepWaiters.delete(wake)
+      resolvePromise()
+    }
+    timer = setTimeout(wake, milliseconds)
+    sleepWaiters.add(wake)
+  })
+}
+
+function assertNotInterrupted() {
+  if (shutdownSignal !== null) throw new Error(`Suite 收到 ${shutdownSignal}，已停止排队与重试`)
 }
 
 function maximumConcurrentModes() {
@@ -136,6 +155,7 @@ async function runController(campaign, action) {
 
 async function runCampaign(campaign) {
   while (true) {
+    assertNotInterrupted()
     const before = await readCampaignState(campaign)
     const action = nextAction(before)
     if (action === null) {
@@ -157,6 +177,7 @@ async function runCampaign(campaign) {
         retryAfterSeconds: RETRY_DELAY_MS / 1000,
       })
       await sleep(RETRY_DELAY_MS)
+      assertNotInterrupted()
       continue
     }
     throw new Error(
@@ -187,19 +208,29 @@ async function main() {
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => {
-    for (const child of activeChildren) child.kill(signal)
+  process.once(signal, () => {
+    shutdownSignal = signal
+    for (const wake of [...sleepWaiters]) wake()
+    for (const child of activeChildren) {
+      child.kill(signal)
+      const escalation = setTimeout(() => child.kill('SIGKILL'), 10_000)
+      escalation.unref()
+    }
   })
 }
 
 main().catch(async (error) => {
   await mkdir(OUTPUT_ROOT, { recursive: true, mode: 0o700 }).catch(() => {})
   for (const [mode, state] of campaignStates) {
-    if (['RUNNING', 'STARTING'].includes(state.status)) {
-      campaignStates.set(mode, { ...state, status: 'FAILED', updatedAt: now() })
+    if (['RUNNING', 'STARTING', 'RETRY_WAIT'].includes(state.status)) {
+      campaignStates.set(mode, {
+        ...state,
+        status: shutdownSignal === null ? 'FAILED' : 'INTERRUPTED',
+        updatedAt: now(),
+      })
     }
   }
   await writeSuiteState().catch(() => {})
   process.stderr.write(`${error.stack ?? error.message}\n`)
-  process.exitCode = 1
+  process.exitCode = shutdownSignal === 'SIGINT' ? 130 : shutdownSignal === 'SIGTERM' ? 143 : 1
 })

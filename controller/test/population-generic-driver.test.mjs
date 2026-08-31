@@ -347,6 +347,118 @@ test('Population 跨进程恢复会先重载 Branch，再幂等继续 in-flight 
   )).length, 1)
 })
 
+test('Population 可从 Baseline 阶段暂停恢复，再固化 Branch Incumbent 并进入首轮进化', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'population-baseline-resume-'))
+  const campaignsRoot = join(root, 'campaigns')
+  await mkdir(campaignsRoot)
+  const candidateId = 'branch-001-h0'
+  let failBaseline = true
+  let restored = 0
+  let branchState = {
+    status: 'active',
+    steps: 0,
+    candidateId,
+    revision: digest(`${candidateId}-revision`),
+    digest: digest(candidateId),
+    evaluation: createEvaluationSummary({
+      candidateId,
+      metric: 'mean-reward',
+      value: 0.25,
+    }),
+  }
+
+  function createBranch({ branchId, branchesRoot }) {
+    return {
+      async initialize() {
+        if (failBaseline) throw new Error('fixture baseline provider unavailable')
+        return projection(branchId, branchState)
+      },
+      async restore() {
+        restored += 1
+        return projection(branchId, branchState)
+      },
+      async inspect() {
+        return projection(branchId, branchState)
+      },
+      async advanceOne({ stepId }) {
+        const nextId = `${branchId}-c1`
+        const evaluation = createEvaluationSummary({
+          candidateId: nextId,
+          metric: 'mean-reward',
+          value: 0.5,
+        })
+        const lastStep = {
+          stepId,
+          stepNumber: 1,
+          candidateId: nextId,
+          decision: 'promoted',
+          ranking: { eligible: true, evaluation },
+        }
+        branchState = {
+          status: 'active',
+          steps: 1,
+          candidateId: nextId,
+          revision: digest(`${nextId}-revision`),
+          digest: digest(nextId),
+          evaluation,
+        }
+        return {
+          apiVersion: 'harness-rsi/v1alpha1',
+          kind: 'BranchStepResult',
+          stepId,
+          budgetConsumed: 1,
+          projection: projection(branchId, branchState, lastStep),
+        }
+      },
+      async exportPeerEvidence() {
+        return {
+          sourcePath: join(branchesRoot, branchId, 'public', 'evolution-log.jsonl'),
+          entries: [],
+        }
+      },
+      async exportBest() {
+        return {
+          candidateId: branchState.candidateId,
+          revision: branchState.revision,
+          digest: branchState.digest,
+          evaluation: branchState.evaluation,
+          changedFiles: ['profiles/cowork.md'],
+          diffStat: 'profiles/cowork.md | 1 +',
+          patch: '+baseline resume\n',
+          workspace: join(branchesRoot, branchId, 'workspace'),
+          implementationRoot: join(branchesRoot, branchId),
+        }
+      },
+    }
+  }
+
+  const first = new PopulationOrchestrator({
+    loadedCampaign: loaded('single'),
+    campaignsRoot,
+    campaignId: 'generic-baseline-resume',
+    createBranch,
+  })
+  const paused = await first.initialize()
+  assert.equal(paused.status, 'PAUSED_INFRASTRUCTURE')
+  assert.equal(paused.events.at(-1).phase, 'baseline')
+  assert.equal(paused.branches[0].incumbent, null)
+
+  failBaseline = false
+  const second = new PopulationOrchestrator({
+    loadedCampaign: loaded('single'),
+    campaignsRoot,
+    campaignId: 'generic-baseline-resume',
+    createBranch,
+  })
+  const completed = await second.resume()
+  assert.equal(restored, 1)
+  assert.equal(completed.status, 'CLOSED')
+  assert.equal(completed.budget.consumed, 1)
+  assert.equal(completed.events.some((event) => (
+    event.type === 'POPULATION_BASELINE_EVALUATED' && event.recovered === true
+  )), true)
+})
+
 for (const mode of ['single', 'independent', 'mutualism', 'competition', 'combined']) {
   test(`通用 mean-reward Branch Driver 可运行 ${mode} Mode`, async () => {
     const result = await runMode(mode)

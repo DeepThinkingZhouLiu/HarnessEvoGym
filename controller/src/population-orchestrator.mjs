@@ -456,7 +456,11 @@ export class PopulationOrchestrator {
     if (state.status !== 'PAUSED_INFRASTRUCTURE') {
       throw new ProtocolError('Population 当前不是 PAUSED_INFRASTRUCTURE')
     }
-    await Promise.all(state.branches.map(async (branch) => {
+    const pauseEvent = [...state.events].reverse().find((entry) => (
+      entry.type === 'POPULATION_INFRASTRUCTURE_PAUSED'
+    ))
+    const baselineRecovery = pauseEvent?.phase === 'baseline'
+    const restoredProjections = await Promise.all(state.branches.map(async (branch) => {
       const driver = await this.#handle(branch.branchId)
       const restored = typeof driver.restore === 'function'
         ? await driver.restore()
@@ -476,13 +480,62 @@ export class PopulationOrchestrator {
           `branch=${projection.completedSteps}`,
         ])
       }
-      if (projection.completedSteps === branch.consumed) {
+      if (baselineRecovery) {
+        if (branch.consumed !== 0 || projection.completedSteps !== 0 || state.inFlightWave) {
+          throw new ProtocolError(`${branch.branchId} Baseline 恢复后出现非法进化 Step`)
+        }
+      } else if (projection.completedSteps === branch.consumed) {
         assertRestoredIncumbent(branch, projection)
       } else if (!inFlight || projection.lastStep === null) {
         throw new ProtocolError(`${branch.branchId} 超前 Step 缺少对应的 in-flight 记录`)
       }
+      return projection
     }))
     const resumedAt = iso(this.clock)
+
+    if (baselineRecovery) {
+      const resumed = {
+        ...state,
+        updatedAt: resumedAt,
+        events: [...state.events, event(
+          state,
+          'POPULATION_INFRASTRUCTURE_RESUMED',
+          resumedAt,
+          { phase: 'baseline' },
+        )],
+      }
+      const branches = resumed.branches.map((branch, index) => ({
+        ...branch,
+        incumbent: publicIncumbent(restoredProjections[index]),
+        status: branchStatus(branch, restoredProjections[index]),
+      }))
+      const bestBranch = selectPopulationBest(branches)
+      const completedAt = iso(this.clock)
+      state = {
+        ...resumed,
+        status: 'EVOLVING',
+        updatedAt: completedAt,
+        branches,
+        best: { branchId: bestBranch.branchId, ...bestBranch.incumbent },
+        events: [...resumed.events, event(
+          resumed,
+          'POPULATION_BASELINE_EVALUATED',
+          completedAt,
+          {
+            recovered: true,
+            branches: branches.map((branch) => ({
+              branchId: branch.branchId,
+              primaryMetric: branch.incumbent.primaryMetric,
+              primaryValue: branch.incumbent.primaryValue,
+            })),
+          },
+        )],
+      }
+      await this.store.saveState(state)
+      this.progress({ type: 'population-baseline-evaluated', branches: branches.length })
+      return this.run(options)
+    }
+
     state = {
       ...state,
       status: 'EVOLVING',

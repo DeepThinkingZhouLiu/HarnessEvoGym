@@ -9,7 +9,7 @@ spec:
   source:
     kind: repository-tree
     path: sources/msa-minimal-harness
-    revision: 250fac518d414be00e65ed82ab94b57910644e16
+    revision: d3ef58816c980549f4ea296cddab3bf54e4b6f9d
 
   materialization:
     strategy: source-plus-seed-overlay
@@ -23,7 +23,7 @@ spec:
   solver:
     protocol: msa-minimal-docker-v1
     runtime:
-      image: harness-rsi/msa-minimal-reasoning:250fac518d41
+      image: harness-rsi/msa-minimal-reasoning:d3ef58816c98
       dockerfile: docker/msa-minimal-runtime/Dockerfile
       profile: math
       pythonCommand: python3

@@ -163,6 +163,7 @@ export function formatPopulationStatus(state) {
     epoch: state.epoch,
     budget: structuredClone(state.budget),
     best: state.best === null ? null : structuredClone(state.best),
+    baselinePack: state.baselinePack === undefined ? null : structuredClone(state.baselinePack),
     branches: state.branches.map((branch) => ({
       branchId: branch.branchId,
       status: branch.status,
@@ -209,6 +210,7 @@ export class PopulationOrchestrator {
     this.clock = clock
     this.progress = progress
     this.frozenConfig = frozenConfig ?? this.config
+    this.baselinePack = this.frozenConfig?.experiment?.baselinePack ?? null
     this.configDigest = loadedCampaign.configDigest ?? null
     this.secretValues = secretValues
     this.store = new PopulationStore(campaignsRoot, campaignId)
@@ -267,6 +269,7 @@ export class PopulationOrchestrator {
       },
       branches,
       best: null,
+      ...(this.baselinePack === null ? {} : { baselinePack: structuredClone(this.baselinePack) }),
       final: null,
       events: [{
         sequence: 1,
@@ -274,6 +277,9 @@ export class PopulationOrchestrator {
         at,
         mode: this.controller.mode,
         totalBudget: this.plan.totalBudget,
+        ...(this.baselinePack === null
+          ? {}
+          : { baselinePackSha256: this.baselinePack.sha256 }),
         ...(this.configDigest === null ? {} : { configDigest: this.configDigest }),
       }],
     }
@@ -361,6 +367,9 @@ export class PopulationOrchestrator {
       configFingerprint: state.configFingerprint,
       ...(state.configDigest === undefined ? {} : { configDigest: state.configDigest }),
       budgetConsumed: 0,
+      ...(state.baselinePack === undefined
+        ? {}
+        : { baselinePack: structuredClone(state.baselinePack) }),
       best: structuredClone(state.best),
       branches: state.branches.map((branch) => ({
         branchId: branch.branchId,

@@ -3,7 +3,7 @@
 import { spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -37,17 +37,47 @@ const REQUIRED_ENVIRONMENT = Object.freeze([
   'RSI_OFFICEVAL_DATASET_ROOT',
   'RSI_OFFICEVAL_EVALUATOR_ROOT',
 ])
-const CAMPAIGNS = Object.freeze([
+const ALL_MODES = Object.freeze([
   'single',
   'independent',
   'mutualism',
   'competition',
   'combined',
-].map((mode) => Object.freeze({
+])
+
+function selectedModes() {
+  const raw = process.env.RSI_SUITE_MODES?.trim()
+  if (!raw) return [...ALL_MODES]
+  const modes = raw.split(',').map((mode) => mode.trim()).filter(Boolean)
+  if (modes.length === 0 || new Set(modes).size !== modes.length
+      || modes.some((mode) => !ALL_MODES.includes(mode))) {
+    throw new Error(`RSI_SUITE_MODES 必须是 ${ALL_MODES.join(',')} 的无重复子集`)
+  }
+  return modes
+}
+
+function configuredBaselinePack() {
+  const pathValue = process.env.RSI_BASELINE_PACK_PATH?.trim()
+  const sha256 = process.env.RSI_BASELINE_PACK_SHA256?.trim()
+  if (!pathValue && !sha256) return null
+  if (!pathValue || !sha256 || !/^[0-9a-f]{64}$/u.test(sha256)) {
+    throw new Error('RSI_BASELINE_PACK_PATH 与 RSI_BASELINE_PACK_SHA256 必须同时提供，摘要为 64 位小写 SHA-256')
+  }
+  const absolutePath = isAbsolute(pathValue) ? resolve(pathValue) : resolve(REPOSITORY_ROOT, pathValue)
+  const relativePath = relative(REPOSITORY_ROOT, absolutePath).replaceAll('\\', '/')
+  if (relativePath === '..' || relativePath.startsWith('../') || isAbsolute(relativePath)) {
+    throw new Error('RSI_BASELINE_PACK_PATH 必须位于仓库内')
+  }
+  return Object.freeze({ mode: 'reuse', path: relativePath, sha256 })
+}
+
+const BASELINE_PACK = configuredBaselinePack()
+const CAMPAIGNS = selectedModes().map((mode) => ({
   mode,
+  sourceConfig: join(REPOSITORY_ROOT, 'experiments', `${SUITE_PROFILE.experimentStem}-${mode}.json`),
   config: join(REPOSITORY_ROOT, 'experiments', `${SUITE_PROFILE.experimentStem}-${mode}.json`),
   runId: `${SUITE_ID}-${mode}`,
-})))
+}))
 
 const activeChildren = new Set()
 const campaignStates = new Map(CAMPAIGNS.map(({ mode }) => [mode, { status: 'QUEUED' }]))
@@ -117,6 +147,7 @@ async function writeSuiteState() {
     pid: process.pid,
     updatedAt: now(),
     maximumConcurrentModes: maximumConcurrentModes(),
+    baselinePack: BASELINE_PACK,
     campaigns: CAMPAIGNS.map(({ mode, runId }) => ({
       mode,
       runId,
@@ -129,6 +160,22 @@ async function writeSuiteState() {
     { mode: 0o600 },
   ))
   await stateWrite
+}
+
+async function prepareCampaignConfigs() {
+  if (BASELINE_PACK === null) return
+  const configRoot = join(OUTPUT_ROOT, 'configs')
+  await mkdir(configRoot, { recursive: true, mode: 0o700 })
+  for (const campaign of CAMPAIGNS) {
+    const config = JSON.parse(await readFile(campaign.sourceConfig, 'utf8'))
+    if (!config.spec || typeof config.spec !== 'object' || Array.isArray(config.spec)) {
+      throw new Error(`Experiment 缺少 spec：${campaign.sourceConfig}`)
+    }
+    config.spec.baselinePack = BASELINE_PACK
+    const outputPath = join(configRoot, `${campaign.mode}.json`)
+    await writeFile(outputPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 })
+    campaign.config = outputPath
+  }
 }
 
 async function updateCampaign(mode, patch) {
@@ -249,6 +296,7 @@ async function worker(workerId, queue) {
 async function main() {
   assertEnvironment()
   await mkdir(OUTPUT_ROOT, { recursive: true, mode: 0o700 })
+  await prepareCampaignConfigs()
   await writeSuiteState()
   await buildSharedRuntime()
   assertNotInterrupted()

@@ -1128,6 +1128,23 @@ function validateModel(value, label) {
   }
 }
 
+function validateBaselinePackReference(value) {
+  const reference = expectObject(value, 'EvolutionExperiment.spec.baselinePack')
+  const unknown = Object.keys(reference).filter((key) => !['mode', 'path', 'sha256'].includes(key))
+  if (unknown.length > 0) {
+    throw new ProtocolError('EvolutionExperiment.spec.baselinePack 含有未知字段', unknown)
+  }
+  const mode = expectText(reference.mode, 'EvolutionExperiment.spec.baselinePack.mode')
+  if (mode !== 'reuse') {
+    throw new ProtocolError('EvolutionExperiment.spec.baselinePack.mode 当前只能是 reuse')
+  }
+  return {
+    mode,
+    path: relativePath(reference.path, 'EvolutionExperiment.spec.baselinePack.path'),
+    sha256: sha256Digest(reference.sha256, 'EvolutionExperiment.spec.baselinePack.sha256'),
+  }
+}
+
 export function validateExperiment(input) {
   assertApiObject(input, 'EvolutionExperiment')
   const id = metadataId(input, 'EvolutionExperiment')
@@ -1165,6 +1182,9 @@ export function validateExperiment(input) {
     recipePath: spec.recipe === undefined
       ? null
       : relativePath(spec.recipe, 'EvolutionExperiment.spec.recipe'),
+    baselinePack: spec.baselinePack === undefined
+      ? null
+      : validateBaselinePackReference(spec.baselinePack),
     models: {
       solver: validateModel(models.solver, 'EvolutionExperiment.spec.models.solver'),
       updater: validateModel(models.updater, 'EvolutionExperiment.spec.models.updater'),
@@ -1193,10 +1213,14 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
   const recipePath = experiment.recipePath === null
     ? null
     : resolveInside(repositoryRoot, experiment.recipePath, 'Evolution Recipe 路径')
+  const baselinePackPath = experiment.baselinePack === null
+    ? null
+    : resolveInside(repositoryRoot, experiment.baselinePack.path, 'BaselinePack 路径')
   await Promise.all([
     assertPathKind(benchmarkPath, 'Benchmark 配置', 'file'),
     assertPathKind(policyPath, 'Evaluation Policy 配置', 'file'),
     ...(recipePath ? [assertPathKind(recipePath, 'Evolution Recipe 配置', 'file')] : []),
+    ...(baselinePackPath ? [assertPathKind(baselinePackPath, 'BaselinePack', 'file')] : []),
   ])
   const target = validateTargetAdapter(
     await readConfigFile(resolveInside(repositoryRoot, experiment.adapters.target, 'Target Adapter 路径')),
@@ -1228,6 +1252,9 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
         strategy,
         mutationLevel: experiment.evolution.mutationLevel,
       })
+  if (experiment.baselinePack !== null && recipePath === null) {
+    throw new ProtocolError('BaselinePack 只支持显式 EvolutionRecipe 的通用 Population 实验')
+  }
   if (recipe.spec.moduleSearch.riskCeiling !== experiment.evolution.mutationLevel) {
     throw new ProtocolError('Evolution Recipe 风险上限与旧 mutationLevel 不一致')
   }

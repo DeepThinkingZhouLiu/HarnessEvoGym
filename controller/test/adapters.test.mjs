@@ -59,6 +59,22 @@ test('Evolution Experiment 只接受可审计的模型思考深度', async () =>
   assert.throws(() => validateExperiment(config), /reasoningEffort 无效/u)
 })
 
+test('Evolution Experiment 可固定可复用 BaselinePack，旧配置保持为空', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'experiments/cowork-msa-rsi-linear-single.json'))
+  assert.equal(validateExperiment(config).baselinePack, null)
+  config.spec.baselinePack = {
+    mode: 'reuse',
+    path: '.rsi/baseline-packs/common-h0.json',
+    sha256: 'a'.repeat(64),
+  }
+  assert.deepEqual(validateExperiment(config).baselinePack, config.spec.baselinePack)
+  config.spec.baselinePack.mode = 'prepare'
+  assert.throws(() => validateExperiment(config), /只能是 reuse/u)
+  config.spec.baselinePack.mode = 'reuse'
+  config.spec.baselinePack.extra = true
+  assert.throws(() => validateExperiment(config), /未知字段/u)
+})
+
 test('DSH Driver 同时接受旧协议名和带版本协议名', async () => {
   const target = await readConfigFile(resolve(repositoryRoot, 'adapters/targets/deepseek-harness.yml'))
   assert.equal(validateTargetAdapter(target).solver.protocol, 'dsh-headless-docker')

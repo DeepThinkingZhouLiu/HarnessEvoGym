@@ -25,6 +25,11 @@ import {
 import { materializeCandidate } from './candidate-materializers.mjs'
 import { validateCandidate } from './candidate-validators.mjs'
 import { loadExperimentBundle } from './adapters.mjs'
+import {
+  createBaselineCompatibilityIdentity,
+  loadBaselinePack,
+  writeImportedRecords,
+} from './baseline-pack.mjs'
 import { assertPathKind, resolveInside } from './config.mjs'
 import { DockerClient } from './docker.mjs'
 import { evaluateBenchmark } from './evaluator.mjs'
@@ -1224,6 +1229,7 @@ export function createCoworkBranchEvolutionDriver({
   let materializedCandidates = null
   let peerEvidencePath = null
   let ledgerOffset = null
+  let baselinePack = null
 
   async function persist() {
     await writeJsonFile(join(runRoot, 'state.json'), state)
@@ -1313,6 +1319,25 @@ export function createCoworkBranchEvolutionDriver({
     if (seeds.length !== context.bundle.experiment.evolution.trialsPerInstance) {
       throw new ProtocolError('Experiment 的 seeds 数量少于 trialsPerInstance')
     }
+    if (context.bundle.experiment.baselinePack !== null) {
+      baselinePack = await loadBaselinePack({
+        repositoryRoot,
+        reference: context.bundle.experiment.baselinePack,
+        benchmark: context.bundle.benchmark,
+        expectedIdentity: createBaselineCompatibilityIdentity({
+          bundle: context.bundle,
+          targetSourceRevision: context.targetSourceRevision,
+          benchmarkSourceRevision: environmentStatus.sourceRevision,
+          candidateDigest: champion.digest,
+          seeds,
+        }),
+        secrets: secretValuesFromEnvironment(requiredSecrets(context.bundle)),
+      })
+      onEvent({
+        stage: 'baseline-pack-loaded',
+        message: `复用 BaselinePack ${baselinePack.id}@${baselinePack.sha256.slice(0, 12)}`,
+      })
+    }
     const experimentRelativePath = relative(
       repositoryRoot,
       context.absoluteExperimentPath,
@@ -1349,6 +1374,15 @@ export function createCoworkBranchEvolutionDriver({
         lastStepId: null,
         ledger: ledger(0),
         final: null,
+        ...(baselinePack === null
+          ? {}
+          : {
+              baselinePack: {
+                id: baselinePack.id,
+                sha256: baselinePack.sha256,
+                path: context.bundle.experiment.baselinePack.path,
+              },
+            }),
       },
     }
     const experimentSnapshot = publicBundleSnapshot(context.bundle)
@@ -1363,15 +1397,23 @@ export function createCoworkBranchEvolutionDriver({
 
     let baselineRecords
     try {
-      baselineRecords = await environment.runCandidatePartition({
-        candidateId: champion.id,
-        candidateDigest: champion.digest,
-        candidateWorkspace: champion.workspace,
-        model: context.bundle.experiment.models.solver,
-        partition: 'selection',
-        seeds,
-        outputPath: resultPath(runRoot, 0, champion.id, 'selection'),
-      })
+      if (baselinePack !== null) {
+        await writeImportedRecords(
+          resultPath(runRoot, 0, champion.id, 'selection'),
+          baselinePack.selection.rawRecords,
+        )
+        baselineRecords = baselinePack.selection.records
+      } else {
+        baselineRecords = await environment.runCandidatePartition({
+          candidateId: champion.id,
+          candidateDigest: champion.digest,
+          candidateWorkspace: champion.workspace,
+          model: context.bundle.experiment.models.solver,
+          partition: 'selection',
+          seeds,
+          outputPath: resultPath(runRoot, 0, champion.id, 'selection'),
+        })
+      }
     } catch (error) {
       state.spec.ledger = ledger(0)
       await persist()
@@ -1557,6 +1599,33 @@ export function createCoworkBranchEvolutionDriver({
     if (!champion || !materializedCandidates.has(state.spec.baselineId)) {
       throw new ProtocolError(`Cowork Branch ${branchId} 无法恢复 Baseline 或 Champion`)
     }
+    const restoredBaseline = materializedCandidates.get(state.spec.baselineId)
+    if (context.bundle.experiment.baselinePack !== null) {
+      baselinePack = await loadBaselinePack({
+        repositoryRoot,
+        reference: context.bundle.experiment.baselinePack,
+        benchmark: context.bundle.benchmark,
+        expectedIdentity: createBaselineCompatibilityIdentity({
+          bundle: context.bundle,
+          targetSourceRevision: context.targetSourceRevision,
+          benchmarkSourceRevision: environmentStatus.sourceRevision,
+          candidateDigest: restoredBaseline.digest,
+          seeds: expectedSeeds,
+        }),
+        secrets: secretValuesFromEnvironment(requiredSecrets(context.bundle)),
+      })
+    }
+    const expectedBaselinePackState = baselinePack === null
+      ? null
+      : {
+          id: baselinePack.id,
+          sha256: baselinePack.sha256,
+          path: context.bundle.experiment.baselinePack.path,
+        }
+    if (canonicalJsonDigest(state.spec.baselinePack ?? null)
+        !== canonicalJsonDigest(expectedBaselinePackState)) {
+      throw new ProtocolError('Cowork Branch 恢复时 BaselinePack 身份已变化')
+    }
 
     peerEvidencePath = join(runRoot, 'public', 'evolution-log.jsonl')
     const expectedEvidence = state.spec.searchHistory
@@ -1593,15 +1662,23 @@ export function createCoworkBranchEvolutionDriver({
       }
       let baselineRecords
       try {
-        baselineRecords = await environment.runCandidatePartition({
-          candidateId: champion.id,
-          candidateDigest: champion.digest,
-          candidateWorkspace: champion.workspace,
-          model: context.bundle.experiment.models.solver,
-          partition: 'selection',
-          seeds: state.spec.seeds,
-          outputPath: resultPath(runRoot, 0, champion.id, 'selection'),
-        })
+        if (baselinePack !== null) {
+          await writeImportedRecords(
+            resultPath(runRoot, 0, champion.id, 'selection'),
+            baselinePack.selection.rawRecords,
+          )
+          baselineRecords = baselinePack.selection.records
+        } else {
+          baselineRecords = await environment.runCandidatePartition({
+            candidateId: champion.id,
+            candidateDigest: champion.digest,
+            candidateWorkspace: champion.workspace,
+            model: context.bundle.experiment.models.solver,
+            partition: 'selection',
+            seeds: state.spec.seeds,
+            outputPath: resultPath(runRoot, 0, champion.id, 'selection'),
+          })
+        }
       } catch (error) {
         state.spec.ledger = ledger(0)
         await persist()
@@ -1706,31 +1783,49 @@ export function createCoworkBranchEvolutionDriver({
     let historyEntry
     let phase = 'feedback'
     try {
-      onEvent({ stage: 'feedback', generation, message: `${branchId}/${mutationParent.id} 运行 feedback Partition` })
-      const feedbackRecords = await environment.runCandidatePartition({
-        candidateId: mutationParent.id,
-        candidateDigest: mutationParent.digest,
-        candidateWorkspace: mutationParent.workspace,
-        model: context.bundle.experiment.models.solver,
-        partition: 'feedback',
-        seeds: state.spec.seeds,
-        outputPath: resultPath(runRoot, generation, mutationParent.id, 'feedback'),
-      })
-      const feedbackPacket = buildFeedbackPacket({
-        runId,
-        generation,
-        candidateId: mutationParent.id,
-        benchmark: context.bundle.benchmark,
-        records: feedbackRecords,
-        maximumTextBytesPerCase: context.bundle.environment.feedback.maximumTextBytesPerCase,
-        maximumArtifactEntriesPerCase: context.bundle.environment.feedback.maximumArtifactEntriesPerCase,
-        maximumArtifactBytesPerCase: context.bundle.environment.feedback.maximumArtifactBytesPerCase,
-        secretValues: secretValuesFromEnvironment(requiredSecrets(context.bundle)),
-        searchHistory: state.spec.searchHistory,
-        peerEvidence: await readPeerEvidence(coordination),
-        maximumHistoryEntries: context.bundle.environment.feedback.maximumHistoryEntries,
-        maximumHistoryBytes: context.bundle.environment.feedback.maximumHistoryBytes,
-      })
+      let feedbackPacket
+      const importsInitialH0Feedback = baselinePack !== null
+        && generation === 1
+        && mutationParent.id === state.spec.baselineId
+        && state.spec.searchHistory.length === 0
+      if (importsInitialH0Feedback) {
+        onEvent({
+          stage: 'baseline-pack-feedback',
+          generation,
+          message: `${branchId}/${mutationParent.id} 复用公共 H0 Feedback`,
+        })
+        await writeImportedRecords(
+          resultPath(runRoot, generation, mutationParent.id, 'feedback'),
+          baselinePack.feedback.rawRecords,
+        )
+        feedbackPacket = structuredClone(baselinePack.feedback.packet)
+      } else {
+        onEvent({ stage: 'feedback', generation, message: `${branchId}/${mutationParent.id} 运行 feedback Partition` })
+        const feedbackRecords = await environment.runCandidatePartition({
+          candidateId: mutationParent.id,
+          candidateDigest: mutationParent.digest,
+          candidateWorkspace: mutationParent.workspace,
+          model: context.bundle.experiment.models.solver,
+          partition: 'feedback',
+          seeds: state.spec.seeds,
+          outputPath: resultPath(runRoot, generation, mutationParent.id, 'feedback'),
+        })
+        feedbackPacket = buildFeedbackPacket({
+          runId,
+          generation,
+          candidateId: mutationParent.id,
+          benchmark: context.bundle.benchmark,
+          records: feedbackRecords,
+          maximumTextBytesPerCase: context.bundle.environment.feedback.maximumTextBytesPerCase,
+          maximumArtifactEntriesPerCase: context.bundle.environment.feedback.maximumArtifactEntriesPerCase,
+          maximumArtifactBytesPerCase: context.bundle.environment.feedback.maximumArtifactBytesPerCase,
+          secretValues: secretValuesFromEnvironment(requiredSecrets(context.bundle)),
+          searchHistory: state.spec.searchHistory,
+          peerEvidence: await readPeerEvidence(coordination),
+          maximumHistoryEntries: context.bundle.environment.feedback.maximumHistoryEntries,
+          maximumHistoryBytes: context.bundle.environment.feedback.maximumHistoryBytes,
+        })
+      }
       await writeJsonFile(join(generationRoot, 'feedback-packet.json'), feedbackPacket)
       phase = 'update'
       proposal = await runUpdaterGeneration({
@@ -1743,15 +1838,24 @@ export function createCoworkBranchEvolutionDriver({
       })
       materializedCandidates.set(proposal.id, proposal)
       phase = 'selection'
-      const baselineRecords = await environment.runCandidatePartition({
-        candidateId: champion.id,
-        candidateDigest: champion.digest,
-        candidateWorkspace: champion.workspace,
-        model: context.bundle.experiment.models.solver,
-        partition: 'selection',
-        seeds: state.spec.seeds,
-        outputPath: resultPath(runRoot, generation, champion.id, 'selection'),
-      })
+      let baselineRecords
+      if (baselinePack !== null && champion.id === state.spec.baselineId) {
+        await writeImportedRecords(
+          resultPath(runRoot, generation, champion.id, 'selection'),
+          baselinePack.selection.rawRecords,
+        )
+        baselineRecords = baselinePack.selection.records
+      } else {
+        baselineRecords = await environment.runCandidatePartition({
+          candidateId: champion.id,
+          candidateDigest: champion.digest,
+          candidateWorkspace: champion.workspace,
+          model: context.bundle.experiment.models.solver,
+          partition: 'selection',
+          seeds: state.spec.seeds,
+          outputPath: resultPath(runRoot, generation, champion.id, 'selection'),
+        })
+      }
       const candidateRecords = await environment.runCandidatePartition({
         candidateId: proposal.id,
         candidateDigest: proposal.digest,

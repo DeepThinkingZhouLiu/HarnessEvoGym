@@ -147,6 +147,7 @@ test('MSA Cowork Solver 只读挂 Candidate/Skill，只写任务与独立输出�
   assert.equal(invocation.environment.HTTP_PROXY, '')
   assert.equal(invocation.environment.RSI_MODEL_GATEWAY_MODEL, model.model)
   assert.equal(invocation.environment.RSI_SOLVER_MAX_STEPS, '3')
+  assert.equal(invocation.environment.RSI_SOLVER_WALL_TIME_SECONDS, '1')
   assert.equal(invocation.secretEnvironment.RSI_MODEL_GATEWAY_DUMMY_KEY, modelAccess.secretEnvironment.RSI_PROVIDER_API_KEY)
   assert.equal(invocation.command[3], task)
   assert.equal(invocation.command.at(-1), 'cowork')
@@ -189,7 +190,7 @@ test('MSA Cowork Solver 在进入 Docker 前拒绝越界的可信步数上限', 
       name: 'msa-cowork-invalid-steps',
       timeoutMs: 1000,
     }),
-    /maximumSteps 必须是 1\.\.32 的整数/u,
+    /maximumSteps 必须是 0\.\.32 的整数/u,
   )
   assert.equal(invoked, false)
 })
@@ -464,7 +465,7 @@ test('MSA Cowork Candidate Profile 不能抬高 Controller 下发的步数上限
     'import agent',
     'calls = []',
     'agent.query = lambda *args: calls.append(args) or "continue"',
-    `runner = agent.Agent(pathlib.Path(${JSON.stringify(fixtureRoot)}), "cowork", "http://gateway", "dummy", "fixture", 1024, 2, pathlib.Path(${JSON.stringify(tracePath)}))`,
+    `runner = agent.Agent(pathlib.Path(${JSON.stringify(fixtureRoot)}), "cowork", "http://gateway", "dummy", "fixture", 1024, 2, 60, pathlib.Path(${JSON.stringify(tracePath)}))`,
     `answer = runner.run("fixture task", pathlib.Path(${JSON.stringify(fixtureRoot)}))`,
     'print(json.dumps({"requests": len(calls), "maximum_steps": runner.maximum_steps, "answer": answer}))',
   ].join('\n')
@@ -476,6 +477,44 @@ test('MSA Cowork Candidate Profile 不能抬高 Controller 下发的步数上限
   assert.equal(result.requests, 2)
   assert.equal(result.maximum_steps, 2)
   assert.match(result.answer, /exhausted its step budget/u)
+})
+
+test('MSA Cowork maximumSteps=0 取消逐步上限并由 Final 正常结束', async () => {
+  const seedRoot = resolve(repositoryRoot, 'targets/msa-minimal/cowork-v1')
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'rsi-msa-unlimited-steps-'))
+  const profileRoot = join(fixtureRoot, 'profiles')
+  const tracePath = join(fixtureRoot, 'agent.jsonl')
+  await mkdir(profileRoot)
+  await writeFile(join(profileRoot, 'cowork.md'), 'fixture prompt\n')
+  await writeFile(join(profileRoot, 'cowork.json'), `${JSON.stringify({
+    max_steps: 1,
+    max_output_tokens: 1024,
+    maximum_skill_files: 1,
+    maximum_skill_chars: 1024,
+    command_timeout_seconds: 1,
+    max_observation_chars: 1024,
+  })}\n`)
+  const script = [
+    'import json, pathlib, sys, types',
+    `sys.path.insert(0, ${JSON.stringify(seedRoot)})`,
+    'sys.modules["tools"] = types.SimpleNamespace(run_bash=lambda *args: "unused")',
+    'import agent',
+    'calls = []',
+    'def query(*args):',
+    '    calls.append(args)',
+    '    return "<final>done</final>" if len(calls) == 3 else "continue"',
+    'agent.query = query',
+    `runner = agent.Agent(pathlib.Path(${JSON.stringify(fixtureRoot)}), "cowork", "http://gateway", "dummy", "fixture", 1024, 0, 60, pathlib.Path(${JSON.stringify(tracePath)}))`,
+    `answer = runner.run("fixture task", pathlib.Path(${JSON.stringify(fixtureRoot)}))`,
+    'print(json.dumps({"requests": len(calls), "maximum_steps": runner.maximum_steps, "answer": answer}))',
+  ].join('\n')
+  const { stdout } = await executeFile('python3', ['-c', script], {
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+  })
+  const result = JSON.parse(stdout)
+  assert.equal(result.requests, 3)
+  assert.equal(result.maximum_steps, null)
+  assert.equal(result.answer, 'done')
 })
 
 test('MSA Cowork Candidate 不把空 Final 或空 Bash 当成有效动作', async () => {

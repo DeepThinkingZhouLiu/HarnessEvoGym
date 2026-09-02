@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 from model import query
@@ -65,6 +66,7 @@ class Agent:
         model: str,
         maximum_output_tokens: int,
         maximum_steps: int,
+        wall_time_seconds: int,
         trace_path: Path,
     ):
         profile_root = root / "profiles"
@@ -84,7 +86,12 @@ class Agent:
             int(self.config["max_output_tokens"]),
             maximum_output_tokens,
         )
-        self.maximum_steps = min(int(self.config["max_steps"]), maximum_steps)
+        self.maximum_steps = (
+            None
+            if maximum_steps == 0
+            else min(int(self.config["max_steps"]), maximum_steps)
+        )
+        self.wall_time_seconds = wall_time_seconds
         self.trace_path = trace_path
 
     def trace(self, event: dict) -> None:
@@ -111,7 +118,12 @@ class Agent:
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": task},
         ]
-        for step in range(1, self.maximum_steps + 1):
+        deadline = time.monotonic() + self.wall_time_seconds
+        step = 0
+        while self.maximum_steps is None or step < self.maximum_steps:
+            if time.monotonic() >= deadline:
+                return "The agent exhausted its wall-clock budget before completing the requested deliverable."
+            step += 1
             reply = query(
                 self.gateway_url,
                 self.api_key,

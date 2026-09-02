@@ -14,7 +14,7 @@ spec:
   materialization:
     strategy: source-plus-seed-overlay
     seedPath: targets/msa-minimal/cowork-v1
-    seedDigest: 27e50592951c551230080a78edc0e7c272b6ddcbe2b6fd180de38d028a5ef2bc
+    seedDigest: 1580081b63fe75f9405713d9fb8faaa494b7a30ef8a6238da2afc9bb5da072e7
     overrides:
       - agent.py
       - model.py
@@ -32,8 +32,8 @@ spec:
       traceFile: agent.jsonl
       maximumAnswerBytes: 1048576
       maximumTraceBytes: 16777216
-      # 正式 RSI 使用 Candidate Profile 的完整 12 步上限；Smoke Adapter 仍固定为 1 步。
-      maximumSteps: 12
+      # 0 表示不限制交互步数；每题仍受 Environment 的墙钟超时约束。
+      maximumSteps: 0
       secretEnvironment:
         - RSI_PROVIDER_API_KEY
         - RSI_PROVIDER_BASE_URL
@@ -75,7 +75,7 @@ spec:
       profile:
         path: profiles/cowork.json
         maximums:
-          # 与可信 Solver Runtime 的 maximumSteps 对齐，拒绝不会实际生效的搜索提案。
+          # Candidate 在有界 Runtime 中仍不能声明超过 12 步；正式 Adapter 的 0 会取消步数截断。
           max_steps: 12
           command_timeout_seconds: 600
           max_observation_chars: 131072

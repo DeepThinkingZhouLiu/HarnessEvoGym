@@ -173,7 +173,7 @@ test('TargetAdapter 要求 source-plus-seed-overlay 固定 64 位小写 Seed Dig
   )
 })
 
-test('MSA TargetAdapter 只接受 1..32 的 Solver 步数上限', async () => {
+test('MSA TargetAdapter 接受 0 表示无限步，并拒绝超过 32 的有限步数', async () => {
   const configPath = join(REPOSITORY_ROOT, 'adapters', 'targets', 'msa-minimal.yml')
   const configured = validateTargetAdapter(await readConfigFile(configPath))
   assert.equal(configured.solver.runtime.maximumSteps, 1)
@@ -182,7 +182,11 @@ test('MSA TargetAdapter 只接受 1..32 的 Solver 步数上限', async () => {
   delete legacy.spec.solver.runtime.maximumSteps
   assert.equal(validateTargetAdapter(legacy).solver.runtime.maximumSteps, 32)
 
-  for (const value of [0, 33, 1.5]) {
+  const unlimited = await readConfigFile(configPath)
+  unlimited.spec.solver.runtime.maximumSteps = 0
+  assert.equal(validateTargetAdapter(unlimited).solver.runtime.maximumSteps, 0)
+
+  for (const value of [-1, 33, 1.5]) {
     const raw = await readConfigFile(configPath)
     raw.spec.solver.runtime.maximumSteps = value
     assert.throws(

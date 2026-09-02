@@ -113,7 +113,7 @@ experiments/cowork-msa-rsi-linear-<mode>.json
 ```
 
 `msa-minimal` 把 Solver 单题最多限制为 1 步，用于便宜的工程 Smoke；
-`msa-minimal-cowork-rsi` 允许 12 步，用于正式 55/18/18 配置。两者共用相同 Source
+`msa-minimal-cowork-rsi` 不限制交互步数、只保留单题墙钟预算，用于正式 55/18/18 配置。两者共用相同 Source
 和 Cowork CandidateSeed，但预算目的不同。
 
 ## 命令

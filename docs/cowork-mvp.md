@@ -108,8 +108,8 @@ experiments/cowork-msa-rsi-linear-<mode>.json
 ```
 
 `msa-minimal` caps each Solver task at one step for inexpensive connectivity
-smoke. `msa-minimal-cowork-rsi` allows the profile's 12-step loop for the
-registered 55/18/18 experiments.
+smoke. `msa-minimal-cowork-rsi` leaves interaction steps uncapped and relies on
+the per-task wall-clock budget for the registered 55/18/18 experiments.
 
 ## Commands
 

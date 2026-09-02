@@ -252,7 +252,13 @@ class Bridge:
                         else:
                             expanded.append(argument)
                     args = expanded
-                command = ["sudo", "docker", *args]
+                command_environment = request.get("commandEnvironment", {})
+                if command_environment not in ({}, {"DOCKER_BUILDKIT": "1"}):
+                    raise RuntimeError("unsupported Docker command environment")
+                command = ["sudo"]
+                if command_environment:
+                    command.extend(["env", "DOCKER_BUILDKIT=1"])
+                command.extend(["docker", *args])
                 timeout = int(request.get("timeoutSeconds", 120))
                 if timeout > 180:
                     return self._long_vm(command, timeout)

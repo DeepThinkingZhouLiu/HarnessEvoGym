@@ -73,3 +73,83 @@ print("ok")
   })
   assert.equal(stdout.trim(), 'ok')
 })
+
+test('AgentBay bridge 可显式附着已有 session 且不接管其生命周期', async () => {
+  const script = String.raw`
+import importlib.util
+import os
+import sys
+import types
+
+calls = []
+
+class Session:
+    session_id = "s-existing"
+    def keep_alive(self):
+        pass
+
+class Result:
+    exit_code = 0
+    stdout = ""
+    stderr = ""
+
+class SessionResult:
+    session = Session()
+    error_message = ""
+
+class AgentBay:
+    def get(self, session_id):
+        calls.append(("get", session_id))
+        return SessionResult()
+    def create(self, params):
+        calls.append(("create", params))
+        return SessionResult()
+    def delete(self, session, sync_context=False):
+        calls.append(("delete", session.session_id))
+
+class CreateSessionParams:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+class LifecyclePolicy:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+agentbay = types.ModuleType("agentbay")
+agentbay.AgentBay = AgentBay
+agentbay.CreateSessionParams = CreateSessionParams
+common = types.ModuleType("agentbay._common")
+params = types.ModuleType("agentbay._common.params")
+lifecycle = types.ModuleType("agentbay._common.params.lifecycle_policy")
+lifecycle.LifecyclePolicy = LifecyclePolicy
+sys.modules.update({
+    "agentbay": agentbay,
+    "agentbay._common": common,
+    "agentbay._common.params": params,
+    "agentbay._common.params.lifecycle_policy": lifecycle,
+})
+
+spec = importlib.util.spec_from_file_location("agentbay_bridge", "scripts/agentbay-docker-bridge.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.Bridge._vm = lambda self, args, timeout=120: Result()
+module.Bridge._ensure_docker = lambda self: None
+
+os.environ.update({
+    "AGENTBAY_API_KEY": "test",
+    "HARNESS_RSI_AGENTBAY_IMAGE_ID": "img-test",
+    "HARNESS_RSI_AGENTBAY_POLICY_ID": "policy-test",
+    "HARNESS_RSI_AGENTBAY_EXISTING_SESSION_ID": "s-existing",
+})
+bridge = module.Bridge()
+assert bridge.owns_session is False
+bridge.close()
+assert calls == [("get", "s-existing")], calls
+print("ok")
+`
+  const { stdout } = await execFileAsync('python3', ['-c', script], {
+    cwd: repositoryRoot,
+    timeout: 10_000,
+  })
+  assert.equal(stdout.trim(), 'ok')
+})

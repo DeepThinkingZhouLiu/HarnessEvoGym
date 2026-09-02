@@ -58,19 +58,35 @@ class Bridge:
             )
         os.environ.setdefault("AGENTBAY_TIMEOUT_MS", "900000")
         self.client = AgentBay()
-        created = self.client.create(
-            CreateSessionParams(
-                image_id=image_id,
-                policy_id=policy_id,
-                # The currently provisioned AgentBay policy caps maxRuntime at
-                # 1000. Keepalive handles idle expiry; Controller checkpoints
-                # remain authoritative if the platform enforces a hard cap.
-                lifecycle_policy=LifecyclePolicy(idle_release_timeout=900, max_runtime=1000),
+        existing_session_id = os.environ.get(
+            "HARNESS_RSI_AGENTBAY_EXISTING_SESSION_ID", ""
+        ).strip()
+        self.owns_session = not existing_session_id
+        if existing_session_id:
+            attached = self.client.get(existing_session_id)
+            self.session = getattr(attached, "session", None)
+            if self.session is None:
+                raise RuntimeError(
+                    "AgentBay existing session attach failed: "
+                    f"{getattr(attached, 'error_message', '')}"
+                )
+        else:
+            created = self.client.create(
+                CreateSessionParams(
+                    image_id=image_id,
+                    policy_id=policy_id,
+                    # The currently provisioned AgentBay policy caps maxRuntime at
+                    # 1000. Keepalive handles idle expiry; Controller checkpoints
+                    # remain authoritative if the platform enforces a hard cap.
+                    lifecycle_policy=LifecyclePolicy(idle_release_timeout=900, max_runtime=1000),
+                )
             )
-        )
-        self.session = getattr(created, "session", None)
-        if self.session is None:
-            raise RuntimeError(f"AgentBay session creation failed: {getattr(created, 'error_message', '')}")
+            self.session = getattr(created, "session", None)
+            if self.session is None:
+                raise RuntimeError(
+                    "AgentBay session creation failed: "
+                    f"{getattr(created, 'error_message', '')}"
+                )
         self.remote_root = f"/tmp/harness-rsi-{uuid.uuid4().hex}"
         # AgentBay control-plane calls are serialized. Long Docker commands are
         # launched in the background, so releasing this lock after launch lets
@@ -313,7 +329,8 @@ class Bridge:
         try:
             self._vm(["rm", "-rf", self.remote_root], 60)
         finally:
-            self.client.delete(self.session, sync_context=False)
+            if self.owns_session:
+                self.client.delete(self.session, sync_context=False)
 
 
 def serve_requests(bridge, lines, emit_response=emit, maximum_workers: int = 200) -> None:

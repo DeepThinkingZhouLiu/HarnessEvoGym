@@ -65,6 +65,11 @@ cleared plus `no_new_privs`. Other hosts retain the normal rootless launcher.
 The isolated Codex session executes the static native binary from the pinned
 npm distribution and uses a byte-stream loopback-to-Unix-socket relay, so no
 host Node runtime or DSW dynamic-library tree enters the sandbox.
+The frozen invocation also disables Codex plugins, browser/app integrations,
+skill and workspace dependency discovery, shell snapshots, remote compaction,
+and unbounded retries. Those interactive features are outside the Updater
+contract and may otherwise block startup in the intentionally network-empty
+namespace.
 
 Current limits: the MVP schedules sibling Updater and Solver calls
 sequentially, and the first AgentBay bridge serializes remote control-plane

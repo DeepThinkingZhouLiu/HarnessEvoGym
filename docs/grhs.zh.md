@@ -56,6 +56,9 @@ UID/GID 65534，清空附加组与所有 capability set，并设置 `no_new_priv
 仍使用原有 rootless launcher。
 隔离的 Codex Session 直接执行固定 npm distribution 内的静态原生二进制，并用字节流
 loopback-to-Unix-socket relay 转发模型请求，不把宿主 Node runtime 或 DSW 动态库树带入沙箱。
+冻结启动参数还会关闭 Codex 插件、浏览器/应用集成、Skill 与 Workspace 依赖发现、
+shell snapshot、远端压缩和无限重试。这些交互功能不属于 Updater 合约，而且可能在刻意
+断网的命名空间内阻塞启动。
 
 当前限制：MVP 依次调度 sibling Updater/Solver，首版 AgentBay bridge 也会在单 VM 内
 串行化远端控制面操作；Provider 没有可信 Rate Card，因此暂用

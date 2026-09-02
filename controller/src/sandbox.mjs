@@ -199,19 +199,31 @@ export function buildBubblewrapInvocation({
   gid,
   bwrapPath = '/usr/bin/bwrap',
   setprivPath = '/usr/bin/setpriv',
+  unsharePath = '/usr/bin/unshare',
   network = 'none',
   procMode = 'mounted',
   procSelfExecutable,
   hostname = 'harness-rsi',
   maskedPaths = [],
   preserveSupplementaryGroups = false,
+  privilegedLauncher = false,
 }) {
   const userId = positiveIdentity(uid, 'sandbox uid')
   const groupId = positiveIdentity(gid, 'sandbox gid')
   const bwrap = absolutePath(bwrapPath, 'bwrapPath')
   const setpriv = absolutePath(setprivPath, 'setprivPath')
+  const unshare = absolutePath(unsharePath, 'unsharePath')
   if (typeof preserveSupplementaryGroups !== 'boolean') {
     throw new ProtocolError('preserveSupplementaryGroups 必须是布尔值')
+  }
+  if (typeof privilegedLauncher !== 'boolean') {
+    throw new ProtocolError('privilegedLauncher 必须是布尔值')
+  }
+  if (privilegedLauncher && process.getuid?.() !== 0) {
+    throw new ProtocolError('privilegedLauncher 只允许可信 root Controller 使用')
+  }
+  if (privilegedLauncher && preserveSupplementaryGroups) {
+    throw new ProtocolError('privilegedLauncher 必须清空附加组')
   }
   if (preserveSupplementaryGroups
       && (process.getuid?.() !== userId || process.getgid?.() !== groupId)) {
@@ -239,15 +251,14 @@ export function buildBubblewrapInvocation({
   const bwrapArguments = [
     '--die-with-parent',
     '--new-session',
-    '--unshare-user',
+    ...(privilegedLauncher ? [] : ['--unshare-user']),
     '--unshare-pid',
     '--unshare-ipc',
     '--unshare-uts',
     '--unshare-cgroup',
-    ...(network === 'none' ? ['--unshare-net'] : []),
-    '--uid', '0',
-    '--gid', '0',
-    '--cap-drop', 'ALL',
+    ...(network === 'none' && !privilegedLauncher ? ['--unshare-net'] : []),
+    ...(privilegedLauncher ? [] : ['--uid', '0', '--gid', '0']),
+    ...(privilegedLauncher ? [] : ['--cap-drop', 'ALL']),
     '--hostname', hostname,
     ...destinationParents(mounts),
     '--ro-bind', '/usr', '/usr',
@@ -279,10 +290,27 @@ export function buildBubblewrapInvocation({
     '--tmpfs', '/run',
     '--chdir', rewritten.cwd,
     '--',
-    rewritten.command,
-    ...rewritten.args,
+    ...(privilegedLauncher
+      ? [
+          setpriv,
+          `--reuid=${userId}`,
+          `--regid=${groupId}`,
+          '--clear-groups',
+          '--no-new-privs',
+          '--bounding-set=-all',
+          '--inh-caps=-all',
+          '--ambient-caps=-all',
+          rewritten.command,
+          ...rewritten.args,
+        ]
+      : [rewritten.command, ...rewritten.args]),
   ]
 
+  if (privilegedLauncher) {
+    return network === 'none'
+      ? { command: unshare, args: ['--net', '--', bwrap, ...bwrapArguments], cwd: '/', env: rewritten.env }
+      : { command: bwrap, args: bwrapArguments, cwd: '/', env: rewritten.env }
+  }
   return {
     command: setpriv,
     args: [

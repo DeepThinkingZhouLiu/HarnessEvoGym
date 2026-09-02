@@ -173,6 +173,34 @@ test('generic sandbox can provide an empty proc directory for restricted kernels
   }), ProtocolError)
 })
 
+test('privileged launcher builds namespaces before dropping to an unprivileged identity', () => {
+  if (process.getuid?.() !== 0) return
+  const result = buildBubblewrapInvocation({
+    invocation: { command: '/usr/bin/true', args: [], cwd: '/work', env: {} },
+    uid: 65_534,
+    gid: 65_534,
+    privilegedLauncher: true,
+    mounts: [{ source: '/safe/work', destination: '/work', readOnly: false }],
+  })
+  assert.equal(result.command, '/usr/bin/unshare')
+  assert.deepEqual(result.args.slice(0, 3), ['--net', '--', '/usr/bin/bwrap'])
+  assert.equal(result.args.includes('--unshare-user'), false)
+  assert.equal(result.args.includes('--unshare-net'), false)
+  assert.equal(includesSequence(result.args, [
+    '--', '/usr/bin/setpriv', '--reuid=65534', '--regid=65534',
+    '--clear-groups', '--no-new-privs', '--bounding-set=-all',
+    '--inh-caps=-all', '--ambient-caps=-all', '/usr/bin/true',
+  ]), true)
+  assert.throws(() => buildBubblewrapInvocation({
+    invocation: { command: '/usr/bin/true', args: [], cwd: '/work', env: {} },
+    uid: 65_534,
+    gid: 65_534,
+    privilegedLauncher: true,
+    preserveSupplementaryGroups: true,
+    mounts: [{ source: '/safe/work', destination: '/work', readOnly: false }],
+  }), /清空附加组/u)
+})
+
 test('generic sandbox 只允许当前宿主身份保留附加组', () => {
   const uid = process.getuid?.()
   const gid = process.getgid?.()

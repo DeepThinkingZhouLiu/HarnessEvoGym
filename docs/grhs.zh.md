@@ -49,6 +49,12 @@ Smoke 组合使用 AgentBay Environment 变体。Controller 每个 Run 保持一
 `experiment baseline` 可直接用于这个不带 Recipe 的 GRHS 组合：它只运行 H0
 selection，记录为零变异预算消耗，并在不启动 Updater Session 的情况下退出。
 
+当 root Controller 宿主明确禁用非特权 user namespace 时，Codex Updater 只在核验
+`user.max_user_namespaces=0` 后启用特权 Bubblewrap launcher。Launcher 先进入空
+network namespace，再建立现有 mount/PID/IPC/UTS/cgroup 边界，最后降到
+UID/GID 65534，清空附加组与所有 capability set，并设置 `no_new_privs`。其他宿主
+仍使用原有 rootless launcher。
+
 当前限制：MVP 依次调度 sibling Updater/Solver，首版 AgentBay bridge 也会在单 VM 内
 串行化远端控制面操作；Provider 没有可信 Rate Card，因此暂用
 Token 增量作为成本代理；有效 sibling 少于两个时不在本轮预算内重试。更大候选组、

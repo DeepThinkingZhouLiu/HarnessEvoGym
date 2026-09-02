@@ -2,9 +2,11 @@ import { createHash, randomBytes } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import {
   chmod,
+  chown,
   lstat,
   mkdir,
   mkdtemp,
+  readFile,
   readdir,
   realpath,
   rm,
@@ -25,6 +27,8 @@ import { startModelGateway } from '../model-gateway.mjs'
 import { stageUpdaterContext } from './dsh.mjs'
 
 const REPORT_MAXIMUM_BYTES = 256 * 1024
+const ROOT_SANDBOX_UID = 65_534
+const ROOT_SANDBOX_GID = 65_534
 
 function inside(parent, child) {
   const rel = relative(parent, child)
@@ -42,6 +46,33 @@ async function regularPath(pathValue, label, kind = 'file') {
     throw new ProtocolError(`${label} 必须是普通${kind === 'file' ? '文件' : '目录'}`)
   }
   return info
+}
+
+async function chownTree(pathValue, uid, gid) {
+  const info = await lstat(pathValue)
+  if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile())) {
+    throw new ProtocolError('根 Controller 禁止向 Updater 移交符号链接或特殊文件', [pathValue])
+  }
+  if (info.isDirectory()) {
+    for (const entry of await readdir(pathValue)) {
+      await chownTree(join(pathValue, entry), uid, gid)
+    }
+  }
+  await chown(pathValue, uid, gid)
+}
+
+async function attestRootSandboxLauncher() {
+  let maximumUserNamespaces
+  try {
+    maximumUserNamespaces = (await readFile('/proc/sys/user/max_user_namespaces', 'utf8')).trim()
+  } catch (error) {
+    throw new ProtocolError('root Controller 无法核验 user namespace 上限', [error.message])
+  }
+  if (maximumUserNamespaces !== '0') {
+    throw new ProtocolError('root Controller 只能在禁用嵌套 user namespace 的宿主启动 Updater', [
+      `user.max_user_namespaces=${maximumUserNamespaces}`,
+    ])
+  }
 }
 
 async function checkedProcess(options, label) {
@@ -340,10 +371,24 @@ export function createCodexUpdaterDriver({
       ])
       const dummyKey = `rsi-${randomBytes(24).toString('base64url')}`
       const socketPath = join(shortRunRoot, 'model-gateway.sock')
-      const uid = process.getuid?.()
-      const gid = process.getgid?.()
-      if (!Number.isInteger(uid) || uid < 1 || !Number.isInteger(gid) || gid < 1) {
-        throw new ProtocolError('Codex Updater 拒绝以 root 或未知宿主身份运行')
+      const controllerUid = process.getuid?.()
+      const controllerGid = process.getgid?.()
+      if (!Number.isInteger(controllerUid) || controllerUid < 0
+          || !Number.isInteger(controllerGid) || controllerGid < 0) {
+        throw new ProtocolError('Codex Updater 拒绝以未知宿主身份运行')
+      }
+      const privilegedLauncher = controllerUid === 0
+      const uid = privilegedLauncher ? ROOT_SANDBOX_UID : controllerUid
+      const gid = privilegedLauncher ? ROOT_SANDBOX_GID : controllerGid
+      if (privilegedLauncher) {
+        await attestRootSandboxLauncher()
+        await Promise.all([
+          chownTree(options.candidateWorkspace, uid, gid),
+          chownTree(gitRoot, uid, gid),
+          chownTree(options.outputDirectory, uid, gid),
+          chownTree(evolutionLogPath, uid, gid),
+          chownTree(shortRunRoot, uid, gid),
+        ])
       }
 
       let gateway
@@ -397,9 +442,10 @@ export function createCodexUpdaterDriver({
           peerLogs: [],
           bwrapPath: updater.runtime.bwrapPath,
           setprivPath: updater.runtime.setprivPath,
-          // 本 Driver 在普通宿主用户下运行，setgroups 对非 root 不可用；
-          // UID/GID 已核验为当前身份，保留附加组不扩大空根 Bubblewrap 的挂载边界。
-          preserveSupplementaryGroups: true,
+          // 普通宿主用户保留已核验的附加组；root Controller 则由
+          // Bubblewrap 建立边界后降到专用的无特权 UID/GID。
+          preserveSupplementaryGroups: !privilegedLauncher,
+          privilegedLauncher,
           baseEnv: {
             PATH: '/usr/local/bin:/usr/bin:/bin',
             LANG: 'C.UTF-8',

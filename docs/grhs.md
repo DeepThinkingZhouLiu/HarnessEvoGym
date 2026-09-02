@@ -56,6 +56,13 @@ policy ID are runtime environment values, never Experiment values.
 runs only H0 selection, records zero mutation-budget consumption, and exits
 without starting an Updater session.
 
+On a root Controller host where unprivileged user namespaces are explicitly
+disabled, Codex Updater uses a privileged Bubblewrap launcher only after
+attesting `user.max_user_namespaces=0`. The launcher enters an empty network
+namespace, constructs the existing mount/PID/IPC/UTS/cgroup boundary, and then
+drops to UID/GID 65534 with supplementary groups and all capability sets
+cleared plus `no_new_privs`. Other hosts retain the normal rootless launcher.
+
 Current limits: the MVP schedules sibling Updater and Solver calls
 sequentially, and the first AgentBay bridge serializes remote control-plane
 operations within one VM. It uses token delta as the available cost proxy because the provider

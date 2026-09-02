@@ -52,6 +52,10 @@ inside that VM; mount inputs are uploaded before a trial and only writable
 mounts are returned afterward. `AGENTBAY_API_KEY`, the VM image ID, and the
 policy ID are runtime environment values, never Experiment values.
 
+`experiment baseline` supports this recipe-free GRHS composition directly. It
+runs only H0 selection, records zero mutation-budget consumption, and exits
+without starting an Updater session.
+
 Current limits: the MVP schedules sibling Updater and Solver calls
 sequentially, and the first AgentBay bridge serializes remote control-plane
 operations within one VM. It uses token delta as the available cost proxy because the provider

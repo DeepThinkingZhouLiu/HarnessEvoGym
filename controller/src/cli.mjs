@@ -210,10 +210,10 @@ async function baselineRunCommand(args) {
     runId: result.runId,
     runRoot: result.runRoot,
     baselinePath: result.baselinePath,
-    baselineId: result.state.best.candidateId,
-    status: result.state.status,
-    primary: result.state.best.evaluation.primary,
-    budgetConsumed: result.state.budget.consumed,
+    baselineId: result.baselineId ?? result.state.best.candidateId,
+    status: result.state.status ?? result.state.metadata.status,
+    primary: result.primary ?? result.state.best.evaluation.primary,
+    budgetConsumed: result.budgetConsumed ?? result.state.budget.consumed,
   }, options.get('output'))
 }
 

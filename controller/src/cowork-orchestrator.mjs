@@ -2384,6 +2384,7 @@ export async function runEvolution({
   experimentPath,
   runId = createRunId(),
   onEvent = () => {},
+  baselineOnly = false,
 }) {
   safeRunId(runId)
   const controllerRevision = await trustedControllerRevision(repositoryRoot)
@@ -2489,6 +2490,57 @@ export async function runEvolution({
   state.spec.configDigest = jsonDigest(experimentSnapshot)
   await writeJsonFile(join(runRoot, 'experiment.snapshot.json'), experimentSnapshot)
   await writeJsonFile(join(runRoot, 'state.json'), state)
+
+  if (baselineOnly) {
+    const baselinePath = resultPath(runRoot, 0, h0.id, 'selection')
+    try {
+      onEvent({ stage: 'selection-baseline', message: `${h0.id} 运行 H0 Selection Baseline` })
+      const baselineRecords = await environment.runCandidatePartition({
+        candidateId: h0.id,
+        candidateDigest: h0.digest,
+        candidateWorkspace: h0.workspace,
+        model: context.bundle.experiment.models.solver,
+        partition: 'selection',
+        seeds: state.spec.seeds,
+        outputPath: baselinePath,
+      })
+      const baselineEvaluation = createEvaluationSummary({
+        candidateId: h0.id,
+        metric: context.bundle.policy.primaryMetric,
+        value: primaryMetricFromRecords(baselineRecords, context.bundle.policy.primaryMetric),
+      })
+      state.metadata.status = 'baseline-completed'
+      state.spec.candidates[0].evaluation = baselineEvaluation
+      state.spec.ledger = buildLedger({
+        generations: 0,
+        candidatesEvaluated: 0,
+        startedAt,
+        solverUsage: context.solverDriver.usage(),
+        updaterUsage: context.updaterDriver.usage(),
+      })
+      await writeJsonFile(join(runRoot, 'state.json'), state)
+      onEvent({ stage: 'baseline-completed', message: `H0 Baseline 完成，${context.bundle.policy.primaryMetric}=${baselineEvaluation.primary.value}` })
+      return {
+        runId,
+        runRoot,
+        baselineId: h0.id,
+        baselinePath,
+        primary: baselineEvaluation.primary,
+        budgetConsumed: 0,
+        state,
+      }
+    } catch (error) {
+      state.metadata.status = 'failed'
+      state.spec.failure = { message: error.message, details: error.details ?? [] }
+      await writeJsonFile(join(runRoot, 'state.json'), state)
+      throw error
+    } finally {
+      const cleanupErrors = await context.modelGateway.stop()
+      if (cleanupErrors.length > 0) {
+        onEvent({ stage: 'cleanup-warning', message: `Model Gateway 清理失败：${cleanupErrors.join('；')}` })
+      }
+    }
+  }
 
   try {
     for (let generation = 1; generation <= context.bundle.experiment.evolution.generations; generation += 1) {
@@ -2981,10 +3033,9 @@ export async function runConfiguredEvolution(options) {
 /** 只跑单 Branch H0 selection，不调用 Updater、不进入进化轮次。 */
 export async function runConfiguredBaseline(options) {
   const experiment = await loadExperimentBundle(resolve(options.experimentPath), options.repositoryRoot)
-  if (experiment.experiment.recipePath === null) {
-    throw new ProtocolError('H0 Baseline 命令需要显式 EvolutionRecipe 以固化完整实验身份')
-  }
-  return await runPopulationEvolution({ ...options, baselineOnly: true })
+  return experiment.experiment.recipePath === null
+    ? await runEvolution({ ...options, baselineOnly: true })
+    : await runPopulationEvolution({ ...options, baselineOnly: true })
 }
 
 function assertEvolutionRunState(state) {

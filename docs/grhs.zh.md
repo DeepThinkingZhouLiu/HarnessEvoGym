@@ -67,7 +67,7 @@ loopback-to-Unix-socket relay 转发模型请求，不把宿主 Node runtime 或
 shell snapshot、远端压缩和无限重试。这些交互功能不属于 Updater 合约，而且可能在受限
 Updater runtime 内阻塞启动。
 
-当前限制：MVP 依次调度 sibling Updater/Solver，首版 AgentBay bridge 也会在单 VM 内
-串行化远端控制面操作；Provider 没有可信 Rate Card，因此暂用
+当前限制：MVP 依次调度 sibling Updater/Solver。AgentBay bridge 在单 VM 内串行启动
+远端 Trial、并行执行已启动的 Trial，并将并发限制在四条；Provider 没有可信 Rate Card，因此暂用
 Token 增量作为成本代理；有效 sibling 少于两个时不在本轮预算内重试。更大候选组、
-有界重试、并行调度和正式 OfficeVal Split 留到后续阶段。
+有界重试和 sibling 级并行调度留到后续阶段。

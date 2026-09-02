@@ -16,12 +16,17 @@ import tempfile
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
+_EMIT_LOCK = threading.Lock()
+
+
 def emit(value: dict) -> None:
-    sys.stdout.write(json.dumps(value, separators=(",", ":")) + "\n")
-    sys.stdout.flush()
+    with _EMIT_LOCK:
+        sys.stdout.write(json.dumps(value, separators=(",", ":")) + "\n")
+        sys.stdout.flush()
 
 
 def result_fields(result) -> dict:
@@ -67,6 +72,10 @@ class Bridge:
         if self.session is None:
             raise RuntimeError(f"AgentBay session creation failed: {getattr(created, 'error_message', '')}")
         self.remote_root = f"/tmp/harness-rsi-{uuid.uuid4().hex}"
+        # AgentBay control-plane calls are serialized. Long Docker commands are
+        # launched in the background, so releasing this lock after launch lets
+        # their workloads execute concurrently inside the VM.
+        self._control_plane_lock = threading.Lock()
         self._vm(["mkdir", "-p", self.remote_root], 30)
         self._ensure_docker()
         self.keepalive_stop = threading.Event()
@@ -76,7 +85,8 @@ class Bridge:
     def _keepalive_loop(self) -> None:
         while not self.keepalive_stop.wait(300):
             try:
-                self.session.keep_alive()
+                with self._control_plane_lock:
+                    self.session.keep_alive()
             except Exception:
                 pass
 
@@ -85,7 +95,8 @@ class Bridge:
         last = None
         for attempt in range(1, 4):
             try:
-                value = self.session.command.run(command, timeout_ms=max(1, timeout) * 1000)
+                with self._control_plane_lock:
+                    value = self.session.command.run(command, timeout_ms=max(1, timeout) * 1000)
                 fields = result_fields(value)
                 if fields["exitCode"] == 0:
                     return value
@@ -175,9 +186,10 @@ class Bridge:
                 else:
                     bundle.add(source, arcname=source.name, recursive=False)
             remote_archive = f"{self.remote_root}/upload-{uuid.uuid4().hex}.tar"
-            uploaded = self.session.file_system.upload_file(
-                local_path=str(archive), remote_path=remote_archive
-            )
+            with self._control_plane_lock:
+                uploaded = self.session.file_system.upload_file(
+                    local_path=str(archive), remote_path=remote_archive
+                )
             if not getattr(uploaded, "success", True):
                 raise RuntimeError(f"AgentBay upload failed: {getattr(uploaded, 'error_message', '')}")
             self._checked(["rm", "-rf", remote_dir], 60)
@@ -192,9 +204,10 @@ class Bridge:
         self._checked(["sudo", "chmod", "0644", remote_archive], 30)
         with tempfile.TemporaryDirectory(prefix="harness-rsi-agentbay-") as temporary:
             archive = Path(temporary) / "payload.tar"
-            downloaded = self.session.file_system.download_file(
-                remote_path=remote_archive, local_path=str(archive)
-            )
+            with self._control_plane_lock:
+                downloaded = self.session.file_system.download_file(
+                    remote_path=remote_archive, local_path=str(archive)
+                )
             if not getattr(downloaded, "success", True):
                 raise RuntimeError(f"AgentBay download failed: {getattr(downloaded, 'error_message', '')}")
             target.mkdir(parents=True, exist_ok=True)
@@ -239,9 +252,10 @@ class Bridge:
                                 raise RuntimeError("invalid secret environment entry")
                             stream.write(f"{name}={value}\n")
                     remote_environment = f"{self.remote_root}/env-{uuid.uuid4().hex}"
-                    uploaded = self.session.file_system.upload_file(
-                        local_path=local_environment, remote_path=remote_environment
-                    )
+                    with self._control_plane_lock:
+                        uploaded = self.session.file_system.upload_file(
+                            local_path=local_environment, remote_path=remote_environment
+                        )
                     os.unlink(local_environment)
                     if not getattr(uploaded, "success", True):
                         raise RuntimeError(f"AgentBay env upload failed: {getattr(uploaded, 'error_message', '')}")
@@ -302,16 +316,30 @@ class Bridge:
             self.client.delete(self.session, sync_context=False)
 
 
+def serve_requests(bridge, lines, emit_response=emit, maximum_workers: int = 8) -> None:
+    def handle(line: str) -> None:
+        request = None
+        try:
+            request = json.loads(line)
+            emit_response({"id": request.get("id"), "result": bridge.request(request)})
+        except Exception as exc:
+            emit_response({
+                "id": request.get("id") if isinstance(request, dict) else None,
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+
+    # Reading and submission stay ordered. Workers may wait concurrently after
+    # each remote workload has passed the serialized control-plane launch.
+    with ThreadPoolExecutor(max_workers=maximum_workers, thread_name_prefix="agentbay-request") as executor:
+        for line in lines:
+            executor.submit(handle, line)
+
+
 def main() -> int:
     bridge = None
     try:
         bridge = Bridge()
-        for line in sys.stdin:
-            try:
-                request = json.loads(line)
-                emit({"id": request.get("id"), "result": bridge.request(request)})
-            except Exception as exc:
-                emit({"id": request.get("id") if "request" in locals() else None, "error": f"{type(exc).__name__}: {exc}"})
+        serve_requests(bridge, sys.stdin)
         return 0
     except Exception as exc:
         emit({"id": None, "error": f"{type(exc).__name__}: {exc}"})

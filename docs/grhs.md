@@ -80,8 +80,8 @@ and unbounded retries. Those interactive features are outside the Updater
 contract and may otherwise block startup in the restricted Updater runtime.
 
 Current limits: the MVP schedules sibling Updater and Solver calls
-sequentially, and the first AgentBay bridge serializes remote control-plane
-operations within one VM. It uses token delta as the available cost proxy because the provider
+sequentially. Within its single VM, the AgentBay bridge launches remote trials
+serially, runs launched trials concurrently with a limit of four, and uses token delta as the available cost proxy because the provider
 has no trusted rate card, and does not retry a group that has fewer than two
-valid siblings. Larger groups, bounded retries, parallel execution, and formal
-OfficeVal splits remain follow-up work.
+valid siblings. Larger groups, bounded retries, and sibling-level parallelism
+remain follow-up work.

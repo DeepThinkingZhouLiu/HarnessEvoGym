@@ -21,8 +21,9 @@ spec:
   task:
     workspacePath: /workspace
     environmentAssets: environments/omegause-officeval-assets
-    # MVP bridge serializes control-plane calls within one AgentBay session.
-    maximumConcurrentTrials: 1
+    # AgentBay control-plane launches remain serial; launched Trial workloads
+    # execute concurrently inside the shared VM.
+    maximumConcurrentTrials: 4
     workspaceLimits:
       maximumFiles: 10000
       maximumBytes: 1073741824

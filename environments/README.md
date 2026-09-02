@@ -13,8 +13,9 @@ Windows Office COM 任务。Solver/Updater 只连接 Run 级 Docker internal net
 
 `omegause-officeval-agentbay.yml` 保持同一 Environment ID、Dataset、Verifier 与
 Reward Contract，只把 Docker Driver 替换为 AgentBay VM 内的远端 Docker。Bridge
-按 Run 复用单个 VM，运行时读取 AgentBay Key/Image/Policy，且不会把这些值暴露给
-Candidate。它是无本地 Docker 场景的 Smoke 后端；当前控制面操作串行执行。
+为每条 Trial 创建独占 AgentBay Session，运行时读取 AgentBay Key/Image/Policy，且不会把这些值暴露给
+Candidate。Session 创建串行执行；已创建 Session 内的 Docker 准备、Solver 与 Verifier
+可以并行运行。它也是无本地 Docker 场景的 Smoke 后端。
 
 一个 Environment Adapter 至少需要描述：
 

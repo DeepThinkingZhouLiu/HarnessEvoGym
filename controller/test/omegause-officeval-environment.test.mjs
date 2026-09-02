@@ -38,6 +38,36 @@ test('OmegaUse 受控并发不超过上限且保持 Benchmark 顺序', async () 
   )
 })
 
+test('OmegaUse AgentBay Trial 在独占 Task Session 内执行并清理作用域', async () => {
+  const events = []
+  const docker = {
+    scopeKey() { return 'agentbay-task-fixture' },
+    async withTaskSession(callback) {
+      events.push('session:start')
+      try { return await callback() } finally { events.push('session:close') }
+    },
+  }
+  const solverDriver = {
+    async cleanupRuntimeScope() { events.push('gateway:stop') },
+  }
+  const runner = new OmegaUseOfficeValEnvironment({
+    environment: {},
+    benchmark: {},
+    solverDriver,
+    docker,
+    runRoot: '/tmp/fixture-run',
+    repositoryRoot,
+  })
+  runner.runtimeByScope.set('agentbay-task-fixture', { baseImage: 'stale' })
+  runner.runTrialInCurrentSession = async () => {
+    events.push('trial:run')
+    return 'ok'
+  }
+  assert.equal(await runner.runTrial({}), 'ok')
+  assert.deepEqual(events, ['session:start', 'trial:run', 'gateway:stop', 'session:close'])
+  assert.equal(runner.runtimeByScope.has('agentbay-task-fixture'), false)
+})
+
 function digest(value) {
   return createHash('sha256').update(value).digest('hex')
 }

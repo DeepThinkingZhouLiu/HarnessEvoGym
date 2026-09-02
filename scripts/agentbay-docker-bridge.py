@@ -76,11 +76,21 @@ class Bridge:
         # launched in the background, so releasing this lock after launch lets
         # their workloads execute concurrently inside the VM.
         self._control_plane_lock = threading.Lock()
-        self._vm(["mkdir", "-p", self.remote_root], 30)
-        self._ensure_docker()
+        self._ready_lock = threading.Lock()
+        self._ready = False
         self.keepalive_stop = threading.Event()
         self.keepalive = threading.Thread(target=self._keepalive_loop, daemon=True)
         self.keepalive.start()
+
+    def _ensure_ready(self) -> None:
+        if self._ready:
+            return
+        with self._ready_lock:
+            if self._ready:
+                return
+            self._checked(["mkdir", "-p", self.remote_root], 30)
+            self._ensure_docker()
+            self._ready = True
 
     def _keepalive_loop(self) -> None:
         while not self.keepalive_stop.wait(300):
@@ -230,6 +240,12 @@ class Bridge:
 
     def request(self, request: dict) -> dict:
         operation = request.get("operation")
+        # Session creation is the only globally serialized phase in the Node
+        # pool. Docker initialization starts lazily after the lease is handed
+        # to a task, so already-created sessions prepare and execute in parallel.
+        if operation == "session":
+            return {"sessionId": self.session.session_id}
+        self._ensure_ready()
         if operation == "docker":
             args = request.get("args")
             if not isinstance(args, list) or not all(isinstance(value, str) for value in args):
@@ -303,8 +319,6 @@ class Bridge:
             if uid == 0 or gid == 0:
                 uid = gid = 1000
             return {"uid": uid, "gid": gid}
-        if operation == "session":
-            return {"sessionId": self.session.session_id}
         raise RuntimeError(f"unknown operation: {operation}")
 
     def close(self) -> None:

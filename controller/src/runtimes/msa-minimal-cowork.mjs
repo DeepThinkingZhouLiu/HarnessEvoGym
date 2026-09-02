@@ -450,7 +450,8 @@ export function createMsaMinimalCoworkSolverDriver({
     },
     async run(options) {
       if (!modelGateway) throw new ProtocolError('MSA Solver 运行必须使用隔离 Model Gateway')
-      const before = usageBatch === null ? await modelGateway.usage('solver') : null
+      const scopedBatch = usageBatch?.scoped === true
+      const before = usageBatch === null || scopedBatch ? await modelGateway.usage('solver') : null
       let result
       let operationError
       try {
@@ -469,7 +470,7 @@ export function createMsaMinimalCoworkSolverDriver({
       } catch (error) {
         operationError = error
       }
-      if (usageBatch !== null) {
+      if (usageBatch !== null && !scopedBatch) {
         if (operationError) throw operationError
         return result
       }
@@ -489,15 +490,33 @@ export function createMsaMinimalCoworkSolverDriver({
     async beginUsageBatch() {
       if (!modelGateway) throw new ProtocolError('MSA Solver Usage Batch 需要 Model Gateway')
       if (usageBatch !== null) throw new ProtocolError('MSA Solver Usage Batch 不能嵌套')
-      usageBatch = { before: await modelGateway.usage('solver') }
+      usageBatch = docker.supportsTaskSessions
+        ? { scoped: true }
+        : { scoped: false, before: await modelGateway.usage('solver') }
     },
     async endUsageBatch() {
       if (usageBatch === null) throw new ProtocolError('MSA Solver Usage Batch 尚未开始')
-      const { before } = usageBatch
+      const { before, scoped } = usageBatch
       usageBatch = null
+      if (scoped) {
+        return {
+          acceptedRequests: 0,
+          usageResponses: 0,
+          unknownUsageResponses: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          reasoningTokens: 0,
+          activeRequests: 0,
+          complete: true,
+        }
+      }
       const usage = diffModelUsage(before, await modelGateway.usage('solver'))
       addUsage(measuredUsage, usage)
       return usage
+    },
+    async cleanupRuntimeScope() {
+      return await modelGateway?.stopScope?.() ?? []
     },
     usage() {
       return publicUsage(measuredUsage)

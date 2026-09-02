@@ -65,6 +65,21 @@ lines = io.StringIO(
 )
 module.serve_requests(ConcurrentBridge(), lines, capture, maximum_workers=2)
 assert [value["id"] for value in responses] == [2, 1], responses
+
+ready_calls = []
+lazy_bridge = object.__new__(module.Bridge)
+lazy_bridge.session = type("Session", (), {"session_id": "session-fixture"})()
+lazy_bridge.remote_root = "/tmp/fixture"
+lazy_bridge._ready = False
+lazy_bridge._ready_lock = threading.Lock()
+lazy_bridge._checked = lambda args, timeout=120: ready_calls.append((args, timeout))
+lazy_bridge._ensure_docker = lambda: ready_calls.append(("docker", 0))
+assert lazy_bridge.request({"operation": "session"}) == {"sessionId": "session-fixture"}
+assert ready_calls == [], ready_calls
+lazy_bridge.request({"operation": "allocatePath"})
+assert len(ready_calls) == 2, ready_calls
+lazy_bridge.request({"operation": "allocatePath"})
+assert len(ready_calls) == 2, ready_calls
 print("ok")
 `
   const { stdout } = await execFileAsync('python3', ['-c', script], {

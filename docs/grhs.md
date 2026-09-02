@@ -41,6 +41,12 @@ The MVP composition is
 - one L2 round with two siblings;
 - one feedback and one selection OmegaUse-OfficeVal smoke task.
 
+The full AgentBay composition is
+[`experiments/cowork-msa-grhs-formal32-codex.json`](../experiments/cowork-msa-grhs-formal32-codex.json).
+It freezes the same GRHS policy for 32 generations against the formal
+55-feedback, 18-selection, and 18-sealed-final split. Evolution runs never read
+the sealed-final partition.
+
 Run-time values are injected only through `RSI_PROVIDER_BASE_URL` and
 `RSI_PROVIDER_API_KEY`. The Codex distribution and the OfficeVal dataset and
 evaluator roots must pass preflight before a real run. No credential belongs in

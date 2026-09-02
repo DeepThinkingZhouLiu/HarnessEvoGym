@@ -38,6 +38,11 @@ MVP 配置位于
 - 一轮 L2、两个 sibling；
 - OmegaUse-OfficeVal Smoke 各运行一道 feedback 和 selection 任务。
 
+完整 AgentBay 组合位于
+[`experiments/cowork-msa-grhs-formal32-codex.json`](../experiments/cowork-msa-grhs-formal32-codex.json)。
+它在正式 55 feedback、18 selection、18 sealed-final Split 上冻结相同 GRHS 策略并运行
+32 代；进化阶段永远不会读取 sealed-final Partition。
+
 运行时值只通过 `RSI_PROVIDER_BASE_URL` 和 `RSI_PROVIDER_API_KEY` 注入。真实运行前，
 Codex distribution、OfficeVal Dataset Root 和 Evaluator Root 都必须通过 preflight。
 Experiment、Candidate、Feedback Packet、Trace 和 Mutation Report 均不得保存凭据。

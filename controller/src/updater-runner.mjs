@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { relayWrappedInvocation } from './model-gateway-relay.mjs'
+import { relayWrappedInvocation, socatRelayWrappedInvocation } from './model-gateway-relay.mjs'
 import { ProtocolError } from './protocol.mjs'
 import {
   buildBubblewrapInvocation,
@@ -72,12 +72,12 @@ function safeBaseEnvironment(baseEnv) {
   return env
 }
 
-function codexNativeSandboxExecutable() {
+function codexNativeExecutable(root = UPDATER_SANDBOX_PATHS.runtime) {
   const target = CODEX_NATIVE_TARGETS.get(`${process.platform}:${process.arch}`)
   if (target === undefined) throw new ProtocolError('Codex Updater 不支持当前平台')
   const [packageName, triple] = target
   return join(
-    UPDATER_SANDBOX_PATHS.runtime,
+    root,
     'node_modules', '@openai', packageName, 'vendor', triple, 'bin', 'codex',
   )
 }
@@ -143,7 +143,7 @@ export function buildUpdaterInvocation({
   const run = resolve(runRoot)
   const node = resolve(nodeBinary)
   const patch = resolve(runtimePatch)
-  const nodeToolchain = executableDistributionRoot(node)
+  const nodeToolchain = backend === 'codex-cli' ? null : executableDistributionRoot(node)
   const codex = backend === 'codex-cli' ? resolve(codexPath) : null
   const runtime = backend === 'codex-cli'
     ? (codexDistributionRoot === undefined
@@ -201,11 +201,11 @@ export function buildUpdaterInvocation({
         throw new ProtocolError(`Codex Updater ${name} 不能为空`)
       }
     }
+    const nativeCodex = codexNativeExecutable(runtime)
     const toml = (value) => JSON.stringify(value)
     invocation = {
-      command: node,
+      command: nativeCodex,
       args: [
-        codex,
         'exec',
         '--ignore-user-config',
         '--ignore-rules',
@@ -261,12 +261,14 @@ export function buildUpdaterInvocation({
     })
   }
   const innerInvocation = isolatedGateway
-    ? relayWrappedInvocation({
-        invocation,
-        nodePath: node,
-        relayPath: relaySourcePath,
-        socketPath: gatewaySocketPath,
-      })
+    ? (backend === 'codex-cli'
+        ? socatRelayWrappedInvocation({ invocation, socketPath: gatewaySocketPath })
+        : relayWrappedInvocation({
+            invocation,
+            nodePath: node,
+            relayPath: relaySourcePath,
+            socketPath: gatewaySocketPath,
+          }))
     : invocation
   return buildBubblewrapInvocation({
     invocation: {
@@ -294,7 +296,7 @@ export function buildUpdaterInvocation({
       ? 'synthetic-self'
       : (isolatedGateway ? 'empty' : 'mounted'),
     ...(backend === 'codex-cli'
-      ? { procSelfExecutable: codexNativeSandboxExecutable() }
+      ? { procSelfExecutable: codexNativeExecutable() }
       : {}),
     hostname: 'rsi-updater',
     mounts: [
@@ -324,7 +326,7 @@ export function buildUpdaterInvocation({
         destination: UPDATER_SANDBOX_PATHS.runtimePatch,
         readOnly: true,
       }] : []),
-      ...(isolatedGateway ? [{
+      ...(isolatedGateway && backend !== 'codex-cli' ? [{
         source: relaySourcePath,
         destination: UPDATER_SANDBOX_PATHS.relay,
         readOnly: true,

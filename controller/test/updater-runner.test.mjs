@@ -154,7 +154,10 @@ test('Codex updater uses only the isolated local configuration and keeps DSH ava
     },
   })
   const invocation = buildUpdaterInvocation(options)
-  assert.ok(invocation.args.includes('/opt/harness-rsi/updater-runtime/bin/codex.js'))
+  assert.ok(invocation.args.includes(
+    '/opt/harness-rsi/updater-runtime/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex',
+  ))
+  assert.equal(invocation.args.includes('/opt/harness-rsi/updater-runtime/bin/codex.js'), false)
   for (const flag of [
     '--ignore-user-config',
     '--ignore-rules',
@@ -178,6 +181,8 @@ test('Codex updater uses only the isolated local configuration and keeps DSH ava
   )
   assert.equal(mountMode(invocation.args, '/srv/upstream', UPDATER_SANDBOX_PATHS.upstream), '--ro-bind')
   assert.equal(mountMode(invocation.args, '/srv/output', UPDATER_SANDBOX_PATHS.output), '--bind')
+  assert.equal(invocation.args.includes(UPDATER_SANDBOX_PATHS.relay), false)
+  assert.equal(invocation.args.includes(UPDATER_SANDBOX_PATHS.nodeToolchain), false)
   assert.ok(invocation.args.includes('--unshare-net'))
   assert.equal(invocation.args.includes('--proc'), false)
   assert.ok(invocation.args.includes('/proc/self/exe'))

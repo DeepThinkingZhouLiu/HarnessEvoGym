@@ -131,6 +131,36 @@ export function relayWrappedInvocation({ invocation, nodePath, relayPath, socket
   }
 }
 
+const SOCAT_RELAY_SCRIPT = [
+  'set -eu',
+  `/usr/bin/socat TCP4-LISTEN:${MODEL_GATEWAY_RELAY_PORT},bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:"$RSI_MODEL_GATEWAY_SOCKET" &`,
+  'relay_pid=$!',
+  'trap \'kill "$relay_pid" 2>/dev/null || true; wait "$relay_pid" 2>/dev/null || true\' EXIT HUP INT TERM',
+  '/usr/bin/sleep 0.1',
+  'set +e',
+  '"$@"',
+  'child_status=$?',
+  'set -e',
+  'kill "$relay_pid" 2>/dev/null || true',
+  'wait "$relay_pid" 2>/dev/null || true',
+  'trap - EXIT HUP INT TERM',
+  'exit "$child_status"',
+].join('\n')
+
+/** Wrap a static native child without importing the host Node runtime. */
+export function socatRelayWrappedInvocation({ invocation, socketPath }) {
+  const childInvocation = validateChild(invocation?.command, invocation?.args)
+  if (typeof invocation?.cwd !== 'string' || !invocation.env || typeof invocation.env !== 'object') {
+    throw protocolFailure('relay invocation is invalid')
+  }
+  return {
+    ...invocation,
+    command: '/bin/sh',
+    args: ['-c', SOCAT_RELAY_SCRIPT, 'harness-rsi-relay', childInvocation.command, ...childInvocation.args],
+    env: { ...invocation.env, RSI_MODEL_GATEWAY_SOCKET: validateSocketPath(socketPath) },
+  }
+}
+
 async function main() {
   const [socketPath, command, ...args] = process.argv.slice(2)
   if (command === undefined) throw protocolFailure('relay child command is required')

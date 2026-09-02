@@ -54,6 +54,8 @@ selection，记录为零变异预算消耗，并在不启动 Updater Session 的
 network namespace，再建立现有 mount/PID/IPC/UTS/cgroup 边界，最后降到
 UID/GID 65534，清空附加组与所有 capability set，并设置 `no_new_privs`。其他宿主
 仍使用原有 rootless launcher。
+隔离的 Codex Session 直接执行固定 npm distribution 内的静态原生二进制，并用字节流
+loopback-to-Unix-socket relay 转发模型请求，不把宿主 Node runtime 或 DSW 动态库树带入沙箱。
 
 当前限制：MVP 依次调度 sibling Updater/Solver，首版 AgentBay bridge 也会在单 VM 内
 串行化远端控制面操作；Provider 没有可信 Rate Card，因此暂用

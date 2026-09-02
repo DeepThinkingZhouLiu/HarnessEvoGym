@@ -62,6 +62,9 @@ attesting `user.max_user_namespaces=0`. The launcher enters an empty network
 namespace, constructs the existing mount/PID/IPC/UTS/cgroup boundary, and then
 drops to UID/GID 65534 with supplementary groups and all capability sets
 cleared plus `no_new_privs`. Other hosts retain the normal rootless launcher.
+The isolated Codex session executes the static native binary from the pinned
+npm distribution and uses a byte-stream loopback-to-Unix-socket relay, so no
+host Node runtime or DSW dynamic-library tree enters the sandbox.
 
 Current limits: the MVP schedules sibling Updater and Solver calls
 sequentially, and the first AgentBay bridge serializes remote control-plane

@@ -10,6 +10,7 @@ import {
   MODEL_GATEWAY_RELAY_URL,
   createModelGatewayRelay,
   relayWrappedInvocation,
+  socatRelayWrappedInvocation,
 } from '../src/model-gateway-relay.mjs'
 
 function requestRelay() {
@@ -90,4 +91,24 @@ test('relay wrapper preserves the original command as inert arguments', () => {
     '/candidate/dsh',
     '--flag',
   ])
+})
+
+test('native relay wrapper passes the child only as shell positional arguments', () => {
+  const invocation = socatRelayWrappedInvocation({
+    invocation: {
+      command: '/runtime/codex',
+      args: ['prompt; touch /escaped'],
+      cwd: '/work',
+      env: {},
+    },
+    socketPath: '/gateway/gateway.sock',
+  })
+  assert.equal(invocation.command, '/bin/sh')
+  assert.deepEqual(invocation.args.slice(-3), [
+    'harness-rsi-relay',
+    '/runtime/codex',
+    'prompt; touch /escaped',
+  ])
+  assert.equal(invocation.args[1].includes('prompt; touch /escaped'), false)
+  assert.equal(invocation.env.RSI_MODEL_GATEWAY_SOCKET, '/gateway/gateway.sock')
 })

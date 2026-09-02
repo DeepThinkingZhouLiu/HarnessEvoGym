@@ -35,6 +35,11 @@ import { DockerClient } from './docker.mjs'
 import { evaluateBenchmark } from './evaluator.mjs'
 import { createEnvironmentRunner, createSolverDriver, createUpdaterDriver } from './factories.mjs'
 import { buildFeedbackPacket } from './feedback.mjs'
+import {
+  createGrhsMutationPlans,
+  initialProposalPrior,
+  scoreGrhsGroup,
+} from './grhs.mjs'
 import { createEvaluationSummary } from './evaluation-summary.mjs'
 import { validateBranchProjection, validateBranchStepResult } from './branch-evolution-driver.mjs'
 import {
@@ -306,6 +311,23 @@ function publicDecision(decision) {
   }
 }
 
+function grhsPatchComplexity(proposal, limits) {
+  const changedFiles = proposal.policyReport.changedFiles / limits.maximumChangedFiles
+  const changedBytes = proposal.policyReport.changedBytes / limits.maximumChangedBytes
+  return (changedFiles + changedBytes) / 2
+}
+
+function grhsPolicyValid(evaluation) {
+  const invalidGateIds = new Set([
+    'baseline-record-coverage',
+    'candidate-record-coverage',
+    'baseline-completion',
+    'candidate-completion',
+    'maximum-policy-violations',
+  ])
+  return evaluation.decision.gates.every((gate) => !invalidGateIds.has(gate.id) || gate.passed)
+}
+
 function resultPath(runRoot, generation, candidateId, partition) {
   return join(runRoot, 'results', `generation-${generation}`, `${candidateId}-${partition}.jsonl`)
 }
@@ -555,9 +577,11 @@ async function runUpdaterGeneration({
   parent,
   feedbackPacket,
   mutationPolicy,
+  candidateId = null,
+  groupContext = null,
 }) {
   const level = context.bundle.experiment.evolution.mutationLevel
-  const id = `g${String(generation).padStart(3, '0')}-${level}`
+  const id = candidateId ?? `g${String(generation).padStart(3, '0')}-${level}`
   const root = join(runRoot, 'candidates', id)
   const workspace = join(root, 'workspace')
   await mkdir(root, { recursive: true })
@@ -582,6 +606,9 @@ async function runUpdaterGeneration({
       'mutation.writablePaths': mutationPolicy.spec.writable.map((value) => `- ${value}`).join('\n'),
       'mutation.readOnlyPaths': mutationPolicy.spec.readOnly.map((value) => `- ${value}`).join('\n'),
       'mutation.semanticConstraints': JSON.stringify(mutationPolicy.spec.semanticConstraints, null, 2),
+      'group.context': groupContext === null
+        ? '本轮不是分组搜索。'
+        : `本轮是 GRHS sibling ${groupContext.memberIndex}/${groupContext.groupSize}。所有 sibling 共享同一父版本、反馈证据、Selection、Seed 和预算。\n当前 proposal prior：${JSON.stringify(groupContext.proposalPrior)}\n请生成独立、最小且可证伪的 Patch；不要模仿或依赖其他 sibling 的未公开结果。`,
       'output.mutationReportPath': `.rsi-output/${context.bundle.updater.mutationReportName}`,
     },
     feedbackPacket,
@@ -2052,6 +2079,296 @@ export function createCoworkBranchEvolutionDriver({
   }
 }
 
+async function runGrhsRound({
+  context,
+  environment,
+  runRoot,
+  runId,
+  generation,
+  generationRoot,
+  champion,
+  state,
+  mutationCatalog,
+  materializedCandidates,
+  candidatesEvaluated,
+  startedAt,
+  onEvent,
+}) {
+  const configuration = context.bundle.experiment.evolution.grhs
+  const groupId = `g${String(generation).padStart(3, '0')}-grhs`
+  const groupRoot = join(generationRoot, 'grhs-group')
+  await mkdir(groupRoot, { recursive: true })
+  const proposalPrior = state.spec.grhs.proposalPrior
+  const mutationPlans = createGrhsMutationPlans({
+    catalog: mutationCatalog,
+    riskCeiling: state.spec.mutationLevel,
+    parentId: champion.id,
+    generation,
+    groupSize: configuration.groupSize,
+    proposalPrior,
+  })
+  const leases = mutationPlans.map((plan) => issueMutationLease({
+    target: context.bundle.target,
+    catalog: mutationCatalog,
+    plan,
+    riskCeiling: state.spec.mutationLevel,
+  }))
+  await Promise.all(mutationPlans.flatMap((plan, index) => {
+    const siblingRoot = join(groupRoot, 'siblings', `s${String(index + 1).padStart(3, '0')}`)
+    return [
+      mkdir(siblingRoot, { recursive: true }),
+      writeJsonFile(join(siblingRoot, 'mutation-plan.json'), plan),
+      writeJsonFile(join(siblingRoot, 'mutation-lease.json'), leases[index]),
+    ]
+  }))
+
+  onEvent({ stage: 'feedback', generation, message: `${champion.id} 为 ${configuration.groupSize} 个 sibling 运行共享 feedback` })
+  const feedbackRecords = await environment.runCandidatePartition({
+    candidateId: champion.id,
+    candidateDigest: champion.digest,
+    candidateWorkspace: champion.workspace,
+    model: context.bundle.experiment.models.solver,
+    partition: 'feedback',
+    seeds: state.spec.seeds,
+    outputPath: resultPath(runRoot, generation, champion.id, 'feedback'),
+  })
+  const feedbackPacket = buildFeedbackPacket({
+    runId,
+    generation,
+    candidateId: champion.id,
+    benchmark: context.bundle.benchmark,
+    records: feedbackRecords,
+    maximumTextBytesPerCase: context.bundle.environment.feedback.maximumTextBytesPerCase,
+    maximumArtifactEntriesPerCase: context.bundle.environment.feedback.maximumArtifactEntriesPerCase,
+    maximumArtifactBytesPerCase: context.bundle.environment.feedback.maximumArtifactBytesPerCase,
+    secretValues: secretValuesFromEnvironment(requiredSecrets(context.bundle)),
+    searchHistory: state.spec.searchHistory,
+    maximumHistoryEntries: context.bundle.environment.feedback.maximumHistoryEntries,
+    maximumHistoryBytes: context.bundle.environment.feedback.maximumHistoryBytes,
+  })
+  await writeJsonFile(join(groupRoot, 'feedback-packet.json'), feedbackPacket)
+
+  onEvent({ stage: 'selection-baseline', generation, message: `${champion.id} 运行 sibling 共享 Selection Baseline` })
+  const baselineRecords = await environment.runCandidatePartition({
+    candidateId: champion.id,
+    candidateDigest: champion.digest,
+    candidateWorkspace: champion.workspace,
+    model: context.bundle.experiment.models.solver,
+    partition: 'selection',
+    seeds: state.spec.seeds,
+    outputPath: resultPath(runRoot, generation, champion.id, 'selection'),
+  })
+
+  const siblingResults = []
+  let evaluatedThisRound = 0
+  for (let index = 0; index < mutationPlans.length; index += 1) {
+    const member = index + 1
+    const candidateId = `${groupId}-s${String(member).padStart(3, '0')}-${state.spec.mutationLevel}`
+    const plan = mutationPlans[index]
+    let proposal = null
+    let evaluation = null
+    let rejection = null
+    try {
+      onEvent({
+        stage: 'update',
+        generation,
+        message: `启动 GRHS sibling ${member}/${configuration.groupSize} Codex Updater Session`,
+      })
+      proposal = await runUpdaterGeneration({
+        context,
+        runRoot,
+        generation,
+        parent: champion,
+        feedbackPacket,
+        mutationPolicy: leases[index],
+        candidateId,
+        groupContext: {
+          memberIndex: member,
+          groupSize: configuration.groupSize,
+          proposalPrior,
+        },
+      })
+      materializedCandidates.set(proposal.id, proposal)
+      onEvent({ stage: 'selection', generation, message: `${champion.id} 与 ${proposal.id} 配对评测` })
+      const candidateRecords = await environment.runCandidatePartition({
+        candidateId: proposal.id,
+        candidateDigest: proposal.digest,
+        candidateWorkspace: proposal.workspace,
+        model: context.bundle.experiment.models.solver,
+        partition: 'selection',
+        seeds: state.spec.seeds,
+        outputPath: resultPath(runRoot, generation, proposal.id, 'selection'),
+      })
+      evaluatedThisRound += 1
+      evaluation = evaluateBenchmark({
+        benchmark: context.bundle.benchmark,
+        policy: context.bundle.policy,
+        run: { id: runId, baselineRevision: champion.digest, candidateRevision: proposal.digest },
+        baselineRecords,
+        candidateRecords,
+        partitions: ['selection'],
+        evolutionLedger: buildLedger({
+          generations: generation,
+          candidatesEvaluated: candidatesEvaluated + evaluatedThisRound,
+          startedAt,
+          solverUsage: context.solverDriver.usage(),
+          updaterUsage: context.updaterDriver.usage(),
+        }),
+      })
+      await writeJsonFile(join(proposal.root, 'evaluation.json'), evaluation)
+    } catch (error) {
+      // Candidate 变异失败属于组内无效样本；Selection/Environment 失败属于
+      // Controller 基础设施，不能伪装成低 utility 后继续做晋升决策。
+      if (proposal !== null) throw error
+      rejection = {
+        stage: 'update-and-diff',
+        message: error.message,
+        details: error.details ?? [],
+      }
+    }
+    if (!proposal || !evaluation) {
+      siblingResults.push({
+        id: candidateId,
+        parentId: champion.id,
+        regionIds: plan.spec.regionIds,
+        valid: false,
+        promotionEligible: false,
+        rejection,
+      })
+      continue
+    }
+    const selection = evaluation.partitions.selection
+    const tokenDelta = selection.deltas.tokens.relative
+    siblingResults.push({
+      id: proposal.id,
+      parentId: champion.id,
+      regionIds: plan.spec.regionIds,
+      valid: grhsPolicyValid(evaluation),
+      promotionEligible: evaluation.decision.eligible,
+      qualityDelta: selection.paired.deltaMeanReward,
+      qualityLowerBound: selection.paired.pairedRewardDeltaCi?.lower ?? selection.paired.deltaMeanReward,
+      regressionRate: selection.paired.rewardRegressed
+        / context.bundle.benchmark.partitions.selection.instanceIds.length,
+      incrementalCost: typeof tokenDelta === 'number' ? tokenDelta : 0,
+      patchComplexity: grhsPatchComplexity(proposal, context.bundle.target.mutation.limits),
+      proposal,
+      evaluation,
+      rejection: grhsPolicyValid(evaluation) ? null : {
+        stage: 'policy-gates',
+        message: 'Candidate 未通过 Coverage、Completion 或 Safety Gate',
+        details: [],
+      },
+    })
+  }
+
+  const digestOwners = new Map()
+  for (const sibling of siblingResults) {
+    const digest = sibling.proposal?.digest
+    if (!digest) continue
+    if (!digestOwners.has(digest)) {
+      digestOwners.set(digest, sibling.id)
+      continue
+    }
+    sibling.valid = false
+    sibling.promotionEligible = false
+    sibling.rejection = {
+      stage: 'group-deduplication',
+      message: `Patch 与 sibling ${digestOwners.get(digest)} 完全相同，不是离散 Candidate`,
+      details: [],
+    }
+  }
+
+  const groupDecision = scoreGrhsGroup({
+    candidates: siblingResults.map(({ proposal, evaluation, ...candidate }) => candidate),
+    configuration,
+    proposalPrior,
+  })
+  const promoted = groupDecision.promotedCandidateId === null
+    ? null
+    : siblingResults.find((candidate) => candidate.id === groupDecision.promotedCandidateId)?.proposal ?? null
+  const championAfter = promoted ?? champion
+  const scoredById = new Map(groupDecision.candidates.map((candidate) => [candidate.id, candidate]))
+
+  for (const sibling of siblingResults) {
+    const scored = scoredById.get(sibling.id)
+    const status = sibling.id === groupDecision.promotedCandidateId
+      ? 'promoted'
+      : sibling.valid ? 'rejected' : 'invalid-proposal'
+    state.spec.candidates.push({
+      id: sibling.id,
+      parentId: champion.id,
+      digest: sibling.proposal?.digest ?? null,
+      status,
+      groupId,
+      mutationPlanId: mutationPlans[siblingResults.indexOf(sibling)].metadata.id,
+      regionIds: sibling.regionIds,
+      utility: scored.utility,
+      relativeAdvantage: scored.advantage,
+      utilityLowerBound: scored.utilityLowerBound,
+      ...(sibling.evaluation ? { decision: sibling.evaluation.decision } : {}),
+      ...(sibling.rejection ? { rejection: sibling.rejection } : {}),
+    })
+    state.spec.searchHistory.push({
+      generation,
+      groupId,
+      parentId: champion.id,
+      proposalId: sibling.id,
+      status,
+      mutationPlanId: mutationPlans[siblingResults.indexOf(sibling)].metadata.id,
+      regionIds: sibling.regionIds,
+      utility: scored.utility,
+      relativeAdvantage: scored.advantage,
+      utilityLowerBound: scored.utilityLowerBound,
+      ...(sibling.proposal ? {
+        hypothesis: sibling.proposal.report.hypothesis,
+        changedFiles: sibling.proposal.report.changedFiles,
+        expectedImpact: sibling.proposal.report.expectedImpact,
+      } : {}),
+      ...(sibling.evaluation ? { selection: publicDecision(sibling.evaluation.decision) } : {}),
+      ...(sibling.rejection ? { rejection: sibling.rejection } : {}),
+      championBeforeId: champion.id,
+      championAfterId: championAfter.id,
+    })
+    await appendRegistry(context.repositoryRoot, {
+      runId,
+      candidateId: sibling.id,
+      parentId: champion.id,
+      digest: sibling.proposal?.digest ?? null,
+      mutationLevel: state.spec.mutationLevel,
+      regionIds: sibling.regionIds,
+      groupId,
+      utility: scored.utility,
+      relativeAdvantage: scored.advantage,
+      status,
+    })
+  }
+
+  state.spec.grhs.proposalPrior = groupDecision.proposalPriorAfter
+  state.spec.grhs.groups.push({
+    generation,
+    groupId,
+    parentId: champion.id,
+    candidateIds: siblingResults.map((candidate) => candidate.id),
+    promotedCandidateId: groupDecision.promotedCandidateId,
+    rollbackReason: groupDecision.rollbackReason,
+  })
+  await writeJsonFile(join(groupRoot, 'group-decision.json'), groupDecision)
+  await writeJsonFile(join(generationRoot, 'decision.json'), {
+    generation,
+    groupId,
+    parentId: champion.id,
+    championId: championAfter.id,
+    promotedCandidateId: groupDecision.promotedCandidateId,
+    rollbackReason: groupDecision.rollbackReason,
+  })
+  onEvent({
+    stage: 'decision',
+    generation,
+    message: promoted ? `GRHS 晋升 ${promoted.id}` : `GRHS 回滚，保留 ${champion.id}`,
+  })
+  return { champion: championAfter, candidatesEvaluated: candidatesEvaluated + evaluatedThisRound }
+}
+
 export async function runEvolution({
   repositoryRoot,
   experimentPath,
@@ -2129,8 +2446,21 @@ export async function runEvolution({
       baselineId: h0.id,
       championId: champion.id,
       mutationLevel: context.bundle.experiment.evolution.mutationLevel,
-      searchStrategy: context.searchStrategy.descriptor(),
+      searchStrategy: context.bundle.experiment.evolution.grhs === null
+        ? context.searchStrategy.descriptor()
+        : null,
       searchStrategyState: null,
+      grhs: context.bundle.experiment.evolution.grhs === null
+        ? null
+        : {
+            algorithm: 'group-relative-harness-search-v1',
+            configuration: context.bundle.experiment.evolution.grhs,
+            proposalPrior: initialProposalPrior(
+              mutationCatalog,
+              context.bundle.experiment.evolution.mutationLevel,
+            ),
+            groups: [],
+          },
       generationsRequested: context.bundle.experiment.evolution.generations,
       generationsCompleted: 0,
       seeds: context.bundle.experiment.evolution.seeds.slice(
@@ -2154,6 +2484,29 @@ export async function runEvolution({
     for (let generation = 1; generation <= context.bundle.experiment.evolution.generations; generation += 1) {
       const generationRoot = join(runRoot, 'generations', `generation-${generation}`)
       await mkdir(generationRoot, { recursive: true })
+      if (state.spec.grhs !== null) {
+        const round = await runGrhsRound({
+          context,
+          environment,
+          runRoot,
+          runId,
+          generation,
+          generationRoot,
+          champion,
+          state,
+          mutationCatalog,
+          materializedCandidates,
+          candidatesEvaluated,
+          startedAt,
+          onEvent,
+        })
+        champion = round.champion
+        candidatesEvaluated = round.candidatesEvaluated
+        state.spec.championId = champion.id
+        state.spec.generationsCompleted = generation
+        await writeJsonFile(join(runRoot, 'state.json'), state)
+        continue
+      }
       const proposed = await context.searchStrategy.propose({
         runId,
         generation,

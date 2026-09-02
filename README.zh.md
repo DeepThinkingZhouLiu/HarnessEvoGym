@@ -57,6 +57,11 @@ incumbent
 SearchStrategy 只管“搜哪里”，Updater 仍是完整 Coding Agent，自己做失败归因、
 提出假设、改代码和自检。Controller 不把归因写成固定规则，只强制权限与客观 Gate。
 
+可选的 [GRHS Controller](docs/grhs.zh.md) 在这条单 Plan seam 之上增加候选组调度：
+多个离散 sibling 共享同一父版本和匹配证据，计算 utility 与组内 relative
+advantage，更新 Region 分类 prior，并在不训练模型参数的前提下产出一个可审计的
+晋升/回滚决定。
+
 ## 可插拔 Target、Environment 与 Recipe
 
 | 场景 / 对象          | 已实现的组合                                               | 用途                                      |

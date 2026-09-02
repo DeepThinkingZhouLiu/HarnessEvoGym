@@ -12,6 +12,9 @@
 ```
 报告输出：`{{ output.mutationReportPath }}`
 
+分组搜索上下文：
+{{ group.context }}
+
 你会收到一个 Feedback Packet，其中包含上一版本的 feedback 任务要求、Reward、Solver 最终答复、Verifier 详细反馈、运行错误、受预算限制的产物摘要与延迟，以及有代表性的 Bad Case。`artifactSummary` 会说明产物条目是否被截断。它还可能包含前几代的改动假设与 selection 聚合 Gate 结果，但绝不包含 selection 逐题内容。把它们当作证据，做开放式因果分析，不要强行套用固定错误分类，也不要重复已经被 Gate 否定的同一假设。
 
 按以下顺序工作：

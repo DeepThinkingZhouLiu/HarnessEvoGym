@@ -59,6 +59,12 @@ SearchStrategy controls where to search. The Updater remains a complete coding
 agent that diagnoses, proposes, edits, and checks in one session. The Controller
 does not hard-code causal analysis; it enforces permissions and objective gates.
 
+The optional [GRHS Controller](docs/grhs.md) adds group scheduling above this
+single-plan seam: multiple discrete siblings share one parent and matched
+evidence, receive utility and group-relative advantage, update a categorical
+Region prior, and produce one audited promote/rollback decision without model
+training.
+
 ## Pluggable Targets, Environments, and Recipes
 
 | Scenario / object             | Implemented composition                                      | Purpose                                      |

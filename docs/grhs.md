@@ -1,0 +1,53 @@
+# Group-Relative Harness Search MVP
+
+English | [中文](grhs.zh.md)
+
+GRHS transfers the within-group baseline idea of training-free GRPO to discrete
+Harness revision search. It never trains Solver or Updater weights. In one
+round, the trusted Controller freezes one parent, one feedback packet, one
+selection partition, the seeds, and budgets, then creates at least two sibling
+MutationPlans from the Target-owned Region catalog. Every sibling receives a
+separate MutationLease and a complete Codex Updater session.
+
+For valid sibling `g`, the Controller computes:
+
+```text
+utility_g = selection_reward_delta
+            - regression_penalty * paired_regression_rate
+            - cost_penalty * relative_token_delta
+            - complexity_penalty * normalized_patch_complexity
+
+advantage_g = (utility_g - group_mean) / (group_stddev + epsilon)
+```
+
+Invalid diffs, unsafe results, incomplete evaluations, and duplicate patches do
+not enter group statistics. Fewer than two valid siblings skips the relative
+update and rolls back. Otherwise, advantages update a categorical prior over
+Target Region IDs. The best gate-eligible sibling is promoted only when its
+penalized paired-bootstrap lower bound exceeds the precommitted margin. Ties are
+resolved by Candidate ID, so replay is deterministic.
+
+The immutable group decision records parent and sibling lineage, MutationPlan
+and Region IDs, utility components, relative advantage, proposal prior before
+and after the round, LCB, promotion, and rollback reason. Final remains sealed
+until the frozen Champion is finalized.
+
+The MVP composition is
+[`experiments/cowork-msa-grhs-smoke-codex.json`](../experiments/cowork-msa-grhs-smoke-codex.json):
+
+- MSA Minimal Cowork RSI Solver;
+- Codex CLI Updater;
+- `gpt-5.6-terra` with `reasoningEffort: high` for both roles;
+- one L2 round with two siblings;
+- one feedback and one selection OmegaUse-OfficeVal smoke task.
+
+Run-time values are injected only through `RSI_PROVIDER_BASE_URL` and
+`RSI_PROVIDER_API_KEY`. The Codex distribution and the OfficeVal dataset and
+evaluator roots must pass preflight before a real run. No credential belongs in
+the Experiment, Candidate, feedback packet, trace, or Mutation Report.
+
+Current limits: the MVP schedules sibling Updater and Solver calls
+sequentially, uses token delta as the available cost proxy because the provider
+has no trusted rate card, and does not retry a group that has fewer than two
+valid siblings. Larger groups, bounded retries, parallel execution, and formal
+OfficeVal splits remain follow-up work.

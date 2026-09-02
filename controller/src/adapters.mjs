@@ -17,6 +17,7 @@ import { normalizeMutationCatalogConfiguration } from './mutation-catalog.mjs'
 import { normalizeRelativePath } from './path-policy.mjs'
 import { ProtocolError, readJsonFile, validateBenchmark, validateEvaluationPolicy } from './protocol.mjs'
 import { normalizeCoworkEvolutionRecipe, normalizeEvolutionRecipe } from './evolution-recipe.mjs'
+import { validateGrhsConfiguration } from './grhs.mjs'
 
 const MUTATION_LEVELS = ['l1', 'l2', 'l3']
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/u
@@ -1197,6 +1198,7 @@ export function validateExperiment(input) {
       }),
       trialsPerInstance,
       seeds,
+      grhs: evolution.grhs === undefined ? null : validateGrhsConfiguration(evolution.grhs),
     },
   }
 }
@@ -1254,6 +1256,12 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
       })
   if (experiment.baselinePack !== null && recipePath === null) {
     throw new ProtocolError('BaselinePack 只支持显式 EvolutionRecipe 的通用 Population 实验')
+  }
+  if (experiment.evolution.grhs !== null && recipePath !== null) {
+    throw new ProtocolError('GRHS Group Controller MVP 不能与 Population EvolutionRecipe 同时启用')
+  }
+  if (experiment.evolution.grhs !== null && experiment.adapters.strategy !== null) {
+    throw new ProtocolError('GRHS Group Controller 自己调度 sibling MutationPlan，不能同时指定单 Plan SearchStrategy')
   }
   if (recipe.spec.moduleSearch.riskCeiling !== experiment.evolution.mutationLevel) {
     throw new ProtocolError('Evolution Recipe 风险上限与旧 mutationLevel 不一致')

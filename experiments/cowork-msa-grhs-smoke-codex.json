@@ -6,7 +6,7 @@
     "adapters": {
       "target": "adapters/targets/msa-minimal-cowork-rsi.yml",
       "updater": "adapters/updaters/codex-cli.yml",
-      "environment": "environments/omegause-officeval.yml",
+      "environment": "environments/omegause-officeval-agentbay.yml",
       "provider": "adapters/providers/zcloud-openai.yml"
     },
     "benchmark": "benchmarks/cowork-omegause-officeval-smoke/benchmark.json",

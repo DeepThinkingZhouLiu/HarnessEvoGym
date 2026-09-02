@@ -110,6 +110,15 @@ test('OmegaUse Environment Adapter 拒绝给 Verifier 增加宿主环境继承�
   assert.throws(() => validateEnvironmentAdapter(config), /未知字段/u)
 })
 
+test('AgentBay Docker backend 固定 bridge 路径并拒绝内联凭据', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval-agentbay.yml'))
+  const environment = validateEnvironmentAdapter(config)
+  assert.equal(environment.docker.backend, 'agentbay')
+  assert.equal(environment.docker.agentBay.bridgePath, 'scripts/agentbay-docker-bridge.py')
+  config.spec.docker.agentBay.apiKey = 'must-not-be-configured-here'
+  assert.throws(() => validateEnvironmentAdapter(config), /未知字段/u)
+})
+
 test('OmegaUse Environment Adapter 要求 Dataset 与 Evaluator 使用不同根变量', async () => {
   const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval.yml'))
   config.spec.source.evaluatorRootEnvironment = config.spec.source.datasetRootEnvironment

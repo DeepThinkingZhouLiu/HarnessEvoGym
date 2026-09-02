@@ -65,6 +65,10 @@ evidence, receive utility and group-relative advantage, update a categorical
 Region prior, and produce one audited promote/rollback decision without model
 training.
 
+The Cowork smoke can use an AgentBay VM as its Docker host, so the Controller
+does not require a local Docker daemon. The remote backend preserves the same
+gateway, Solver, and verifier container boundaries.
+
 ## Pluggable Targets, Environments, and Recipes
 
 | Scenario / object             | Implemented composition                                      | Purpose                                      |

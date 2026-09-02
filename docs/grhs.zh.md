@@ -42,6 +42,11 @@ MVP 配置位于
 Codex distribution、OfficeVal Dataset Root 和 Evaluator Root 都必须通过 preflight。
 Experiment、Candidate、Feedback Packet、Trace 和 Mutation Report 均不得保存凭据。
 
-当前限制：MVP 依次调度 sibling Updater/Solver；Provider 没有可信 Rate Card，因此暂用
+Smoke 组合使用 AgentBay Environment 变体。Controller 每个 Run 保持一个 AgentBay VM，
+并在 VM 内复用现有 Docker 隔离模型；每个 Trial 前上传挂载输入，结束后只回传可写挂载。
+`AGENTBAY_API_KEY`、VM Image ID 与 Policy ID 都是运行时环境变量，不进入 Experiment。
+
+当前限制：MVP 依次调度 sibling Updater/Solver，首版 AgentBay bridge 也会在单 VM 内
+串行化远端控制面操作；Provider 没有可信 Rate Card，因此暂用
 Token 增量作为成本代理；有效 sibling 少于两个时不在本轮预算内重试。更大候选组、
 有界重试、并行调度和正式 OfficeVal Split 留到后续阶段。

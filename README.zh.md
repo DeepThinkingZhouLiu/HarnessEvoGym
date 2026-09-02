@@ -62,6 +62,9 @@ SearchStrategy 只管“搜哪里”，Updater 仍是完整 Coding Agent，自�
 advantage，更新 Region 分类 prior，并在不训练模型参数的前提下产出一个可审计的
 晋升/回滚决定。
 
+Cowork Smoke 可使用 AgentBay VM 作为 Docker Host，因此 Controller 不要求本地
+Docker daemon；远端后端仍保持相同的网关、Solver 与 Verifier 容器边界。
+
 ## 可插拔 Target、Environment 与 Recipe
 
 | 场景 / 对象          | 已实现的组合                                               | 用途                                      |

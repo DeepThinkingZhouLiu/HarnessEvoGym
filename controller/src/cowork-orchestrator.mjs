@@ -32,6 +32,7 @@ import {
 } from './baseline-pack.mjs'
 import { assertPathKind, resolveInside } from './config.mjs'
 import { DockerClient } from './docker.mjs'
+import { AgentBayDockerClient } from './agentbay-docker.mjs'
 import { evaluateBenchmark } from './evaluator.mjs'
 import { createEnvironmentRunner, createSolverDriver, createUpdaterDriver } from './factories.mjs'
 import { buildFeedbackPacket } from './feedback.mjs'
@@ -338,7 +339,16 @@ async function appendRegistry(repositoryRoot, record) {
   await appendFile(join(registryRoot, 'candidates.jsonl'), `${JSON.stringify(record)}\n`, 'utf8')
 }
 
-function makeDocker(environment) {
+function makeDocker(environment, repositoryRoot) {
+  if (environment.docker.backend === 'agentbay') {
+    return new AgentBayDockerClient({
+      network: environment.docker.network,
+      resources: environment.docker.resources,
+      runAsCurrentUser: environment.docker.runAsCurrentUser,
+      agentBay: environment.docker.agentBay,
+      repositoryRoot,
+    })
+  }
   return new DockerClient({
     binary: environment.docker.binary,
     network: environment.docker.network,
@@ -432,7 +442,7 @@ async function createContext({
         )]
       : []),
   ])
-  const docker = makeDocker(bundle.environment)
+  const docker = makeDocker(bundle.environment, repositoryRoot)
   const searchStrategy = createSearchStrategyDriver({ adapter: bundle.strategy, docker })
   const modelGateway = gatewayScope
     ? new ModelGateway({

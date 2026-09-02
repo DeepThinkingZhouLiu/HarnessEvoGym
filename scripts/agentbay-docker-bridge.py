@@ -57,7 +57,10 @@ class Bridge:
             CreateSessionParams(
                 image_id=image_id,
                 policy_id=policy_id,
-                lifecycle_policy=LifecyclePolicy(idle_release_timeout=900, max_runtime=21600),
+                # The currently provisioned AgentBay policy caps maxRuntime at
+                # 1000. Keepalive handles idle expiry; Controller checkpoints
+                # remain authoritative if the platform enforces a hard cap.
+                lifecycle_policy=LifecyclePolicy(idle_release_timeout=900, max_runtime=1000),
             )
         )
         self.session = getattr(created, "session", None)

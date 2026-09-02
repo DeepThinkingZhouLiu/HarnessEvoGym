@@ -165,24 +165,6 @@ test('Model Gateway 并发准备只构建一次且绑定定义摘要', async () 
   assert.equal(calls[0].labels['io.harness-rsi.model-gateway'], 'v1')
 })
 
-test('Model Gateway 镜像缓存按 AgentBay Task Session 隔离', async () => {
-  const calls = []
-  let scope = 'agentbay-task-1'
-  const docker = {
-    scopeKey() { return scope },
-    async imageExists() { return false },
-    async build(options) { calls.push([scope, options]) },
-  }
-  const config = {
-    image: 'gateway:scoped-test',
-    dockerfile: 'docker/model-gateway/Dockerfile',
-  }
-  await buildModelGatewayImage({ config, docker, repositoryRoot: REPOSITORY_ROOT })
-  scope = 'agentbay-task-2'
-  await buildModelGatewayImage({ config, docker, repositoryRoot: REPOSITORY_ROOT })
-  assert.deepEqual(calls.map(([key]) => key), ['agentbay-task-1', 'agentbay-task-2'])
-})
-
 test('Model Gateway 可复用服务文件一致的旧 v1 镜像', async () => {
   let builds = 0
   const docker = {

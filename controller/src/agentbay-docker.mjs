@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { AsyncLocalStorage } from 'node:async_hooks'
 import { createInterface } from 'node:readline'
 import process from 'node:process'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
@@ -54,7 +53,6 @@ class AgentBayBridge {
     this.sequence = 0
     this.pending = new Map()
     this.stderr = ''
-    this.closed = null
     this.child = spawn(pythonExecutable, [bridgePath], {
       env: { ...process.env, ...environment },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -69,7 +67,6 @@ class AgentBayBridge {
     this.child.once('error', (error) => this.failAll(error))
     this.child.once('close', (code, signal) => {
       this.failAll(new Error(`AgentBay bridge exited code=${code} signal=${signal ?? 'none'} ${this.stderr}`))
-      this.closed?.({ code, signal })
     })
     this.setReferenced(false)
   }
@@ -120,20 +117,6 @@ class AgentBayBridge {
       throw new ProtocolError(`AgentBay bridge ${operation} 失败`, [error.message])
     }
   }
-
-  async close() {
-    if (this.child.exitCode !== null || this.child.signalCode !== null) return
-    const closed = new Promise((resolveClosed) => { this.closed = resolveClosed })
-    this.child.stdin.end()
-    const timeout = new Promise((resolveTimeout) => {
-      const timer = setTimeout(() => resolveTimeout('timeout'), 120_000)
-      timer.unref?.()
-    })
-    if (await Promise.race([closed, timeout]) === 'timeout') {
-      this.child.kill('SIGTERM')
-      await closed
-    }
-  }
 }
 
 function appendResources(args, resources) {
@@ -158,14 +141,7 @@ function collectSecrets(secretEnvironment, inheritEnvironment) {
 }
 
 export class AgentBayDockerClient {
-  constructor({
-    resources,
-    network = 'bridge',
-    runAsCurrentUser = true,
-    agentBay,
-    repositoryRoot,
-    bridgeFactory = (options) => new AgentBayBridge(options),
-  }) {
+  constructor({ resources, network = 'bridge', runAsCurrentUser = true, agentBay, repositoryRoot }) {
     if (network === 'host') throw new ProtocolError('安全策略禁止 Docker host 网络')
     this.resources = resources ?? { cpus: 2, memory: '4g', pids: 512, timeoutSeconds: 900 }
     this.network = network
@@ -180,52 +156,12 @@ export class AgentBayDockerClient {
       environment[target] = process.env[source]
     }
     environment.HARNESS_RSI_AGENTBAY_REGISTRY_MIRROR = agentBay.registryMirror
-    this.bridgeOptions = {
+    this.bridge = new AgentBayBridge({
       pythonExecutable: agentBay.pythonExecutable,
       bridgePath: resolve(this.repositoryRoot, agentBay.bridgePath),
       environment,
-    }
-    this.bridgeFactory = bridgeFactory
-    this.defaultBridge = this.bridgeFactory(this.bridgeOptions)
-    this.taskScope = new AsyncLocalStorage()
-    this.identityByBridge = new WeakMap()
-    this.sessionSequence = 0
-    this.sessionCreationTail = Promise.resolve()
-    this.supportsTaskSessions = true
-  }
-
-  currentBridge() {
-    return this.taskScope.getStore()?.bridge ?? this.defaultBridge
-  }
-
-  scopeKey() {
-    return this.taskScope.getStore()?.id ?? 'agentbay-default'
-  }
-
-  async withTaskSession(callback) {
-    if (typeof callback !== 'function') throw new TypeError('AgentBay task session callback 必须是函数')
-    const previous = this.sessionCreationTail
-    let release
-    this.sessionCreationTail = new Promise((resolveRelease) => { release = resolveRelease })
-    await previous.catch(() => {})
-    let scope
-    let bridge
-    try {
-      bridge = this.bridgeFactory(this.bridgeOptions)
-      const session = await bridge.request('session')
-      if (!session?.sessionId) throw new ProtocolError('AgentBay task session 缺少 Session ID')
-      scope = { id: `agentbay-task-${++this.sessionSequence}`, bridge }
-    } catch (error) {
-      await bridge?.close().catch(() => {})
-      throw error
-    } finally {
-      release()
-    }
-    try {
-      return await this.taskScope.run(scope, callback)
-    } finally {
-      await scope.bridge.close()
-    }
+    })
+    this.identity = null
   }
 
   async docker(args, {
@@ -235,7 +171,7 @@ export class AgentBayDockerClient {
     operation = args[0],
   } = {}) {
     const started = Date.now()
-    const result = await this.currentBridge().request('docker', {
+    const result = await this.bridge.request('docker', {
       args,
       timeoutSeconds: Math.max(1, Math.ceil(timeoutMs / 1000)),
       secretEnvironment,
@@ -285,17 +221,16 @@ export class AgentBayDockerClient {
     if (!relativeDockerfile || relativeDockerfile.startsWith(`..${sep}`) || isAbsolute(relativeDockerfile)) {
       throw new ProtocolError('AgentBay Dockerfile 必须位于 Build Context 内')
     }
-    const bridge = this.currentBridge()
-    const remoteContext = (await bridge.request('allocatePath')).path
+    const remoteContext = (await this.bridge.request('allocatePath')).path
     try {
-      await bridge.request('uploadDir', { localPath: contextPath, remotePath: remoteContext })
+      await this.bridge.request('uploadDir', { localPath: contextPath, remotePath: remoteContext })
       const args = ['build', '--pull=false', '--file', `${remoteContext}/${relativeDockerfile.split(sep).join('/')}`, '--tag', tag]
       for (const [name, value] of Object.entries(buildArgs)) args.push('--build-arg', `${name}=${value}`)
       for (const [name, value] of Object.entries(labels)) args.push('--label', `${name}=${assertRemoteImageLabel(value, name)}`)
       args.push(remoteContext)
       return await this.docker(args, { timeoutMs, operation: 'build' })
     } finally {
-      await bridge.request('removePath', { remotePath: remoteContext }).catch(() => {})
+      await this.bridge.request('removePath', { remotePath: remoteContext }).catch(() => {})
     }
   }
 
@@ -381,22 +316,17 @@ export class AgentBayDockerClient {
     if (network === 'host') throw new ProtocolError('安全策略禁止 Docker host 网络')
     const containerName = safeDockerName(name)
     const staged = []
-    const bridge = this.currentBridge()
     try {
-      let identity = this.identityByBridge.get(bridge)
-      if (runAsCurrentUser && identity === undefined) {
-        identity = await bridge.request('identity')
-        this.identityByBridge.set(bridge, identity)
-      }
+      if (runAsCurrentUser && this.identity === null) this.identity = await this.bridge.request('identity')
       for (const mount of mounts) {
         if (!isAbsolute(mount.source) || !mount.target?.startsWith('/')) throw new ProtocolError('AgentBay mount 路径必须为绝对路径')
-        const remotePath = (await bridge.request('allocatePath')).path
-        await bridge.request('uploadDir', { localPath: mount.source, remotePath })
+        const remotePath = (await this.bridge.request('allocatePath')).path
+        await this.bridge.request('uploadDir', { localPath: mount.source, remotePath })
         if (runAsCurrentUser) {
-          await bridge.request('preparePath', {
+          await this.bridge.request('preparePath', {
             remotePath,
-            uid: identity.uid,
-            gid: identity.gid,
+            uid: this.identity.uid,
+            gid: this.identity.gid,
           })
         }
         staged.push({ ...mount, remotePath })
@@ -408,7 +338,7 @@ export class AgentBayDockerClient {
       ]
       appendResources(args, resources)
       if (readOnlyRoot) args.push('--read-only')
-      if (runAsCurrentUser) args.push('--user', `${identity.uid}:${identity.gid}`)
+      if (runAsCurrentUser) args.push('--user', `${this.identity.uid}:${this.identity.gid}`)
       for (const value of tmpfs) args.push('--tmpfs', value)
       for (const capability of capabilities) {
         if (!ALLOWED_CAPABILITIES.has(capability)) throw new ProtocolError(`Docker capability 不在受控名单中：${capability}`)
@@ -427,13 +357,13 @@ export class AgentBayDockerClient {
         result = await this.docker(args, { timeoutMs, secretEnvironment: secrets, operation: 'run' })
       } finally {
         for (const mount of staged.filter((value) => !value.readOnly)) {
-          await bridge.request('downloadDir', { remotePath: mount.remotePath, localPath: mount.source })
+          await this.bridge.request('downloadDir', { remotePath: mount.remotePath, localPath: mount.source })
         }
         await this.removeContainer(containerName).catch(() => {})
       }
       return result
     } finally {
-      await Promise.all(staged.map((mount) => bridge.request('removePath', { remotePath: mount.remotePath }).catch(() => {})))
+      await Promise.all(staged.map((mount) => this.bridge.request('removePath', { remotePath: mount.remotePath }).catch(() => {})))
     }
   }
 }

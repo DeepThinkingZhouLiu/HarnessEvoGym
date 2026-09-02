@@ -21,8 +21,8 @@ spec:
   task:
     workspacePath: /workspace
     environmentAssets: environments/omegause-officeval-assets
-    # The largest formal partition has 55 tasks. Each Trial owns one AgentBay
-    # session; session creation is serial while created sessions execute in parallel.
+    # The largest formal partition has 55 tasks. AgentBay control-plane launches
+    # remain serial; all launched Trial workloads may execute concurrently.
     maximumConcurrentTrials: 55
     workspaceLimits:
       maximumFiles: 10000

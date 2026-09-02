@@ -108,7 +108,7 @@ async function ensureModelGatewayImage({ config, docker, repositoryRoot, definit
 }
 
 export async function buildModelGatewayImage({ config, docker, repositoryRoot }) {
-  const key = `${resolve(repositoryRoot)}\0${config.image}\0${docker.scopeKey?.() ?? 'default'}`
+  const key = `${resolve(repositoryRoot)}\0${config.image}`
   if (!GATEWAY_BUILDS.has(key)) {
     const build = (async () => {
       const definition = await gatewayDefinition(repositoryRoot, config.dockerfile)
@@ -191,7 +191,7 @@ function normalizeRolePolicy(role, policy) {
   })
 }
 
-class ScopedModelGateway {
+export class ModelGateway {
   constructor({ config, docker, repositoryRoot, scopeId }) {
     this.config = config
     this.docker = docker
@@ -444,60 +444,5 @@ class ScopedModelGateway {
     this.roleConfigurationPromises.clear()
     this.roleTokenRotationPromises.clear()
     return errors
-  }
-}
-
-export class ModelGateway {
-  constructor({ config, docker, repositoryRoot, scopeId }) {
-    this.config = config
-    this.docker = docker
-    this.repositoryRoot = repositoryRoot
-    this.scopeId = scopeId
-    this.instances = new Map()
-  }
-
-  currentKey() {
-    return this.docker.scopeKey?.() ?? 'default'
-  }
-
-  current() {
-    const key = this.currentKey()
-    if (!this.instances.has(key)) {
-      const suffix = key === 'agentbay-default' || key === 'default' ? '' : `-${key}`
-      this.instances.set(key, new ScopedModelGateway({
-        config: this.config,
-        docker: this.docker,
-        repositoryRoot: this.repositoryRoot,
-        scopeId: `${this.scopeId}${suffix}`,
-      }))
-    }
-    return this.instances.get(key)
-  }
-
-  async access(...args) {
-    return await this.current().access(...args)
-  }
-
-  async rotateRoleToken(...args) {
-    return await this.current().rotateRoleToken(...args)
-  }
-
-  async usage(...args) {
-    return await this.current().usage(...args)
-  }
-
-  async stopScope() {
-    const key = this.currentKey()
-    const instance = this.instances.get(key)
-    if (!instance) return []
-    const errors = await instance.stop()
-    this.instances.delete(key)
-    return errors
-  }
-
-  async stop() {
-    const instances = [...this.instances.values()]
-    this.instances.clear()
-    return (await Promise.all(instances.map((instance) => instance.stop()))).flat()
   }
 }

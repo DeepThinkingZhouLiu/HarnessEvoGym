@@ -442,7 +442,6 @@ export class OmegaUseOfficeValEnvironment {
     this.baseImage = null
     this.solverImage = null
     this.runtimeRevision = null
-    this.runtimeByScope = new Map()
   }
 
   async preflight() {
@@ -531,29 +530,27 @@ export class OmegaUseOfficeValEnvironment {
   }
 
   async ensureRuntime() {
-    const scopeKey = this.docker.scopeKey?.() ?? 'default'
-    if (this.runtimeByScope.has(scopeKey)) return this.runtimeByScope.get(scopeKey)
-    const digest = this.runtimeRevision ?? await runtimeDefinitionDigest(this.repositoryRoot, this.environment)
+    if (this.baseImage && this.solverImage) return { baseImage: this.baseImage, solverImage: this.solverImage }
+    const digest = await runtimeDefinitionDigest(this.repositoryRoot, this.environment)
     const labels = {
       'io.harness-rsi.runtime': 'omegause-officeval-linux-v1',
       'io.harness-rsi.officeval-runtime-revision': digest,
     }
     const tag = this.environment.runtime.image
-    const buildKey = `${scopeKey}\0${tag}`
     const current = await this.docker.imageExists(tag)
       && (await Promise.all(Object.keys(labels).map((label) => this.docker.imageLabel(tag, label))))
         .every((value, index) => value === Object.values(labels)[index])
     if (!current) {
-      if (!RUNTIME_BUILDS.has(buildKey)) {
-        RUNTIME_BUILDS.set(buildKey, this.docker.build({
+      if (!RUNTIME_BUILDS.has(tag)) {
+        RUNTIME_BUILDS.set(tag, this.docker.build({
           context: this.repositoryRoot,
           dockerfile: resolveInside(this.repositoryRoot, this.environment.runtime.dockerfile, 'OmegaUse Dockerfile'),
           tag,
           buildArgs: { OFFICEVAL_RUNTIME_REVISION: digest },
           labels,
-        }).finally(() => RUNTIME_BUILDS.delete(buildKey)))
+        }).finally(() => RUNTIME_BUILDS.delete(tag)))
       }
-      await RUNTIME_BUILDS.get(buildKey)
+      await RUNTIME_BUILDS.get(tag)
     }
     const identity = await this.docker.imageId(tag)
     const solverTag = safeDockerName(`${tag}-msa-${this.solverDriver.cacheKey}-${digest.slice(0, 12)}`)
@@ -565,12 +562,10 @@ export class OmegaUseOfficeValEnvironment {
     this.baseImage = tag
     this.solverImage = runtime.image
     this.runtimeRevision = digest
-    const result = Object.freeze({ baseImage: tag, solverImage: runtime.image })
-    this.runtimeByScope.set(scopeKey, result)
-    return result
+    return { baseImage: tag, solverImage: runtime.image }
   }
 
-  async runVerifier({ image, layout, submission, logs, verifierCode, name }) {
+  async runVerifier({ layout, submission, logs, verifierCode, name }) {
     await Promise.all([
       mkdir(logs, { recursive: false, mode: 0o700 }),
       mkdir(verifierCode, { recursive: false, mode: 0o700 }),
@@ -590,7 +585,7 @@ export class OmegaUseOfficeValEnvironment {
     const output = join(logs, 'result.json')
     const proxyEnvironment = Object.fromEntries(STANDARD_PROXY_ENVIRONMENT.map((key) => [key, '']))
     await this.docker.run({
-      image,
+      image: this.baseImage,
       name,
       command: [
         'python',
@@ -630,22 +625,7 @@ export class OmegaUseOfficeValEnvironment {
     return await readResult(output)
   }
 
-  async runTrial(options) {
-    if (!this.docker.withTaskSession) return await this.runTrialInCurrentSession(options)
-    return await this.docker.withTaskSession(async () => {
-      try {
-        return await this.runTrialInCurrentSession(options)
-      } finally {
-        try {
-          await this.solverDriver.cleanupRuntimeScope?.()
-        } finally {
-          this.runtimeByScope.delete(this.docker.scopeKey())
-        }
-      }
-    })
-  }
-
-  async runTrialInCurrentSession({ candidateId, candidateWorkspace, layout, model, partition, seed, trialIndex, executionId }) {
+  async runTrial({ candidateId, candidateWorkspace, layout, model, partition, seed, trialIndex, executionId }) {
     const trialRoot = join(
       this.runRoot,
       'trials',
@@ -716,7 +696,6 @@ export class OmegaUseOfficeValEnvironment {
       await materializeSubmission(workspace, artifacts, submission)
       try {
         result = await this.runVerifier({
-          image: runtime.baseImage,
           layout,
           submission,
           logs,
@@ -773,11 +752,7 @@ export class OmegaUseOfficeValEnvironment {
     })
     await assertPathKind(candidate, `Candidate ${candidateId} Workspace`)
     const executionId = sha256(resolve(outputPath)).slice(0, 12)
-    if (this.docker.withTaskSession) {
-      this.runtimeRevision ??= await runtimeDefinitionDigest(this.repositoryRoot, this.environment)
-    } else {
-      await this.ensureRuntime()
-    }
+    await this.ensureRuntime()
     const plans = await concurrentMap(
       partitionSpec.instanceIds,
       this.environment.task.maximumConcurrentTrials ?? 1,

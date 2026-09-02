@@ -81,7 +81,9 @@ contract and may otherwise block startup in the restricted Updater runtime.
 
 Current limits: the MVP schedules sibling Updater and Solver calls
 sequentially. Within its single VM, the AgentBay bridge launches remote trials
-serially, runs launched trials concurrently with a limit of four, and uses token delta as the available cost proxy because the provider
+serially and runs launched trials concurrently. All 55 trials in the formal
+feedback split may run concurrently under the general platform cap of 200.
+The experiment uses token delta as the available cost proxy because the provider
 has no trusted rate card, and does not retry a group that has fewer than two
 valid siblings. Larger groups, bounded retries, and sibling-level parallelism
 remain follow-up work.

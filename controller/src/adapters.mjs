@@ -1017,7 +1017,7 @@ function validateOmegaUseOfficeValEnvironment({ id, spec, protocol }) {
       maximumConcurrentTrials: expectNumber(
         task.maximumConcurrentTrials ?? 1,
         'EnvironmentAdapter.spec.task.maximumConcurrentTrials',
-        { integer: true, min: 1, max: 8 },
+        { integer: true, min: 1, max: 200 },
       ),
       workspaceLimits: resolvedWorkspaceLimits,
     },
@@ -1064,7 +1064,7 @@ function validateOmegaUseOfficeValEnvironment({ id, spec, protocol }) {
       maximumConcurrentRequests: expectNumber(
         modelGateway.maximumConcurrentRequests,
         'EnvironmentAdapter.spec.modelGateway.maximumConcurrentRequests',
-        { integer: true, min: 1, max: 64 },
+        { integer: true, min: 1, max: 200 },
       ),
       maximumUpstreamRetries: expectNumber(
         modelGateway.maximumUpstreamRetries ?? 2,

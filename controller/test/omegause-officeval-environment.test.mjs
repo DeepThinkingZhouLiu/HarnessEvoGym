@@ -32,6 +32,10 @@ test('OmegaUse 受控并发不超过上限且保持 Benchmark 顺序', async () 
   })
   assert.equal(maximumActive, 2)
   assert.deepEqual(result, [30, 5, 20, 1])
+  await assert.rejects(
+    concurrentMap([1], 201, async (value) => value),
+    /并发执行参数无效/u,
+  )
 })
 
 function digest(value) {

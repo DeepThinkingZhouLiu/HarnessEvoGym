@@ -316,7 +316,7 @@ class Bridge:
             self.client.delete(self.session, sync_context=False)
 
 
-def serve_requests(bridge, lines, emit_response=emit, maximum_workers: int = 8) -> None:
+def serve_requests(bridge, lines, emit_response=emit, maximum_workers: int = 200) -> None:
     def handle(line: str) -> None:
         request = None
         try:

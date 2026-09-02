@@ -153,7 +153,7 @@ test('Environment Adapter 拒绝互相矛盾的工作区预算', async () => {
 test('OmegaUse Environment 并发 Trial 不能超过可审计上限', async () => {
   const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval.yml'))
   assert.equal(validateEnvironmentAdapter(config).task.maximumConcurrentTrials, 4)
-  config.spec.task.maximumConcurrentTrials = 9
+  config.spec.task.maximumConcurrentTrials = 201
   assert.throws(() => validateEnvironmentAdapter(config), /maximumConcurrentTrials/u)
 })
 

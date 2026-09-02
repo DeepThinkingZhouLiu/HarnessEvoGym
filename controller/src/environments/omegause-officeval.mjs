@@ -899,7 +899,7 @@ export class OmegaUseOfficeValEnvironment {
 
 export async function concurrentMap(values, maximumConcurrency, operation) {
   if (!Array.isArray(values) || !Number.isSafeInteger(maximumConcurrency)
-      || maximumConcurrency < 1 || maximumConcurrency > 8 || typeof operation !== 'function') {
+      || maximumConcurrency < 1 || maximumConcurrency > 200 || typeof operation !== 'function') {
     throw new ProtocolError('OmegaUse 并发执行参数无效')
   }
   const results = new Array(values.length)

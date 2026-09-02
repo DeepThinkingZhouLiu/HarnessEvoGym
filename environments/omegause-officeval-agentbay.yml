@@ -21,9 +21,9 @@ spec:
   task:
     workspacePath: /workspace
     environmentAssets: environments/omegause-officeval-assets
-    # AgentBay control-plane launches remain serial; launched Trial workloads
-    # execute concurrently inside the shared VM.
-    maximumConcurrentTrials: 4
+    # The largest formal partition has 55 tasks. AgentBay control-plane launches
+    # remain serial; all launched Trial workloads may execute concurrently.
+    maximumConcurrentTrials: 55
     workspaceLimits:
       maximumFiles: 10000
       maximumBytes: 1073741824
@@ -60,7 +60,7 @@ spec:
     port: 8080
     egressNetwork: bridge
     maximumRequestsPerRun: 4096
-    maximumConcurrentRequests: 8
+    maximumConcurrentRequests: 64
     maximumUpstreamRetries: 5
     resources:
       cpus: 1

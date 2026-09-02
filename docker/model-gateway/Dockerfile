@@ -3,7 +3,8 @@ FROM node:24-bookworm-slim
 LABEL io.harness-rsi.model-gateway="v1"
 
 WORKDIR /app
-COPY --chmod=0444 docker/model-gateway/server.mjs /app/server.mjs
+COPY docker/model-gateway/server.mjs /app/server.mjs
+RUN chmod 0444 /app/server.mjs
 
 USER node
 EXPOSE 8080

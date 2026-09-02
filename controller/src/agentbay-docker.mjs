@@ -167,7 +167,6 @@ export class AgentBayDockerClient {
   async docker(args, {
     timeoutMs = 120_000,
     secretEnvironment = {},
-    commandEnvironment = {},
     allowExitCodes = [0],
     operation = args[0],
   } = {}) {
@@ -176,7 +175,6 @@ export class AgentBayDockerClient {
       args,
       timeoutSeconds: Math.max(1, Math.ceil(timeoutMs / 1000)),
       secretEnvironment,
-      commandEnvironment,
     })
     return resultOrThrow({ ...result, durationMs: Date.now() - started }, operation, allowExitCodes)
   }
@@ -230,11 +228,7 @@ export class AgentBayDockerClient {
       for (const [name, value] of Object.entries(buildArgs)) args.push('--build-arg', `${name}=${value}`)
       for (const [name, value] of Object.entries(labels)) args.push('--label', `${name}=${assertRemoteImageLabel(value, name)}`)
       args.push(remoteContext)
-      return await this.docker(args, {
-        timeoutMs,
-        commandEnvironment: { DOCKER_BUILDKIT: '1' },
-        operation: 'build',
-      })
+      return await this.docker(args, { timeoutMs, operation: 'build' })
     } finally {
       await this.bridge.request('removePath', { remotePath: remoteContext }).catch(() => {})
     }

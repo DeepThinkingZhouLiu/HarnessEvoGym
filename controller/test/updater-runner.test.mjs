@@ -206,6 +206,30 @@ test('Codex updater uses only the isolated local configuration and keeps DSH ava
   assert.ok(invocation.args.includes('/proc/self/exe'))
 })
 
+test('root Codex fallback exposes the relay contract without a provider secret', () => {
+  if (process.getuid?.() !== 0) return
+  const options = invocationOptions()
+  Object.assign(options, {
+    backend: 'codex-cli',
+    codexPath: '/srv/codex-cli/bin/codex.js',
+    updaterProvider: 'zcloud',
+    updaterModel: 'gpt-5.6-terra',
+    updaterReasoningEffort: 'high',
+    gatewaySocketPath: '/srv/updater-run/model-gateway.sock',
+    privilegedLauncher: true,
+    preserveSupplementaryGroups: false,
+    uid: 65_534,
+    gid: 65_534,
+  })
+  const invocation = buildUpdaterInvocation(options)
+  assert.equal(invocation.command, '/usr/bin/bwrap')
+  assert.equal(invocation.args.includes('--unshare-net'), false)
+  assert.equal(invocation.env.RSI_MODEL_GATEWAY_DUMMY_KEY, 'local-dummy')
+  assert.equal(invocation.env.RSI_PROVIDER_API_KEY, undefined)
+  assert.equal(invocation.env.HTTP_PROXY, undefined)
+  assert.ok(invocation.args.includes('/usr/bin/setpriv'))
+})
+
 test('extracts RSI_STOP from Codex JSONL final agent message', () => {
   const output = [
     JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'working' } }),

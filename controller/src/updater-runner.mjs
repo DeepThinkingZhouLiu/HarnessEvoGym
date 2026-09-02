@@ -313,7 +313,12 @@ export function buildUpdaterInvocation({
     setprivPath,
     preserveSupplementaryGroups,
     privilegedLauncher,
-    network: isolatedGateway ? 'none' : 'shared',
+    // A root Controller cannot raise loopback in a fresh net namespace on
+    // hosts whose capability bounding set omits CAP_NET_ADMIN. In that
+    // attested fallback, only the frozen Codex process and its one-time dummy
+    // gateway credential share the host network; no provider secret enters
+    // this invocation. Rootless launchers retain the private namespace.
+    network: isolatedGateway && !privilegedLauncher ? 'none' : 'shared',
     procMode: backend === 'codex-cli'
       ? 'synthetic-self'
       : (isolatedGateway ? 'empty' : 'mounted'),

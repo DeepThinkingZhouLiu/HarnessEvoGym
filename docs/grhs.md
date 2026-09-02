@@ -58,8 +58,11 @@ without starting an Updater session.
 
 On a root Controller host where unprivileged user namespaces are explicitly
 disabled, Codex Updater uses a privileged Bubblewrap launcher only after
-attesting `user.max_user_namespaces=0`. The launcher enters an empty network
-namespace, constructs the existing mount/PID/IPC/UTS/cgroup boundary, and then
+attesting `user.max_user_namespaces=0`. In this capability-limited fallback,
+the frozen Codex process shares the host network solely to reach the
+credential-hiding loopback relay; it receives only a one-time dummy key, no
+provider secret or host configuration. The launcher constructs the existing
+mount/PID/IPC/UTS/cgroup boundary and then
 drops to UID/GID 65534 with supplementary groups and all capability sets
 cleared plus `no_new_privs`. Other hosts retain the normal rootless launcher.
 The isolated Codex session executes the static native binary from the pinned
@@ -68,8 +71,7 @@ host Node runtime or DSW dynamic-library tree enters the sandbox.
 The frozen invocation also disables Codex plugins, browser/app integrations,
 skill and workspace dependency discovery, shell snapshots, remote compaction,
 and unbounded retries. Those interactive features are outside the Updater
-contract and may otherwise block startup in the intentionally network-empty
-namespace.
+contract and may otherwise block startup in the restricted Updater runtime.
 
 Current limits: the MVP schedules sibling Updater and Solver calls
 sequentially, and the first AgentBay bridge serializes remote control-plane

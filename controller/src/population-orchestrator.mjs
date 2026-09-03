@@ -568,12 +568,20 @@ export class PopulationOrchestrator {
 
   async resume(options = {}) {
     let state = await this.#readState()
-    if (state.status !== 'PAUSED_INFRASTRUCTURE') {
-      throw new ProtocolError('Population 当前不是 PAUSED_INFRASTRUCTURE')
+    const infrastructureRecovery = state.status === 'PAUSED_INFRASTRUCTURE'
+    // Checkpoint 文件与权威 state 是两个原子文件：进程可能在稳定
+    // Wave 落盘后、Checkpoint 索引记入 state 前被强制终止。只允许无
+    // in-flight Wave 的 EVOLVING 状态走这条恢复路径，不接受半轮结果。
+    const stableStateRecovery = state.status === 'EVOLVING'
+      && state.inFlightWave === undefined
+    if (!infrastructureRecovery && !stableStateRecovery) {
+      throw new ProtocolError('Population 当前不是可恢复的暂停或稳定状态')
     }
-    const pauseEvent = [...state.events].reverse().find((entry) => (
-      entry.type === 'POPULATION_INFRASTRUCTURE_PAUSED'
-    ))
+    const pauseEvent = infrastructureRecovery
+      ? [...state.events].reverse().find((entry) => (
+          entry.type === 'POPULATION_INFRASTRUCTURE_PAUSED'
+        ))
+      : null
     const baselineRecovery = pauseEvent?.phase === 'baseline'
     const restoredProjections = await Promise.all(state.branches.map(async (branch) => {
       const driver = await this.#handle(branch.branchId)
@@ -653,11 +661,15 @@ export class PopulationOrchestrator {
       return this.run(options)
     }
 
+    const recoveryEventType = stableStateRecovery
+      ? 'POPULATION_STABLE_STATE_RECOVERED'
+      : 'POPULATION_INFRASTRUCTURE_RESUMED'
     state = {
       ...state,
       status: 'EVOLVING',
       updatedAt: resumedAt,
-      events: [...state.events, event(state, 'POPULATION_INFRASTRUCTURE_RESUMED', resumedAt)],
+      events: [...state.events, event(state, recoveryEventType, resumedAt,
+        stableStateRecovery ? { phase: 'checkpoint-commit-boundary' } : {})],
     }
     await this.store.saveState(state)
     return this.run(options)

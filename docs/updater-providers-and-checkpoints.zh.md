@@ -32,7 +32,8 @@ Solver/Updater 共用同一 Provider。新配置必须在 `provider` 和 `provid
 
 Claude Code 配置会固定本机 CLI 版本和整个 distribution 摘要。Controller
 持有真实 ZCloud Key，Claude Code 只能看到一次性假 Key。网关会强制覆盖
-Provider、模型、思考深度和 Token 上限，不允许 Candidate 修改这些实验条件。
+Provider、模型、adaptive thinking、思考深度和 Token 上限，不允许
+Candidate 修改这些实验条件。
 
 本地凭据仅通过环境变量注入：
 
@@ -91,3 +92,8 @@ spec:
 并发 Wave 是原子单位，Controller 不会为了凑一个数字拆开同一 Wave。
 如果某个里程碑不是 Wave 大小的整数倍，Checkpoint 会同时写入
 `requestedBudget` 和实际稳定点 `actualConsumedBudget`，避免把未完成的并发状态伪装成可复现 Checkpoint。
+
+Checkpoint 文件先以原子 write-once 方式落盘，再记入 Population state。
+如果进程恰好在这两步之间被强制终止，`experiment resume` 只会在不存在
+in-flight Wave 的稳定 `EVOLVING` 状态下恢复 Branch，重算 Candidate 身份，并幂等
+补全 Checkpoint 总账。半轮状态仍会 fail-closed，不会被伪装成稳定检查点。

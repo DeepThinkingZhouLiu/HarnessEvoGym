@@ -68,7 +68,7 @@ const HELP = `HarnessEvoGym Controller
   - experiment run 只使用 feedback 与 selection，永远不会读取 final。
   - experiment baseline 只评测 H0 selection，不启动 Updater，不消耗进化预算。
   - experiment baseline-pack-export 从已有 Run 固化 H0 Selection 与第一轮 Feedback，不读取 final。
-  - experiment resume 只恢复同一 Controller Revision 下的 Cowork Population 检查点。
+  - experiment resume 只恢复同一 Controller Revision 下暂停或处于稳定 Wave 边界的 Cowork Population。
   - experiment finalize 是唯一允许解锁 Cowork sealed final 的入口。
   - --recover-infrastructure 只能在 Population 上次失败且从未访问 sealed final 时使用，并且只能恢复一次。
   - Provider 密钥只从运行时环境变量读取，不写入 Experiment 或 .rsi 产物。

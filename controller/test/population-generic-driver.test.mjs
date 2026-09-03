@@ -300,6 +300,166 @@ test('Population 跨过 Budget 里程碑时保留 Champion、Branch Incumbent �
   )
 })
 
+test('Checkpoint 文件落盘后进程中断，可从稳定 Population 状态幂等补全总账', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'population-checkpoint-crash-'))
+  const campaignsRoot = join(root, 'campaigns')
+  const campaignId = 'generic-checkpoint-crash'
+  await mkdir(campaignsRoot)
+  let branchState = null
+  let restored = 0
+
+  function createBranch({ branchId, branchesRoot }) {
+    return {
+      async initialize() {
+        const candidateId = `${branchId}-h0`
+        branchState = {
+          status: 'active',
+          steps: 0,
+          candidateId,
+          revision: digest(`${candidateId}-revision`),
+          digest: digest(candidateId),
+          evaluation: createEvaluationSummary({
+            candidateId,
+            metric: 'mean-reward',
+            value: 0,
+          }),
+          lastStep: null,
+        }
+        return projection(branchId, branchState)
+      },
+      async restore() {
+        restored += 1
+        return projection(branchId, branchState, branchState.lastStep)
+      },
+      async inspect() {
+        return projection(branchId, branchState, branchState.lastStep)
+      },
+      async advanceOne({ stepId }) {
+        const candidateId = `${branchId}-c1`
+        const evaluation = createEvaluationSummary({
+          candidateId,
+          metric: 'mean-reward',
+          value: 1,
+        })
+        const lastStep = {
+          stepId,
+          stepNumber: 1,
+          candidateId,
+          candidateRevision: digest(`${candidateId}-revision`),
+          candidateDigest: digest(candidateId),
+          decision: 'promoted',
+          ranking: { eligible: true, evaluation },
+        }
+        branchState = {
+          status: 'active',
+          steps: 1,
+          candidateId,
+          revision: lastStep.candidateRevision,
+          digest: lastStep.candidateDigest,
+          evaluation,
+          lastStep,
+        }
+        return {
+          apiVersion: 'harness-rsi/v1alpha1',
+          kind: 'BranchStepResult',
+          stepId,
+          budgetConsumed: 1,
+          projection: projection(branchId, branchState, lastStep),
+        }
+      },
+      async exportPeerEvidence() {
+        return {
+          sourcePath: join(branchesRoot, branchId, 'public', 'evolution-log.jsonl'),
+          entries: [],
+        }
+      },
+      async exportBest() {
+        return {
+          candidateId: branchState.candidateId,
+          revision: branchState.revision,
+          digest: branchState.digest,
+          evaluation: branchState.evaluation,
+          changedFiles: ['profiles/cowork.md'],
+          diffStat: 'profiles/cowork.md | 1 +',
+          patch: '+checkpoint recovery\n',
+          workspace: join(branchesRoot, branchId, 'workspace'),
+          implementationRoot: join(branchesRoot, branchId),
+        }
+      },
+    }
+  }
+
+  const checkpointing = {
+    budgetMilestones: [1],
+    capture: {
+      populationBest: true,
+      branchIncumbents: true,
+      latestAttempts: true,
+    },
+  }
+  const first = new PopulationOrchestrator({
+    loadedCampaign: loaded('single', checkpointing),
+    campaignsRoot,
+    campaignId,
+    createBranch,
+  })
+  await first.initialize()
+
+  let checkpointLinked = false
+  const writeBudgetCheckpoint = first.store.writeBudgetCheckpoint.bind(first.store)
+  first.store.writeBudgetCheckpoint = async (...args) => {
+    const result = await writeBudgetCheckpoint(...args)
+    checkpointLinked = true
+    return result
+  }
+  const saveState = first.store.saveState.bind(first.store)
+  first.store.saveState = async (...args) => {
+    if (checkpointLinked) throw new Error('fixture hard crash after checkpoint link')
+    return await saveState(...args)
+  }
+
+  await assert.rejects(
+    () => first.run(),
+    /fixture hard crash after checkpoint link/u,
+  )
+  const interrupted = await first.store.readState()
+  assert.equal(interrupted.status, 'EVOLVING')
+  assert.equal(interrupted.inFlightWave, undefined)
+  assert.equal(interrupted.budget.consumed, 1)
+  assert.deepEqual(interrupted.checkpoints, [])
+
+  const checkpointPath = join(
+    campaignsRoot,
+    campaignId,
+    'public',
+    'checkpoints',
+    'budget-0001.json',
+  )
+  const checkpointBeforeResume = await readFile(checkpointPath, 'utf8')
+
+  const second = new PopulationOrchestrator({
+    loadedCampaign: loaded('single', checkpointing),
+    campaignsRoot,
+    campaignId,
+    createBranch,
+  })
+  const completed = await second.resume()
+  assert.equal(restored, 1)
+  assert.equal(completed.status, 'CLOSED')
+  assert.deepEqual(
+    completed.checkpoints.map(({ requestedBudget, actualConsumedBudget }) => ({
+      requestedBudget,
+      actualConsumedBudget,
+    })),
+    [{ requestedBudget: 1, actualConsumedBudget: 1 }],
+  )
+  assert.equal(await readFile(checkpointPath, 'utf8'), checkpointBeforeResume)
+  assert.equal(completed.events.some((entry) => (
+    entry.type === 'POPULATION_STABLE_STATE_RECOVERED'
+      && entry.phase === 'checkpoint-commit-boundary'
+  )), true)
+})
+
 test('Population 跨进程恢复会先重载 Branch，再幂等继续 in-flight wave', async () => {
   const root = await mkdtemp(join(tmpdir(), 'population-resume-'))
   const campaignsRoot = join(root, 'campaigns')

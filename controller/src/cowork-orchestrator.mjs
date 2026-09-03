@@ -2541,12 +2541,14 @@ export async function resumePopulationEvolution({
   const runRoot = await realpath(requestedRunRoot)
   const runId = safeRunId(basename(runRoot))
   const parentState = await readJsonFile(join(runRoot, 'public', 'state.json'))
+  const resumableStableState = parentState?.status === 'EVOLVING'
+    && parentState.inFlightWave === undefined
   if (parentState?.kind !== 'PopulationCampaignState'
       || parentState.campaignId !== runId
-      || parentState.status !== 'PAUSED_INFRASTRUCTURE'
+      || (parentState.status !== 'PAUSED_INFRASTRUCTURE' && !resumableStableState)
       || !Array.isArray(parentState.branches)
       || parentState.branches.length === 0) {
-    throw new ProtocolError('Population Run 当前不是可恢复的 PAUSED_INFRASTRUCTURE')
+    throw new ProtocolError('Population Run 当前不是可恢复的暂停或稳定状态')
   }
   if (parentState.branches.some(({ branchId }) => (
     typeof branchId !== 'string' || !/^branch-[0-9]{3}$/u.test(branchId)

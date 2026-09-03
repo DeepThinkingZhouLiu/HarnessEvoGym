@@ -30,6 +30,7 @@ import {
   loadBaselinePack,
   writeImportedRecords,
 } from './baseline-pack.mjs'
+import { readResultFile, validateResultRecords } from './protocol.mjs'
 import { assertPathKind, resolveInside } from './config.mjs'
 import { DockerClient } from './docker.mjs'
 import { AgentBayDockerClient } from './agentbay-docker.mjs'
@@ -2158,14 +2159,20 @@ async function runGrhsRound({
   }))
 
   onEvent({ stage: 'feedback', generation, message: `${champion.id} 为 ${configuration.groupSize} 个 sibling 运行共享 feedback` })
-  const feedbackRecords = await environment.runCandidatePartition({
+  const feedbackOutput = resultPath(runRoot, generation, champion.id, 'feedback')
+  const storedFeedback = await pathExists(feedbackOutput)
+    ? await readResultFile(feedbackOutput)
+    : null
+  const feedbackRecords = storedFeedback
+    ? validateResultRecords(storedFeedback, context.bundle.benchmark, `${champion.id}/feedback checkpoint`)
+    : await environment.runCandidatePartition({
     candidateId: champion.id,
     candidateDigest: champion.digest,
     candidateWorkspace: champion.workspace,
     model: context.bundle.experiment.models.solver,
     partition: 'feedback',
     seeds: state.spec.seeds,
-    outputPath: resultPath(runRoot, generation, champion.id, 'feedback'),
+    outputPath: feedbackOutput,
   })
   const feedbackPacket = buildFeedbackPacket({
     runId,
@@ -2184,14 +2191,20 @@ async function runGrhsRound({
   await writeJsonFile(join(groupRoot, 'feedback-packet.json'), feedbackPacket)
 
   onEvent({ stage: 'selection-baseline', generation, message: `${champion.id} 运行 sibling 共享 Selection Baseline` })
-  const baselineRecords = await environment.runCandidatePartition({
+  const baselineOutput = resultPath(runRoot, generation, champion.id, 'selection')
+  const storedBaseline = await pathExists(baselineOutput)
+    ? await readResultFile(baselineOutput)
+    : null
+  const baselineRecords = storedBaseline
+    ? validateResultRecords(storedBaseline, context.bundle.benchmark, `${champion.id}/selection checkpoint`)
+    : await environment.runCandidatePartition({
     candidateId: champion.id,
     candidateDigest: champion.digest,
     candidateWorkspace: champion.workspace,
     model: context.bundle.experiment.models.solver,
     partition: 'selection',
     seeds: state.spec.seeds,
-    outputPath: resultPath(runRoot, generation, champion.id, 'selection'),
+    outputPath: baselineOutput,
   })
 
   const siblingResults = []

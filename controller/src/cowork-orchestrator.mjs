@@ -1192,9 +1192,11 @@ export async function archiveIncompleteCoworkGeneration({
   }
   const sources = new Set([
     join(runRoot, 'generations', `generation-${generation}`),
-    join(runRoot, 'results', `generation-${generation}`),
     ...[...incompleteCandidateIds].map((candidateId) => join(runRoot, 'candidates', candidateId)),
   ])
+  // 已完成的共享 partition 结果本身就是可复用 checkpoint；恢复时保留，
+  // 让下一次 round 直接进入缺失的 sibling，而不是重新经过共享阶段。
+  if (!preserveTrialCheckpoints) sources.add(join(runRoot, 'results', `generation-${generation}`))
   if (!preserveTrialCheckpoints) {
     for (const candidateId of candidateIds) {
       for (const partition of ['feedback', 'selection']) {

@@ -154,7 +154,9 @@ export function buildFeedbackPacket({
       trialRewards: record.trialRewards,
       ...textFields,
       policyViolations: record.policyViolations,
-      latencyMs: record.latencyMs,
+      // Result 协议允许未采集耗时；FeedbackPacket 必须始终保持纯 JSON，
+      // 不能把 undefined 带入内容寻址或 BaselinePack。
+      latencyMs: record.latencyMs ?? null,
       inputTokens: record.inputTokens ?? null,
       outputTokens: record.outputTokens ?? null,
       artifacts: artifactSummary.trials,

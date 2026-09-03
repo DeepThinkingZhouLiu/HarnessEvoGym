@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { lstat, mkdir, open, readFile, realpath } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
+import { buildFeedbackPacket } from './feedback.mjs'
 import { ProtocolError, validateResultRecords } from './protocol.mjs'
 
 const API_VERSION = 'harness-rsi/v1alpha1'
@@ -456,6 +457,16 @@ async function readLimitedJson(pathValue, label) {
   }
 }
 
+async function pathExists(pathValue) {
+  try {
+    await lstat(pathValue)
+    return true
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false
+    throw error
+  }
+}
+
 export async function loadBaselinePack({
   repositoryRoot,
   reference,
@@ -548,12 +559,6 @@ export async function exportBaselinePackFromRun({
   const decisionPath = join(runRoot, 'results', 'generation-0', `h0-${decisionPartition}.jsonl`)
   const feedbackPath = join(runRoot, 'results', 'generation-1', 'h0-feedback.jsonl')
   const packetPath = join(runRoot, 'generations', 'generation-1', 'feedback-packet.json')
-  const [decisionText, feedbackText, feedbackPacket, feedbackPacketText] = await Promise.all([
-    readFile(decisionPath, 'utf8'),
-    readFile(feedbackPath, 'utf8'),
-    readLimitedJson(packetPath, 'H0 FeedbackPacket'),
-    readFile(packetPath, 'utf8'),
-  ])
   const parseJsonl = (value, label) => value.trim().split(/\r?\n/u).filter(Boolean).map((line, index) => {
     try {
       return JSON.parse(line)
@@ -561,6 +566,55 @@ export async function exportBaselinePackFromRun({
       throw new ProtocolError(`${label} 第 ${index + 1} 行不是合法 JSON`, [error.message])
     }
   })
+  const decisionText = await readFile(decisionPath, 'utf8')
+  const [hasFeedbackRecords, hasFeedbackPacket] = await Promise.all([
+    pathExists(feedbackPath),
+    pathExists(packetPath),
+  ])
+  if (hasFeedbackRecords !== hasFeedbackPacket) {
+    throw new ProtocolError('Source Run 的 H0 Feedback 产物不完整，拒绝导出 BaselinePack')
+  }
+  let feedbackText
+  let feedbackPacket
+  let feedbackPacketText
+  if (hasFeedbackRecords) {
+    [feedbackText, feedbackPacket, feedbackPacketText] = await Promise.all([
+      readFile(feedbackPath, 'utf8'),
+      readLimitedJson(packetPath, 'H0 FeedbackPacket'),
+      readFile(packetPath, 'utf8'),
+    ])
+  } else {
+    if (decisionPartition !== 'feedback') {
+      throw new ProtocolError('Source Run 尚未产生第一轮 H0 Feedback，不能导出 BaselinePack')
+    }
+    // 训练集内晋升时，Generation 0 的 H0 Feedback 已同时是决策基线。
+    // Baseline-only Run 可直接复用这份确定记录构造无历史 FeedbackPacket，
+    // 无需为了导出公共起点额外启动 Updater 或重复跑 26 道题。
+    feedbackText = decisionText
+    const feedbackRecords = validateResultRecords(
+      parseJsonl(feedbackText, 'H0 Feedback'),
+      benchmarkForValidation(snapshot.benchmark),
+      'H0 Feedback',
+    )
+    feedbackPacket = buildFeedbackPacket({
+      runId: state.metadata.id,
+      generation: 1,
+      candidateId: 'h0',
+      benchmark: benchmarkForValidation(snapshot.benchmark),
+      records: feedbackRecords,
+      maximumTextBytesPerCase: snapshot.environment.feedback.maximumTextBytesPerCase,
+      maximumArtifactEntriesPerCase:
+        snapshot.environment.feedback.maximumArtifactEntriesPerCase,
+      maximumArtifactBytesPerCase:
+        snapshot.environment.feedback.maximumArtifactBytesPerCase,
+      secretValues: secrets,
+      searchHistory: [],
+      peerEvidence: [],
+      maximumHistoryEntries: snapshot.environment.feedback.maximumHistoryEntries,
+      maximumHistoryBytes: snapshot.environment.feedback.maximumHistoryBytes,
+    })
+    feedbackPacketText = `${JSON.stringify(feedbackPacket, null, 2)}\n`
+  }
   const seeds = state.spec.seeds
   const identity = createBaselineCompatibilityIdentity({
     bundle: snapshot,

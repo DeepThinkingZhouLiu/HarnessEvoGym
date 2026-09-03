@@ -12,6 +12,12 @@ const SUITE_PROFILES = Object.freeze({
   main16: Object.freeze({
     defaultSuiteId: 'cowork-main16-codex-terra-high-seed20260827-v1',
     experimentStem: 'cowork-msa-main16-codex',
+    requiresSharedBaselinePack: true,
+  }),
+  'main16-in-sample26': Object.freeze({
+    defaultSuiteId: 'cowork-main16-insample26-codex-terra-high-seed20260827-v1',
+    experimentStem: 'cowork-msa-main16-in-sample-codex',
+    requiresSharedBaselinePack: true,
   }),
   formal32: Object.freeze({
     defaultSuiteId: 'cowork-formal32-codex-terra-high-seed20260827-v1',
@@ -154,9 +160,9 @@ function assertEnvironment() {
     typeof process.env[name] !== 'string' || process.env[name].trim().length === 0
   ))
   if (missing.length > 0) throw new Error(`缺少正式实验运行变量：${missing.join(', ')}`)
-  if (PROFILE_ID === 'main16' && CAMPAIGNS.length > 1 && BASELINE_PACK === null) {
+  if (SUITE_PROFILE.requiresSharedBaselinePack && CAMPAIGNS.length > 1 && BASELINE_PACK === null) {
     throw new Error(
-      'main16 多 Mode 主表必须配置同一 RSI_BASELINE_PACK_PATH 与 RSI_BASELINE_PACK_SHA256',
+      `${PROFILE_ID} 多 Mode 主表必须配置同一 RSI_BASELINE_PACK_PATH 与 RSI_BASELINE_PACK_SHA256`,
     )
   }
 }

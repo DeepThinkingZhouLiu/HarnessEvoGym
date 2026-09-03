@@ -23,6 +23,8 @@ Champion 做 18 道 Feedback
 
 对照实验可以改用 `benchmarks/cowork-omegause-officeval-train-test-v1/benchmark.json` 和 `evaluation/policies/cowork-officeval-in-sample-rsi.json`。此时 `decisionPartition=feedback`，Selection 允许为空，产生反馈的同一组 18 道训练题同时决定晋升。两种口径都受同一 Controller 约束，但结果必须分列报告，不能直接混在同一主表里比较。
 
+本次训练集内晋升主表使用 `benchmarks/cowork-omegause-officeval-train26-test18-v1/benchmark.json`：它把原来的 18 道 Feedback 与 8 道 Selection 合并成 26 道 Feedback，Selection 为空，Final 仍保留原来的 18 道密封题。因此 Updater 根据同一组 26 道题的详细轨迹修改 Candidate，Controller 也根据这 26 道题的配对 Reward 决定是否晋升。这一口径属于训练集内选优，必须与 18/8/18 的留出验证口径分开报告。
+
 ## 主表配置
 
 | Mode        | Branch 数 N | 总 Candidate Budget B | Search Strategy   | 可变层级 |
@@ -36,6 +38,8 @@ Champion 做 18 道 Feedback
 这里的 B16 是整个 Mode 的总 Candidate 次数。Single 的一个 Branch 最多尝试 16 次；N2 Mode 的两个 Branch 合计最多尝试 16 次，基础预算通常各为 8 次，竞争模式可能重新分配剩余预算。
 
 五个主表 Experiment 位于 `experiments/cowork-msa-main16-codex-*.json`，五个 Recipe 位于 `recipes/population-main-linear-16/`。
+
+训练集内晋升版本位于 `experiments/cowork-msa-main16-in-sample-codex-*.json`。它复用同一组 Recipe，所以仍是 Single=N1-B16、其余 Mode=N2-B16、线性模块搜索和 L1+L2+L3 全搜索空间；唯一的评测差别是 26 道 Feedback 同时承担反馈与晋升决策。
 
 ## Checkpoint 口径
 
@@ -84,6 +88,19 @@ RSI_SUITE_MAX_CONCURRENT_SOLVER_TRIALS=6 \
 RSI_SUITE_MAX_CONCURRENT_UPDATERS=2 \
 node scripts/run-cowork-main16-five-mode.mjs
 ```
+
+26 道训练集内晋升版本使用相同的公共 Pack 约束，入口是：
+
+```bash
+RSI_BASELINE_PACK_PATH=/absolute/path/to/baseline-pack.json \
+RSI_BASELINE_PACK_SHA256=<sha256> \
+RSI_SUITE_MAX_CONCURRENT_MODES=5 \
+RSI_SUITE_MAX_CONCURRENT_SOLVER_TRIALS=6 \
+RSI_SUITE_MAX_CONCURRENT_UPDATERS=2 \
+node scripts/run-cowork-main16-in-sample26-five-mode.mjs
+```
+
+由于该版本的决策 Partition 就是 Feedback，公共 H0 可以由一次 Baseline-only Run 的 26 道 H0 结果直接导出。导出时会生成一份无搜索历史、无 Peer Evidence 的标准 FeedbackPacket，不会额外启动 Updater，也不会重复执行这 26 道题。
 
 `RSI_SUITE_MAX_CONCURRENT_MODES` 控制同时启动多少个 Mode；另外两个参数是跨所有 Mode 共用的硬并发上限。默认允许五个 Mode 同时推进，但最多并发 6 个 Solver Trial 和 2 个 Updater Session，避免 Docker 与 Provider 瞬间过载。
 

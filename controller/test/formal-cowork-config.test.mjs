@@ -189,6 +189,38 @@ test('训练集内晋升对照可使用 18 Feedback + 0 Selection + 18 Final', a
   assert.equal(bundle.benchmark.partitions.final.instanceIds.length, 18)
 })
 
+test('训练集内晋升主表五 Mode 合并原 18+8 为公共 26 题并保持 N1/N2-B16', async () => {
+  const expectedFeedback = new Set([
+    'officeval_003', 'officeval_004', 'officeval_005', 'officeval_007',
+    'officeval_017', 'officeval_032', 'officeval_041', 'officeval_042',
+    'officeval_043', 'officeval_045', 'officeval_068', 'officeval_073',
+    'officeval_082', 'officeval_085', 'officeval_086', 'officeval_090',
+    'officeval_091', 'officeval_095', 'officeval_002', 'officeval_034',
+    'officeval_040', 'officeval_058', 'officeval_062', 'officeval_076',
+    'officeval_087', 'officeval_100',
+  ])
+  for (const mode of MODES) {
+    const bundle = await loadExperimentBundle(
+      resolve(
+        REPOSITORY_ROOT,
+        `experiments/cowork-msa-main16-in-sample-codex-${mode}.json`,
+      ),
+      REPOSITORY_ROOT,
+    )
+    assert.equal(bundle.recipe.spec.population.mode, mode)
+    assert.equal(bundle.recipe.spec.population.concurrency.n_branches, mode === 'single' ? 1 : 2)
+    assert.equal(bundle.recipe.spec.population.budget.total_budget, 16)
+    assert.equal(bundle.recipe.spec.moduleSearch.riskCeiling, 'l3')
+    assert.deepEqual(bundle.recipe.spec.moduleSearch.excludeRegions, [])
+    assert.equal(bundle.policy.decisionPartition, 'feedback')
+    assert.deepEqual(new Set(bundle.benchmark.partitions.feedback.instanceIds), expectedFeedback)
+    assert.equal(bundle.benchmark.partitions.selection.instanceIds.length, 0)
+    assert.equal(bundle.benchmark.partitions.final.instanceIds.length, 18)
+    assert.equal(bundle.updater.id, 'codex-cli')
+    assert.equal(bundle.target.id, 'msa-minimal-cowork-rsi')
+  }
+})
+
 test('Combined 层级消融只移除目标层 Region，其他层仍可搜索', async () => {
   const expectedExcluded = {
     l1: ['profile-policy', 'skill-guidance'],

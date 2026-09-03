@@ -21,7 +21,7 @@ test('五种 Cowork RSI 配置使用同一正式起点、严格评测与总预�
     assert.equal(bundle.recipe.spec.moduleSearch.strategy, 'linear-hill-climb')
     assert.equal(bundle.recipe.spec.moduleSearch.riskCeiling, 'l1')
     assert.equal(bundle.target.id, 'msa-minimal-cowork-rsi')
-    assert.equal(bundle.target.solver.runtime.maximumSteps, 0)
+    assert.equal(bundle.target.solver.runtime.maximumSteps, 12)
     assert.equal(bundle.target.mutation.semanticChecks.profile.maximums.max_steps, 12)
     assert.equal(
       bundle.target.mutation.semanticChecks.profile.maximums.max_output_tokens,
@@ -118,7 +118,7 @@ test('正式 Codex 五 Mode 使用 32 总预算、双 Branch 和受控跨 Mode �
   }
 })
 
-test('筛选五 Mode 共用固定 12/8 题集、4 总预算和无步数截断 Solver', async () => {
+test('筛选五 Mode 共用固定 12/8 题集、4 总预算和 12 步 Solver', async () => {
   const expectedFeedback = [
     'officeval_003', 'officeval_007', 'officeval_017', 'officeval_032',
     'officeval_041', 'officeval_042', 'officeval_068', 'officeval_073',
@@ -142,7 +142,7 @@ test('筛选五 Mode 共用固定 12/8 题集、4 总预算和无步数截断 So
     assert.equal(bundle.recipe.spec.moduleSearch.strategy, 'linear-hill-climb')
     assert.equal(bundle.recipe.spec.moduleSearch.riskCeiling, 'l2')
     assert.equal(bundle.experiment.evolution.generations, 4)
-    assert.equal(bundle.target.solver.runtime.maximumSteps, 0)
+    assert.equal(bundle.target.solver.runtime.maximumSteps, 12)
     assert.equal(bundle.updater.id, 'codex-cli')
     assert.equal(bundle.experiment.models.solver.model, 'gpt-5.6-terra')
     assert.equal(bundle.experiment.models.updater.model, 'gpt-5.6-terra')

@@ -204,8 +204,8 @@ function runtimeMaximumBytes(runtime, field, fallback, label) {
 
 function runtimeMaximumSteps(runtime) {
   const value = runtime.maximumSteps ?? MAXIMUM_SOLVER_STEPS
-  if (!Number.isSafeInteger(value) || value < 0 || value > MAXIMUM_SOLVER_STEPS) {
-    throw new ProtocolError(`MSA Solver maximumSteps 必须是 0..${MAXIMUM_SOLVER_STEPS} 的整数，0 表示不限制步数`)
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAXIMUM_SOLVER_STEPS) {
+    throw new ProtocolError(`MSA Solver maximumSteps 必须是 1..${MAXIMUM_SOLVER_STEPS} 的整数`)
   }
   return value
 }
@@ -342,7 +342,6 @@ export async function runMsaMinimalCoworkSolver({
       RSI_MODEL_GATEWAY_MODEL: model.model,
       RSI_MODEL_GATEWAY_MAX_TOKENS: String(model.maxTokens),
       RSI_SOLVER_MAX_STEPS: String(runtimeMaximumSteps(runtime)),
-      RSI_SOLVER_WALL_TIME_SECONDS: String(Math.max(1, Math.floor(timeoutMs / 1000) - 300)),
       RSI_ENVIRONMENT_ASSETS_ROOT: MSA_COWORK_CONTAINER_PATHS.environmentAssets,
       HTTP_PROXY: '',
       HTTPS_PROXY: '',

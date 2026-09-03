@@ -19,28 +19,6 @@ const CODEX_NATIVE_TARGETS = new Map([
   ['linux:x64', ['codex-linux-x64', 'x86_64-unknown-linux-musl']],
   ['linux:arm64', ['codex-linux-arm64', 'aarch64-unknown-linux-musl']],
 ])
-const CODEX_DISABLED_FEATURES = Object.freeze([
-  'apps',
-  'browser_use',
-  'browser_use_external',
-  'browser_use_full_cdp_access',
-  'computer_use',
-  'hooks',
-  'in_app_browser',
-  'in_app_chat',
-  'in_app_dictation',
-  'in_app_updates',
-  'plugin_sharing',
-  'plugins',
-  'remote_compaction_v2',
-  'remote_plugin',
-  'shell_snapshot',
-  'skill_mcp_dependency_install',
-  'skill_search',
-  'unbounded_connection_retries',
-  'workspace_dependencies',
-])
-
 // The Updater is frozen infrastructure. Only the evaluated Solver uses the
 // evolving minimal preset.
 export const INFRASTRUCTURE_UPDATER_PRESET = 'standard'
@@ -234,7 +212,6 @@ export function buildUpdaterInvocation({
         '--json',
         '--skip-git-repo-check',
         '--dangerously-bypass-approvals-and-sandbox',
-        ...CODEX_DISABLED_FEATURES.flatMap((feature) => ['--disable', feature]),
         '--model', updaterModel,
         '--config', `model_provider=${toml(updaterProvider)}`,
         '--config', `model_reasoning_effort=${toml(updaterReasoningEffort)}`,

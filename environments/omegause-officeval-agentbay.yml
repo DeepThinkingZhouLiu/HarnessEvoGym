@@ -59,7 +59,7 @@ spec:
     alias: model-gateway
     port: 8080
     egressNetwork: bridge
-    maximumRequestsPerRun: 100000
+    maximumRequestsPerRun: 4096
     maximumConcurrentRequests: 64
     maximumUpstreamRetries: 5
     resources:

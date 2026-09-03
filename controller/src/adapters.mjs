@@ -124,7 +124,7 @@ function validateMsaSolverRuntime(raw, label) {
     }),
     maximumSteps: expectNumber(runtime.maximumSteps ?? 32, `${label}.maximumSteps`, {
       integer: true,
-      min: 0,
+      min: 1,
       max: 32,
     }),
     secretEnvironment,

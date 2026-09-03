@@ -165,24 +165,6 @@ test('Codex updater uses only the isolated local configuration and keeps DSH ava
     '--dangerously-bypass-approvals-and-sandbox',
   ]) assert.ok(invocation.args.includes(flag))
   assert.equal(invocation.args.includes('--json'), true)
-  for (const feature of [
-    'apps',
-    'browser_use',
-    'computer_use',
-    'hooks',
-    'plugins',
-    'remote_compaction_v2',
-    'remote_plugin',
-    'shell_snapshot',
-    'skill_mcp_dependency_install',
-    'skill_search',
-    'unbounded_connection_retries',
-    'workspace_dependencies',
-  ]) {
-    const index = invocation.args.indexOf(feature)
-    assert.ok(index > 0, `missing disabled Codex feature: ${feature}`)
-    assert.equal(invocation.args[index - 1], '--disable')
-  }
   assert.ok(invocation.args.includes('model_provider="zcloud"'))
   assert.ok(invocation.args.includes('model_reasoning_effort="max"'))
   assert.ok(invocation.args.includes('model_providers.zcloud.request_max_retries=5'))

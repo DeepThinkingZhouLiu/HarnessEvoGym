@@ -206,8 +206,8 @@ HZY 原有 HLE/PutnamBench 生产 Campaign 仍位于 `benchmarks/hle-text-math/`
 
 当前 `msa-minimal` Cowork Adapter 把 `maximumSteps` 固定为 `1`，只用于低成本验证
 五种 Mode 的真实模型闭环；Candidate Profile 即使把 `max_steps` 调高也不会生效。
-已提供的 `msa-minimal-cowork-rsi` 不限制交互步数，由 Environment 的单题墙钟预算收口，
-用于 55/18/18 OmegaUse-OfficeVal 受控 RSI 实验；不要直接拿 3 题 Smoke 分数做能力结论。
+已提供的 `msa-minimal-cowork-rsi` 使用 Profile 的完整 12 步上限，用于 55/18/18
+OmegaUse-OfficeVal 受控 RSI 实验；不要直接拿 3 题 Smoke 分数做能力结论。
 该限制对本轮只开放 L1 的实验是可信硬上限；若未来开放可修改 `agent.py/run.py` 的
 L2/L3 并把 Candidate 视为主动恶意代码，还应在 Model Gateway 增加每个 Solver Session
 的独立请求硬配额。

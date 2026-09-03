@@ -9,10 +9,10 @@ from pathlib import Path
 from agent import Agent
 
 
-def _integer_environment(name: str, minimum: int) -> int:
+def _positive_integer_environment(name: str) -> int:
     value = int(os.environ[name])
-    if value < minimum:
-        raise RuntimeError(f"{name} must be at least {minimum}")
+    if value < 1:
+        raise RuntimeError(f"{name} must be positive")
     return value
 
 
@@ -31,9 +31,8 @@ def main() -> None:
         gateway_url=os.environ["RSI_MODEL_GATEWAY_BASE_URL"],
         api_key=os.environ["RSI_MODEL_GATEWAY_DUMMY_KEY"],
         model=os.environ["RSI_MODEL_GATEWAY_MODEL"],
-        maximum_output_tokens=_integer_environment("RSI_MODEL_GATEWAY_MAX_TOKENS", 1),
-        maximum_steps=_integer_environment("RSI_SOLVER_MAX_STEPS", 0),
-        wall_time_seconds=_integer_environment("RSI_SOLVER_WALL_TIME_SECONDS", 1),
+        maximum_output_tokens=_positive_integer_environment("RSI_MODEL_GATEWAY_MAX_TOKENS"),
+        maximum_steps=_positive_integer_environment("RSI_SOLVER_MAX_STEPS"),
         trace_path=args.trace,
     )
     answer = agent.run(args.task, Path.cwd())

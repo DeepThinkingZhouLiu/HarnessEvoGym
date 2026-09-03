@@ -210,9 +210,8 @@ an appropriate budget instead of interpreting smoke rewards as results. This is
 a trusted hard cap for the current L1-only runs. If L2/L3 can mutate
 `agent.py`/`run.py` and Candidates are treated as actively hostile, add a
 per-Solver-session request quota at the Model Gateway as an additional boundary.
-The `msa-minimal-cowork-rsi` Target does not cap interaction steps; the
-Environment's per-task wall-clock budget remains the terminal bound for the
-registered 55/18/18 OfficeVal experiment. The three-task smoke must not be
+The `msa-minimal-cowork-rsi` Target allows the profile's full 12-step loop for
+the registered 55/18/18 OfficeVal experiment. The three-task smoke must not be
 reported as a capability result.
 
 ### Fair five-mode linear RSI configurations

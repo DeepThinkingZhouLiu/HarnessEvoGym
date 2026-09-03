@@ -34,6 +34,14 @@ test('Benchmark 校验返回三个互斥 Partition', () => {
   assert.deepEqual(benchmark.partitions.final.instanceIds, ['repo__three-1'])
 })
 
+test('Benchmark 允许训练集内晋升协议显式省略 Selection', () => {
+  const fixture = benchmarkFixture()
+  delete fixture.spec.partitions.selection
+  fixture.spec.expectedTotal = 2
+  const benchmark = validateBenchmark(fixture)
+  assert.deepEqual(benchmark.partitions.selection.instanceIds, [])
+})
+
 test('Benchmark 校验拒绝跨 Partition 重复 Instance', () => {
   const fixture = benchmarkFixture()
   fixture.spec.partitions.final.instanceIds = ['repo__two-1']
@@ -100,6 +108,30 @@ test('Evaluation Policy 拒绝把 final 用作晋升决策集', () => {
     },
   }
   assert.throws(() => validateEvaluationPolicy(fixture), /Evaluation Policy 校验失败/u)
+})
+
+test('Evaluation Policy 可配置在 Feedback 训练集上决定晋升', () => {
+  const fixture = {
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'EvaluationPolicy',
+    metadata: { id: 'in-sample-policy' },
+    spec: {
+      decisionPartition: 'feedback',
+      bootstrap: { samples: 1000, confidence: 0.95, seed: 1 },
+      gates: {
+        coverage: { minimumRecords: 1, minimumCompletion: 1 },
+        quality: {
+          minimumNetResolved: 0,
+          minimumDeltaResolvedRate: 0,
+          maximumRegressions: 0,
+          requirePositivePairedCiLowerBound: false,
+        },
+        cost: { maximumRelativeInferenceCostIncrease: null, maximumEvolutionCostUsd: null },
+        safety: { maximumPolicyViolations: 0 },
+      },
+    },
+  }
+  assert.equal(validateEvaluationPolicy(fixture).decisionPartition, 'feedback')
 })
 
 test('Solver Result v2 接受连续 Reward 与重复 Trial', async () => {

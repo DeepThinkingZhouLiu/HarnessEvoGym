@@ -165,6 +165,9 @@ export function formatPopulationStatus(state) {
     best: state.best === null ? null : structuredClone(state.best),
     baselinePack: state.baselinePack === undefined ? null : structuredClone(state.baselinePack),
     checkpoints: Array.isArray(state.checkpoints) ? structuredClone(state.checkpoints) : [],
+    branchCheckpoints: Array.isArray(state.branchCheckpoints)
+      ? structuredClone(state.branchCheckpoints)
+      : [],
     branches: state.branches.map((branch) => ({
       branchId: branch.branchId,
       status: branch.status,
@@ -284,6 +287,7 @@ export class PopulationOrchestrator {
       branches,
       best: null,
       checkpoints: [],
+      branchCheckpoints: [],
       ...(this.baselinePack === null ? {} : { baselinePack: structuredClone(this.baselinePack) }),
       final: null,
       events: [{
@@ -358,13 +362,30 @@ export class PopulationOrchestrator {
     const reached = this.checkpointing.budgetMilestones.filter((budget) => (
       budget <= state.budget.consumed && !recorded.has(budget)
     ))
-    if (reached.length === 0) return state
+    const recordedBranch = new Set((state.branchCheckpoints ?? []).map((entry) => (
+      `${entry.branchId}:${entry.requestedGeneration}`
+    )))
+    const needsBranchProjection = this.checkpointing.branchGenerationMilestones.length > 0
+    if (reached.length === 0 && !needsBranchProjection) return state
 
-    const projections = this.checkpointing.capture.latestAttempts
+    const projections = this.checkpointing.capture.latestAttempts || needsBranchProjection
       ? await Promise.all(state.branches.map(async (branch) => (
           validateBranchProjection(await (await this.#handle(branch.branchId)).inspect())
         )))
       : []
+    const projectionByBranch = new Map(projections.map((projection) => [projection.branchId, projection]))
+    const reachedBranch = needsBranchProjection
+      ? state.branches.flatMap((branch) => {
+          const projection = projectionByBranch.get(branch.branchId)
+          return this.checkpointing.branchGenerationMilestones
+            .filter((generation) => (
+              generation <= projection.completedSteps
+                && !recordedBranch.has(`${branch.branchId}:${generation}`)
+            ))
+            .map((requestedGeneration) => ({ branch, projection, requestedGeneration }))
+        })
+      : []
+    if (reached.length === 0 && reachedBranch.length === 0) return state
     const capturedAt = stableCheckpointTime(state)
     let next = state
     for (const requestedBudget of reached) {
@@ -389,6 +410,12 @@ export class PopulationOrchestrator {
               branchIncumbents: state.branches.map((branch) => ({
                 branchId: branch.branchId,
                 branchRoot: `branches/${branch.branchId}`,
+                budget: {
+                  base: branch.baseBudget,
+                  bonus: branch.bonusBudget,
+                  consumed: branch.consumed,
+                  remaining: branchRemaining(branch),
+                },
                 incumbent: structuredClone(branch.incumbent),
               })),
             }
@@ -421,6 +448,63 @@ export class PopulationOrchestrator {
         events: [...next.events, event(
           next,
           'POPULATION_BUDGET_CHECKPOINT_WRITTEN',
+          eventAt,
+          record,
+        )],
+      }
+    }
+    for (const { branch, projection, requestedGeneration } of reachedBranch) {
+      const checkpoint = redactSecrets({
+        apiVersion: 'harness-rsi/v1alpha1',
+        kind: 'BranchGenerationCheckpoint',
+        campaignId: state.campaignId,
+        mode: state.mode,
+        branchId: branch.branchId,
+        requestedGeneration,
+        actualCompletedSteps: projection.completedSteps,
+        actualConsumedBudget: branch.consumed,
+        populationConsumedBudget: state.budget.consumed,
+        epoch: state.epoch,
+        capturedAt,
+        branchRoot: `branches/${branch.branchId}`,
+        budget: {
+          base: branch.baseBudget,
+          bonus: branch.bonusBudget,
+          consumed: branch.consumed,
+          remaining: branchRemaining(branch),
+        },
+        incumbent: structuredClone(branch.incumbent),
+        latestAttempt: projection.lastStep === null
+          ? null
+          : structuredClone(projection.lastStep),
+        retention: {
+          policy: 'population-run-owned-artifacts-v1',
+          note: '本文件只索引不可变 Candidate 身份；已晋升和被拒绝的 Candidate 均随 Population Run 保留。',
+        },
+      }, this.secretValues)
+      const written = await this.store.writeBranchGenerationCheckpoint(
+        branch.branchId,
+        requestedGeneration,
+        checkpoint,
+      )
+      const eventAt = iso(this.clock)
+      const record = {
+        branchId: branch.branchId,
+        requestedGeneration,
+        actualCompletedSteps: projection.completedSteps,
+        actualConsumedBudget: branch.consumed,
+        populationConsumedBudget: state.budget.consumed,
+        epoch: state.epoch,
+        capturedAt,
+        path: written.relativePath,
+      }
+      next = {
+        ...next,
+        updatedAt: eventAt,
+        branchCheckpoints: [...(next.branchCheckpoints ?? []), record],
+        events: [...next.events, event(
+          next,
+          'BRANCH_GENERATION_CHECKPOINT_WRITTEN',
           eventAt,
           record,
         )],

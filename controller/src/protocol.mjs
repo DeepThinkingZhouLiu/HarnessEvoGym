@@ -162,14 +162,19 @@ export function validateBenchmark(input) {
 
   for (const partitionName of PARTITION_NAMES) {
     const partitionPath = `spec.partitions.${partitionName}`
-    const partition = isObject(partitionsInput[partitionName]) ? partitionsInput[partitionName] : {}
+    const omittedOptionalSelection = partitionName === 'selection'
+      && partitionsInput[partitionName] === undefined
+    const partition = omittedOptionalSelection
+      ? { visibility: PARTITION_VISIBILITY.selection, instanceIds: [] }
+      : isObject(partitionsInput[partitionName]) ? partitionsInput[partitionName] : {}
     if (partition.visibility !== PARTITION_VISIBILITY[partitionName]) {
       errors.push(`${partitionPath}.visibility 必须是 ${PARTITION_VISIBILITY[partitionName]}`)
     }
 
     const instanceIds = partition.instanceIds
-    if (!Array.isArray(instanceIds) || instanceIds.length === 0) {
-      errors.push(`${partitionPath}.instanceIds 必须是非空数组`)
+    if (!Array.isArray(instanceIds)
+        || (instanceIds.length === 0 && partitionName !== 'selection')) {
+      errors.push(`${partitionPath}.instanceIds 必须是${partitionName === 'selection' ? '' : '非空'}数组`)
       partitions[partitionName] = { visibility: partition.visibility, instanceIds: [] }
       continue
     }
@@ -190,7 +195,7 @@ export function validateBenchmark(input) {
     if (partition.expectedCount !== undefined) {
       pushNumber(errors, partition.expectedCount, `${partitionPath}.expectedCount`, {
         integer: true,
-        min: 1,
+        min: partitionName === 'selection' ? 0 : 1,
       })
       if (Number.isInteger(partition.expectedCount) && partition.expectedCount !== instanceIds.length) {
         errors.push(`${partitionPath}.expectedCount 与 instanceIds 数量不一致`)
@@ -203,7 +208,7 @@ export function validateBenchmark(input) {
     }
   }
 
-  pushNumber(errors, spec.expectedTotal, 'spec.expectedTotal', { integer: true, min: 3 })
+  pushNumber(errors, spec.expectedTotal, 'spec.expectedTotal', { integer: true, min: 2 })
   if (Number.isInteger(spec.expectedTotal) && spec.expectedTotal !== allInstanceIds.size) {
     errors.push(`spec.expectedTotal=${spec.expectedTotal}，但实际唯一 Instance 数量是 ${allInstanceIds.size}`)
   }
@@ -244,8 +249,8 @@ export function validateEvaluationPolicy(input) {
   pushRequiredText(errors, metadata.id, 'metadata.id')
 
   const spec = isObject(input.spec) ? input.spec : {}
-  if (spec.decisionPartition !== 'selection') {
-    errors.push('spec.decisionPartition 在 v1alpha1 中必须是 selection；final 只能用于最终报告')
+  if (!['feedback', 'selection'].includes(spec.decisionPartition)) {
+    errors.push('spec.decisionPartition 必须是 feedback 或 selection；final 只能用于最终报告')
   }
   const primaryMetric = spec.primaryMetric ?? 'resolved-rate'
   if (!['resolved-rate', 'mean-reward'].includes(primaryMetric)) {

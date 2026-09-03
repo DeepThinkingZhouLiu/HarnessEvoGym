@@ -118,7 +118,7 @@ function benchmarkForValidation(benchmark) {
 }
 
 function primaryMetricValue(records, metric) {
-  if (records.size === 0) throw new ProtocolError('BaselinePack Selection 不能为空')
+  if (records.size === 0) throw new ProtocolError('BaselinePack Decision Partition 不能为空')
   if (metric === 'mean-reward') {
     return [...records.values()].reduce((sum, record) => sum + record.reward, 0) / records.size
   }
@@ -138,29 +138,29 @@ function assertNoSecrets(value, secrets = []) {
   }
 }
 
-function normalizedEvaluation(value) {
-  const evaluation = object(value, 'BaselinePack.spec.selection.evaluation')
+function normalizedEvaluation(value, label = 'BaselinePack.spec.decision.evaluation') {
+  const evaluation = object(value, label)
   rejectUnknown(
     evaluation,
     new Set(['apiVersion', 'kind', 'candidateId', 'primary']),
-    'BaselinePack.spec.selection.evaluation',
+    label,
   )
   if (evaluation.apiVersion !== API_VERSION || evaluation.kind !== 'EvaluationSummary') {
-    throw new ProtocolError('BaselinePack Selection EvaluationSummary 协议无效')
+    throw new ProtocolError('BaselinePack Decision EvaluationSummary 协议无效')
   }
   if (evaluation.candidateId !== 'h0') {
-    throw new ProtocolError('BaselinePack Selection EvaluationSummary 必须指向 h0')
+    throw new ProtocolError('BaselinePack Decision EvaluationSummary 必须指向 h0')
   }
-  const primary = object(evaluation.primary, 'BaselinePack.spec.selection.evaluation.primary')
+  const primary = object(evaluation.primary, `${label}.primary`)
   rejectUnknown(
     primary,
     new Set(['metric', 'value', 'direction', 'total']),
-    'BaselinePack.spec.selection.evaluation.primary',
+    `${label}.primary`,
   )
   if (!['mean-reward', 'resolved-rate'].includes(primary.metric)
       || typeof primary.value !== 'number' || !Number.isFinite(primary.value)
       || primary.direction !== 'maximize' || primary.total !== null) {
-    throw new ProtocolError('BaselinePack Selection 主指标无效')
+    throw new ProtocolError('BaselinePack Decision 主指标无效')
   }
   return structuredClone(evaluation)
 }
@@ -243,6 +243,9 @@ export function createBaselinePackDocument({
   source,
   identity,
   benchmark,
+  decisionPartition = 'selection',
+  decisionRecords,
+  decisionEvaluation,
   selectionRecords,
   selectionEvaluation,
   feedbackRecords,
@@ -255,17 +258,33 @@ export function createBaselinePackDocument({
   }
   const normalizedSource = object(source, 'BaselinePack.spec.source')
   const validationBenchmark = benchmarkForValidation(benchmark)
-  const selectionMap = validateResultRecords(selectionRecords, validationBenchmark, 'BaselinePack Selection')
-  const feedbackMap = validateResultRecords(feedbackRecords, validationBenchmark, 'BaselinePack Feedback')
-  exactIds(selectionMap.keys(), validationBenchmark.partitions.selection.instanceIds, 'BaselinePack Selection')
-  exactIds(feedbackMap.keys(), validationBenchmark.partitions.feedback.instanceIds, 'BaselinePack Feedback')
-  const evaluation = normalizedEvaluation(selectionEvaluation)
-  if (identity?.policy?.primaryMetric !== evaluation.primary.metric) {
-    throw new ProtocolError('BaselinePack Selection 主指标与冻结 Evaluation Policy 不一致')
+  if (!['feedback', 'selection'].includes(decisionPartition)) {
+    throw new ProtocolError('BaselinePack decisionPartition 必须是 feedback 或 selection')
   }
-  const actualPrimary = primaryMetricValue(selectionMap, evaluation.primary.metric)
+  const rawDecisionRecords = decisionRecords ?? selectionRecords
+  const rawDecisionEvaluation = decisionEvaluation ?? selectionEvaluation
+  const decisionMap = validateResultRecords(
+    rawDecisionRecords,
+    validationBenchmark,
+    `BaselinePack ${decisionPartition}`,
+  )
+  const feedbackMap = validateResultRecords(feedbackRecords, validationBenchmark, 'BaselinePack Feedback')
+  exactIds(
+    decisionMap.keys(),
+    validationBenchmark.partitions[decisionPartition].instanceIds,
+    `BaselinePack ${decisionPartition}`,
+  )
+  exactIds(feedbackMap.keys(), validationBenchmark.partitions.feedback.instanceIds, 'BaselinePack Feedback')
+  const evaluation = normalizedEvaluation(rawDecisionEvaluation)
+  if (identity?.policy?.primaryMetric !== evaluation.primary.metric) {
+    throw new ProtocolError('BaselinePack Decision 主指标与冻结 Evaluation Policy 不一致')
+  }
+  if ((identity?.policy?.decisionPartition ?? 'selection') !== decisionPartition) {
+    throw new ProtocolError('BaselinePack Decision Partition 与冻结 Evaluation Policy 不一致')
+  }
+  const actualPrimary = primaryMetricValue(decisionMap, evaluation.primary.metric)
   if (Math.abs(actualPrimary - evaluation.primary.value) > 1e-12) {
-    throw new ProtocolError('BaselinePack Selection 分数与逐题记录不一致', [
+    throw new ProtocolError('BaselinePack Decision 分数与逐题记录不一致', [
       `evaluation=${evaluation.primary.value}`,
       `records=${actualPrimary}`,
     ])
@@ -274,13 +293,19 @@ export function createBaselinePackDocument({
     benchmark: validationBenchmark,
     feedbackRecords: feedbackMap,
   })
+  const decisionEntry = {
+    records: structuredClone(rawDecisionRecords),
+    evaluation,
+  }
+  // Selection 是 v1alpha1 既有的公开格式。即使调用方使用新的通用参数，仍继续
+  // 输出 spec.selection，避免新版 Controller 生成的 Pack 破坏旧消费脚本。
+  const usesLegacySelectionShape = decisionPartition === 'selection'
   const spec = {
     source: structuredClone(normalizedSource),
     identity: canonicalJsonValue(identity),
-    selection: {
-      records: structuredClone(selectionRecords),
-      evaluation,
-    },
+    ...(usesLegacySelectionShape
+      ? { selection: decisionEntry }
+      : { decision: { partition: decisionPartition, ...decisionEntry } }),
     feedback: {
       records: structuredClone(feedbackRecords),
       packet,
@@ -322,7 +347,7 @@ export function validateBaselinePackDocument(document, {
     throw new ProtocolError('BaselinePack 与 Experiment 固定摘要不一致')
   }
   const spec = object(value.spec, 'BaselinePack.spec')
-  rejectUnknown(spec, new Set(['source', 'identity', 'selection', 'feedback']), 'BaselinePack.spec')
+  rejectUnknown(spec, new Set(['source', 'identity', 'selection', 'decision', 'feedback']), 'BaselinePack.spec')
   if (baselinePackDigest(spec) !== documentSha256) {
     throw new ProtocolError('BaselinePack 内容摘要不匹配，文件可能已被修改')
   }
@@ -330,27 +355,53 @@ export function validateBaselinePackDocument(document, {
     throw new ProtocolError('BaselinePack 与当前 H0/Benchmark/模型/环境身份不一致')
   }
   const source = object(spec.source, 'BaselinePack.spec.source')
-  const selection = object(spec.selection, 'BaselinePack.spec.selection')
+  if ((spec.selection === undefined) === (spec.decision === undefined)) {
+    throw new ProtocolError('BaselinePack 必须且只能包含 legacy selection 或 decision')
+  }
+  const legacySelection = spec.selection === undefined
+    ? null
+    : object(spec.selection, 'BaselinePack.spec.selection')
+  const decision = legacySelection === null
+    ? object(spec.decision, 'BaselinePack.spec.decision')
+    : { partition: 'selection', ...legacySelection }
   const feedback = object(spec.feedback, 'BaselinePack.spec.feedback')
-  rejectUnknown(selection, new Set(['records', 'evaluation']), 'BaselinePack.spec.selection')
+  if (legacySelection === null) {
+    rejectUnknown(decision, new Set(['partition', 'records', 'evaluation']), 'BaselinePack.spec.decision')
+  } else {
+    rejectUnknown(legacySelection, new Set(['records', 'evaluation']), 'BaselinePack.spec.selection')
+  }
   rejectUnknown(feedback, new Set(['records', 'packet']), 'BaselinePack.spec.feedback')
-  if (!Array.isArray(selection.records) || !Array.isArray(feedback.records)) {
-    throw new ProtocolError('BaselinePack Selection/Feedback records 必须是数组')
+  if (!['feedback', 'selection'].includes(decision.partition)) {
+    throw new ProtocolError('BaselinePack Decision Partition 必须是 feedback 或 selection')
+  }
+  if (!Array.isArray(decision.records) || !Array.isArray(feedback.records)) {
+    throw new ProtocolError('BaselinePack Decision/Feedback records 必须是数组')
   }
   const validationBenchmark = benchmarkForValidation(benchmark)
-  const selectionRecords = validateResultRecords(selection.records, validationBenchmark, 'BaselinePack Selection')
+  const decisionRecords = validateResultRecords(
+    decision.records,
+    validationBenchmark,
+    `BaselinePack ${decision.partition}`,
+  )
   const feedbackRecords = validateResultRecords(feedback.records, validationBenchmark, 'BaselinePack Feedback')
-  exactIds(selectionRecords.keys(), validationBenchmark.partitions.selection.instanceIds, 'BaselinePack Selection')
+  exactIds(
+    decisionRecords.keys(),
+    validationBenchmark.partitions[decision.partition].instanceIds,
+    `BaselinePack ${decision.partition}`,
+  )
   exactIds(feedbackRecords.keys(), validationBenchmark.partitions.feedback.instanceIds, 'BaselinePack Feedback')
-  const evaluation = normalizedEvaluation(selection.evaluation)
+  const evaluation = normalizedEvaluation(decision.evaluation)
   const expectedPrimaryMetric = expectedIdentity?.policy?.primaryMetric
   if (typeof expectedPrimaryMetric !== 'string'
       || evaluation.primary.metric !== expectedPrimaryMetric) {
-    throw new ProtocolError('BaselinePack Selection 主指标与当前 Evaluation Policy 不一致')
+    throw new ProtocolError('BaselinePack Decision 主指标与当前 Evaluation Policy 不一致')
   }
-  const actualPrimary = primaryMetricValue(selectionRecords, evaluation.primary.metric)
+  if ((expectedIdentity?.policy?.decisionPartition ?? 'selection') !== decision.partition) {
+    throw new ProtocolError('BaselinePack Decision Partition 与当前 Evaluation Policy 不一致')
+  }
+  const actualPrimary = primaryMetricValue(decisionRecords, evaluation.primary.metric)
   if (Math.abs(actualPrimary - evaluation.primary.value) > 1e-12) {
-    throw new ProtocolError('BaselinePack Selection 分数与逐题记录不一致')
+    throw new ProtocolError('BaselinePack Decision 分数与逐题记录不一致')
   }
   const packet = validateFeedbackPacket(feedback.packet, {
     benchmark: validationBenchmark,
@@ -363,11 +414,21 @@ export function validateBaselinePackDocument(document, {
     createdAt: metadata.createdAt,
     source: structuredClone(source),
     identity: structuredClone(spec.identity),
-    selection: Object.freeze({
-      rawRecords: structuredClone(selection.records),
-      records: selectionRecords,
+    decision: Object.freeze({
+      partition: decision.partition,
+      rawRecords: structuredClone(decision.records),
+      records: decisionRecords,
       evaluation,
     }),
+    ...(decision.partition === 'selection'
+      ? {
+          selection: Object.freeze({
+            rawRecords: structuredClone(decision.records),
+            records: decisionRecords,
+            evaluation,
+          }),
+        }
+      : {}),
     feedback: Object.freeze({
       rawRecords: structuredClone(feedback.records),
       records: feedbackRecords,
@@ -480,11 +541,15 @@ export async function exportBaselinePackFromRun({
     throw new ProtocolError('Source Run 缺少已评测的 H0 Candidate')
   }
   const snapshot = await readLimitedJson(join(runRoot, 'experiment.snapshot.json'), 'Experiment Snapshot')
-  const selectionPath = join(runRoot, 'results', 'generation-0', 'h0-selection.jsonl')
+  const decisionPartition = snapshot.policy?.decisionPartition
+  if (!['feedback', 'selection'].includes(decisionPartition)) {
+    throw new ProtocolError('Experiment Snapshot 缺少合法 Decision Partition')
+  }
+  const decisionPath = join(runRoot, 'results', 'generation-0', `h0-${decisionPartition}.jsonl`)
   const feedbackPath = join(runRoot, 'results', 'generation-1', 'h0-feedback.jsonl')
   const packetPath = join(runRoot, 'generations', 'generation-1', 'feedback-packet.json')
-  const [selectionText, feedbackText, feedbackPacket, feedbackPacketText] = await Promise.all([
-    readFile(selectionPath, 'utf8'),
+  const [decisionText, feedbackText, feedbackPacket, feedbackPacketText] = await Promise.all([
+    readFile(decisionPath, 'utf8'),
     readFile(feedbackPath, 'utf8'),
     readLimitedJson(packetPath, 'H0 FeedbackPacket'),
     readFile(packetPath, 'utf8'),
@@ -512,16 +577,24 @@ export async function exportBaselinePackFromRun({
       branchId: state.spec.branchId ?? null,
       baselineId: 'h0',
       candidateDigest: baseline.digest,
-      files: {
-        selectionSha256: fileDigest(selectionText),
-        feedbackSha256: fileDigest(feedbackText),
-        feedbackPacketSha256: fileDigest(feedbackPacketText),
-      },
+      files: decisionPartition === 'selection'
+        ? {
+            selectionSha256: fileDigest(decisionText),
+            feedbackSha256: fileDigest(feedbackText),
+            feedbackPacketSha256: fileDigest(feedbackPacketText),
+          }
+        : {
+            decisionPartition,
+            decisionSha256: fileDigest(decisionText),
+            feedbackSha256: fileDigest(feedbackText),
+            feedbackPacketSha256: fileDigest(feedbackPacketText),
+          },
     },
     identity,
     benchmark: snapshot.benchmark,
-    selectionRecords: parseJsonl(selectionText, 'H0 Selection'),
-    selectionEvaluation: baseline.evaluation,
+    decisionPartition,
+    decisionRecords: parseJsonl(decisionText, `H0 ${decisionPartition}`),
+    decisionEvaluation: baseline.evaluation,
     feedbackRecords: parseJsonl(feedbackText, 'H0 Feedback'),
     feedbackPacket,
     secrets,

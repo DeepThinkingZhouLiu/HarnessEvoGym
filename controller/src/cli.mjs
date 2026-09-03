@@ -231,6 +231,10 @@ async function baselinePackExportCommand(args) {
     ...(options.get('branch') ? { branchId: options.get('branch') } : {}),
     secrets: [process.env.RSI_PROVIDER_API_KEY].filter(Boolean),
   })
+  const decision = result.pack.spec.decision ?? {
+    partition: 'selection',
+    ...result.pack.spec.selection,
+  }
   await emit({
     apiVersion: 'harness-rsi/v1alpha1',
     kind: 'BaselinePackExportReport',
@@ -238,8 +242,12 @@ async function baselinePackExportCommand(args) {
     path: result.path,
     sha256: result.pack.metadata.sha256,
     source: result.pack.spec.source,
-    primary: result.pack.spec.selection.evaluation.primary,
-    selectionCases: result.pack.spec.selection.records.length,
+    primary: decision.evaluation.primary,
+    decisionPartition: decision.partition,
+    decisionCases: decision.records.length,
+    ...(decision.partition === 'selection'
+      ? { selectionCases: decision.records.length }
+      : {}),
     feedbackCases: result.pack.spec.feedback.records.length,
   })
 }

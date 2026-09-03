@@ -5,6 +5,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 import { writeJsonLines } from '../candidate.mjs'
 import { REPOSITORY_ROOT, resolveInside } from '../config.mjs'
 import { safeDockerName } from '../docker.mjs'
+import { withGlobalPermit } from '../global-concurrency.mjs'
 import { ProtocolError, validateResultRecords } from '../protocol.mjs'
 
 const TASKS_API_VERSION = 'harness-rsi/v1alpha1'
@@ -290,8 +291,9 @@ export class TextReasoningEnvironment {
     ])
     const startedAt = Date.now()
     try {
-      const solver = await this.solverDriver.run({
-        image: await this.ensureRuntime(),
+      const runtimeImage = await this.ensureRuntime()
+      const solver = await withGlobalPermit('solver', () => this.solverDriver.run({
+        image: runtimeImage,
         model,
         candidateWorkspace,
         taskWorkspace,
@@ -301,7 +303,7 @@ export class TextReasoningEnvironment {
         name: `${executionId}-${candidateId}-${task.id}-${seed}-solver`,
         timeoutMs: this.environment.docker.resources.timeoutSeconds * 1000,
         containerWorkspace: this.environment.task.workspacePath,
-      })
+      }))
       const answer = solver.answer ?? ''
       const reward = normalizeAnswer(answer) === task.normalizedAnswer ? 1 : 0
       return {

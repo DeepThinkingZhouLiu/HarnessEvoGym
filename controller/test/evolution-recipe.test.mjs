@@ -116,6 +116,7 @@ test('EvolutionRecipe 可按 Population Budget 里程碑配置消融 Checkpoint'
       },
       checkpointing: {
         budgetMilestones: [0, 4, 8, 12, 16],
+        branchGenerationMilestones: [2, 4, 6, 8],
         capture: {
           populationBest: true,
           branchIncumbents: true,
@@ -126,6 +127,7 @@ test('EvolutionRecipe 可按 Population Budget 里程碑配置消融 Checkpoint'
   }
   const recipe = normalizeEvolutionRecipe(input)
   assert.deepEqual(recipe.spec.checkpointing.budgetMilestones, [0, 4, 8, 12, 16])
+  assert.deepEqual(recipe.spec.checkpointing.branchGenerationMilestones, [2, 4, 6, 8])
   assert.deepEqual(recipe.spec.checkpointing.capture, {
     populationBest: true,
     branchIncumbents: true,
@@ -145,6 +147,29 @@ test('EvolutionRecipe 可按 Population Budget 里程碑配置消融 Checkpoint'
   assert.throws(() => normalizeEvolutionRecipe(input), /至少必须启用一项/u)
 })
 
+test('EvolutionRecipe 可按 Target Region 做任意层级消融', () => {
+  const recipe = normalizeEvolutionRecipe({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'EvolutionRecipe',
+    spec: {
+      population: controllerConfig('combined', { total: 16 }),
+      moduleSearch: {
+        authority: 'strategy-directed',
+        riskCeiling: 'l3',
+        strategy: 'linear-hill-climb',
+        includeRegions: ['profile-policy', 'agent-loop'],
+        excludeRegions: ['model-transport'],
+      },
+    },
+  })
+  assert.deepEqual(recipe.spec.moduleSearch.includeRegions, ['profile-policy', 'agent-loop'])
+  assert.deepEqual(recipe.spec.moduleSearch.excludeRegions, ['model-transport'])
+
+  const invalid = structuredClone(recipe)
+  invalid.spec.moduleSearch.excludeRegions.push('profile-policy')
+  assert.throws(() => normalizeEvolutionRecipe(invalid), /不能同时出现/u)
+})
+
 test('五种 N2B16 消融 Recipe 共用同一组 Budget 里程碑', async () => {
   for (const mode of MODES) {
     const recipe = normalizeEvolutionRecipe(await readConfigFile(resolve(
@@ -155,5 +180,23 @@ test('五种 N2B16 消融 Recipe 共用同一组 Budget 里程碑', async () => 
     assert.equal(recipe.spec.population.budget.total_budget, 16)
     assert.equal(recipe.spec.population.concurrency.n_branches, mode === 'single' ? 1 : 2)
     assert.deepEqual(recipe.spec.checkpointing.budgetMilestones, [0, 4, 8, 12, 16])
+  }
+})
+
+test('主表 Recipe 固定 N1/N2-B16、L1+L2+L3 与 Branch checkpoint', async () => {
+  for (const mode of MODES) {
+    const recipe = normalizeEvolutionRecipe(await readConfigFile(resolve(
+      REPOSITORY_ROOT,
+      `recipes/population-main-linear-16/${mode}.yml`,
+    )))
+    assert.equal(recipe.spec.population.concurrency.n_branches, mode === 'single' ? 1 : 2)
+    assert.equal(recipe.spec.population.budget.total_budget, 16)
+    assert.equal(recipe.spec.moduleSearch.riskCeiling, 'l3')
+    assert.equal(recipe.spec.moduleSearch.includeRegions, null)
+    assert.deepEqual(recipe.spec.moduleSearch.excludeRegions, [])
+    assert.deepEqual(
+      recipe.spec.checkpointing.branchGenerationMilestones,
+      mode === 'single' ? [2, 4, 6, 8, 10, 12, 16] : [2, 4, 6, 8],
+    )
   }
 })

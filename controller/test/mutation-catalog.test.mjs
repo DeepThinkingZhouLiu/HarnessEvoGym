@@ -9,6 +9,7 @@ import { mutationPolicyFor } from '../src/candidate.mjs'
 import {
   issueMutationLease,
   mutationCatalogFor,
+  mutationCatalogForModuleSearch,
   validateMutationPlan,
 } from '../src/mutation-catalog.mjs'
 
@@ -41,6 +42,24 @@ test('Mutation Catalog 把 DSH 搜索空间拆成稳定 Region', async () => {
       ['skill-scripts', 'l2'],
     ],
   )
+})
+
+test('Recipe Region 掩码从 Strategy 和 MutationLease 硬隔离被消融模块', async () => {
+  const bundle = await loadExperimentBundle(
+    resolve(repositoryRoot, 'experiments/cowork-msa-ablation16-codex-combined-without-l2.json'),
+    repositoryRoot,
+  )
+  const catalog = mutationCatalogForModuleSearch(bundle.target, bundle.recipe.spec.moduleSearch)
+  assert.deepEqual(
+    catalog.spec.regions.map((region) => region.id),
+    ['profile-policy', 'skill-guidance', 'model-transport', 'runtime-wiring'],
+  )
+  assert.throws(() => validateMutationPlan(plan(['agent-loop']), {
+    catalog,
+    riskCeiling: 'l3',
+    allowedParentIds: ['h0'],
+    expectedGeneration: 1,
+  }), /未知 Region/u)
 })
 
 test('旧 Target 不声明 Catalog 时把每个层级自动映射为兼容 Region', async () => {

@@ -15,6 +15,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { writeJsonLines } from '../candidate.mjs'
 import { assertPathKind, resolveInside } from '../config.mjs'
 import { safeDockerName } from '../docker.mjs'
+import { withGlobalPermit } from '../global-concurrency.mjs'
 import { ProtocolError, validateResultRecords } from '../protocol.mjs'
 import { runProcess } from '../process.mjs'
 import {
@@ -649,7 +650,7 @@ export class OmegaUseOfficeValEnvironment {
     const startedAt = Date.now()
     let solver
     try {
-      solver = await this.solverDriver.run({
+      solver = await withGlobalPermit('solver', () => this.solverDriver.run({
         image: runtime.solverImage,
         model,
         candidateWorkspace,
@@ -660,7 +661,7 @@ export class OmegaUseOfficeValEnvironment {
         name: `${executionId}-${candidateId}-${layout.instanceId}-${seed}-solver`,
         timeoutMs: this.environment.docker.resources.timeoutSeconds * 1000,
         containerWorkspace: this.environment.task.workspacePath,
-      })
+      }))
     } catch (cause) {
       throw new ProtocolError('OmegaUse Solver 基础设施失败', [
         cause?.message ?? String(cause),

@@ -151,6 +151,22 @@ export class PopulationStore {
     return { path, relativePath: `public/checkpoints/${name}` }
   }
 
+  async writeBranchGenerationCheckpoint(branchId, requestedGeneration, checkpoint) {
+    assertId(branchId, 'branchId')
+    if (!Number.isSafeInteger(requestedGeneration)
+        || requestedGeneration < 1 || requestedGeneration > 10_000) {
+      throw new ProtocolError('Branch Checkpoint Generation 必须是 1..10000 的整数')
+    }
+    const directory = join(this.checkpointsRoot, 'branches', branchId)
+    const name = `generation-${String(requestedGeneration).padStart(4, '0')}.json`
+    const path = join(directory, name)
+    await immutableJson(path, checkpoint)
+    return {
+      path,
+      relativePath: `public/checkpoints/branches/${branchId}/${name}`,
+    }
+  }
+
   async writeReport({ summary, markdown, bestHarness, patch }) {
     const paths = {
       summary: join(this.reportRoot, 'population-summary.json'),

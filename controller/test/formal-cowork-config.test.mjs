@@ -158,3 +158,69 @@ test('筛选五 Mode 共用固定 12/8 题集、4 总预算和 12 步 Solver', a
     assert.equal(bundle.benchmark.partitions.final.visibility, 'sealed')
   }
 })
+
+test('主表五 Mode 固定 18/8/18、B16、L1+L2+L3 和同一晋升协议', async () => {
+  for (const mode of MODES) {
+    const bundle = await loadExperimentBundle(
+      resolve(REPOSITORY_ROOT, `experiments/cowork-msa-main16-codex-${mode}.json`),
+      REPOSITORY_ROOT,
+    )
+    assert.equal(bundle.recipe.spec.population.mode, mode)
+    assert.equal(bundle.recipe.spec.population.concurrency.n_branches, mode === 'single' ? 1 : 2)
+    assert.equal(bundle.recipe.spec.population.budget.total_budget, 16)
+    assert.equal(bundle.recipe.spec.moduleSearch.riskCeiling, 'l3')
+    assert.equal(bundle.experiment.evolution.mutationLevel, 'l3')
+    assert.deepEqual(bundle.recipe.spec.moduleSearch.excludeRegions, [])
+    assert.equal(bundle.benchmark.partitions.feedback.instanceIds.length, 18)
+    assert.equal(bundle.benchmark.partitions.selection.instanceIds.length, 8)
+    assert.equal(bundle.benchmark.partitions.final.instanceIds.length, 18)
+    assert.equal(bundle.policy.decisionPartition, 'selection')
+  }
+})
+
+test('训练集内晋升对照可使用 18 Feedback + 0 Selection + 18 Final', async () => {
+  const bundle = await loadExperimentBundle(
+    resolve(REPOSITORY_ROOT, 'experiments/cowork-msa-main16-codex-single-in-sample.json'),
+    REPOSITORY_ROOT,
+  )
+  assert.equal(bundle.policy.decisionPartition, 'feedback')
+  assert.equal(bundle.benchmark.partitions.feedback.instanceIds.length, 18)
+  assert.equal(bundle.benchmark.partitions.selection.instanceIds.length, 0)
+  assert.equal(bundle.benchmark.partitions.final.instanceIds.length, 18)
+})
+
+test('Combined 层级消融只移除目标层 Region，其他层仍可搜索', async () => {
+  const expectedExcluded = {
+    l1: ['profile-policy', 'skill-guidance'],
+    l2: ['agent-loop', 'tool-runtime'],
+    l3: ['model-transport', 'runtime-wiring'],
+  }
+  for (const [layer, regionIds] of Object.entries(expectedExcluded)) {
+    const bundle = await loadExperimentBundle(
+      resolve(
+        REPOSITORY_ROOT,
+        `experiments/cowork-msa-ablation16-codex-combined-without-${layer}.json`,
+      ),
+      REPOSITORY_ROOT,
+    )
+    assert.equal(bundle.recipe.spec.population.mode, 'combined')
+    assert.deepEqual(bundle.recipe.spec.moduleSearch.excludeRegions, regionIds)
+  }
+})
+
+test('Updater 消融配置可独立选择 DSH、Codex 或 Claude Code Provider', async () => {
+  const expected = [
+    ['codex', 'codex-cli', 'zcloud-openai', 'gpt-5.6-terra'],
+    ['dsh', 'deepseek-harness', 'zcloud-openai', 'gpt-5.6-terra'],
+    ['claude', 'claude-code-cli', 'zcloud-anthropic', 'claude-sonnet-5'],
+  ]
+  for (const [name, updaterId, providerId, modelId] of expected) {
+    const bundle = await loadExperimentBundle(
+      resolve(REPOSITORY_ROOT, `experiments/cowork-msa-main16-${name}-combined.json`),
+      REPOSITORY_ROOT,
+    )
+    assert.equal(bundle.updater.id, updaterId)
+    assert.equal(bundle.providers.updater.id, providerId)
+    assert.equal(bundle.experiment.models.updater.model, modelId)
+  }
+})

@@ -300,6 +300,49 @@ test('Population 跨过 Budget 里程碑时保留 Champion、Branch Incumbent �
   )
 })
 
+test('Population 按每个 Branch 的实际代数保存独立 Checkpoint', async () => {
+  const result = await runMode('independent', {
+    checkpointing: {
+      budgetMilestones: [0, 4],
+      branchGenerationMilestones: [1, 2],
+      capture: {
+        populationBest: true,
+        branchIncumbents: true,
+        latestAttempts: true,
+      },
+    },
+  })
+  assert.deepEqual(
+    result.state.branchCheckpoints.map((entry) => [
+      entry.branchId,
+      entry.requestedGeneration,
+      entry.actualCompletedSteps,
+    ]),
+    [
+      ['branch-001', 1, 1],
+      ['branch-002', 1, 1],
+      ['branch-001', 2, 2],
+      ['branch-002', 2, 2],
+    ],
+  )
+  const checkpointPath = join(
+    result.campaignsRoot,
+    'generic-independent',
+    'public',
+    'checkpoints',
+    'branches',
+    'branch-001',
+    'generation-0002.json',
+  )
+  const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf8'))
+  assert.equal((await stat(checkpointPath)).mode & 0o777, 0o400)
+  assert.equal(checkpoint.kind, 'BranchGenerationCheckpoint')
+  assert.equal(checkpoint.requestedGeneration, 2)
+  assert.equal(checkpoint.actualCompletedSteps, 2)
+  assert.equal(checkpoint.actualConsumedBudget, 2)
+  assert.equal(checkpoint.latestAttempt.stepNumber, 2)
+})
+
 test('Checkpoint 文件落盘后进程中断，可从稳定 Population 状态幂等补全总账', async () => {
   const root = await mkdtemp(join(tmpdir(), 'population-checkpoint-crash-'))
   const campaignsRoot = join(root, 'campaigns')

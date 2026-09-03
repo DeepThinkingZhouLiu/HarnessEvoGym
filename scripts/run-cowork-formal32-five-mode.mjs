@@ -9,6 +9,10 @@ import { fileURLToPath } from 'node:url'
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const CONTROLLER_PATH = join(REPOSITORY_ROOT, 'controller', 'src', 'cli.mjs')
 const SUITE_PROFILES = Object.freeze({
+  main16: Object.freeze({
+    defaultSuiteId: 'cowork-main16-codex-terra-high-seed20260827-v1',
+    experimentStem: 'cowork-msa-main16-codex',
+  }),
   formal32: Object.freeze({
     defaultSuiteId: 'cowork-formal32-codex-terra-high-seed20260827-v1',
     experimentStem: 'cowork-msa-rsi-formal32-codex',
@@ -30,6 +34,7 @@ if (!/^[a-z0-9][a-z0-9._-]{2,119}$/u.test(SUITE_ID)) {
 }
 const OUTPUT_ROOT = join(REPOSITORY_ROOT, '.rsi', 'experiment-suites', SUITE_ID)
 const RUNS_ROOT = join(REPOSITORY_ROOT, '.rsi', 'runs', 'populations')
+const CONCURRENCY_ROOT = join(OUTPUT_ROOT, 'concurrency')
 const RETRY_DELAY_MS = 60_000
 const REQUIRED_ENVIRONMENT = Object.freeze([
   'RSI_PROVIDER_BASE_URL',
@@ -111,12 +116,37 @@ function assertNotInterrupted() {
 }
 
 function maximumConcurrentModes() {
-  const raw = process.env.RSI_SUITE_MAX_CONCURRENT_MODES ?? '2'
+  const raw = process.env.RSI_SUITE_MAX_CONCURRENT_MODES ?? '5'
   const value = Number(raw)
-  if (!Number.isSafeInteger(value) || value < 1 || value > 2) {
-    throw new Error('RSI_SUITE_MAX_CONCURRENT_MODES 必须是 1 或 2')
+  if (!Number.isSafeInteger(value) || value < 1 || value > 5) {
+    throw new Error('RSI_SUITE_MAX_CONCURRENT_MODES 必须是 1..5 的整数')
   }
   return value
+}
+
+function globalConcurrency(name, fallback, maximum) {
+  const value = Number(process.env[name] ?? fallback)
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    throw new Error(`${name} 必须是 1..${maximum} 的整数`)
+  }
+  return value
+}
+
+function controllerEnvironment() {
+  return {
+    ...process.env,
+    RSI_GLOBAL_CONCURRENCY_ROOT: CONCURRENCY_ROOT,
+    RSI_GLOBAL_SOLVER_CONCURRENCY: String(globalConcurrency(
+      'RSI_SUITE_MAX_CONCURRENT_SOLVER_TRIALS',
+      6,
+      32,
+    )),
+    RSI_GLOBAL_UPDATER_CONCURRENCY: String(globalConcurrency(
+      'RSI_SUITE_MAX_CONCURRENT_UPDATERS',
+      2,
+      16,
+    )),
+  }
 }
 
 function assertEnvironment() {
@@ -124,6 +154,11 @@ function assertEnvironment() {
     typeof process.env[name] !== 'string' || process.env[name].trim().length === 0
   ))
   if (missing.length > 0) throw new Error(`缺少正式实验运行变量：${missing.join(', ')}`)
+  if (PROFILE_ID === 'main16' && CAMPAIGNS.length > 1 && BASELINE_PACK === null) {
+    throw new Error(
+      'main16 多 Mode 主表必须配置同一 RSI_BASELINE_PACK_PATH 与 RSI_BASELINE_PACK_SHA256',
+    )
+  }
 }
 
 function publicStatePath(campaign) {
@@ -147,6 +182,16 @@ async function writeSuiteState() {
     pid: process.pid,
     updatedAt: now(),
     maximumConcurrentModes: maximumConcurrentModes(),
+    maximumConcurrentSolverTrials: globalConcurrency(
+      'RSI_SUITE_MAX_CONCURRENT_SOLVER_TRIALS',
+      6,
+      32,
+    ),
+    maximumConcurrentUpdaters: globalConcurrency(
+      'RSI_SUITE_MAX_CONCURRENT_UPDATERS',
+      2,
+      16,
+    ),
     baselinePack: BASELINE_PACK,
     campaigns: CAMPAIGNS.map(({ mode, runId }) => ({
       mode,
@@ -203,7 +248,7 @@ async function runController(campaign, action) {
     : [CONTROLLER_PATH, 'experiment', 'resume', '--run', join(RUNS_ROOT, campaign.runId)]
   const child = spawn(process.execPath, args, {
     cwd: REPOSITORY_ROOT,
-    env: process.env,
+    env: controllerEnvironment(),
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   activeChildren.add(child)
@@ -296,6 +341,7 @@ async function worker(workerId, queue) {
 async function main() {
   assertEnvironment()
   await mkdir(OUTPUT_ROOT, { recursive: true, mode: 0o700 })
+  await mkdir(CONCURRENCY_ROOT, { recursive: true, mode: 0o700 })
   await prepareCampaignConfigs()
   await writeSuiteState()
   await buildSharedRuntime()

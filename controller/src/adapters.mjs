@@ -13,7 +13,10 @@ import {
   resolveInside,
 } from './config.mjs'
 import { isAbsolute, posix, relative, resolve } from 'node:path'
-import { normalizeMutationCatalogConfiguration } from './mutation-catalog.mjs'
+import {
+  mutationCatalogForModuleSearch,
+  normalizeMutationCatalogConfiguration,
+} from './mutation-catalog.mjs'
 import { normalizeRelativePath } from './path-policy.mjs'
 import { ProtocolError, readJsonFile, validateBenchmark, validateEvaluationPolicy } from './protocol.mjs'
 import { normalizeCoworkEvolutionRecipe, normalizeEvolutionRecipe } from './evolution-recipe.mjs'
@@ -1345,9 +1348,15 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
       `Environment=${environment.id}`,
     ])
   }
+  if (benchmark.partitions[policy.decisionPartition].instanceIds.length === 0) {
+    throw new ProtocolError(
+      `Evaluation Policy 的 decisionPartition=${policy.decisionPartition} 在 Benchmark 中不能为空`,
+    )
+  }
   if (!target.mutation.levels[experiment.evolution.mutationLevel]) {
     throw new ProtocolError(`Target Adapter 没有定义 ${experiment.evolution.mutationLevel}`)
   }
+  mutationCatalogForModuleSearch(target, recipe.spec.moduleSearch)
   for (const [label, names, roleProvider] of [
     ['Target Solver', target.solver.runtime.secretEnvironment, solverProvider],
     ['Updater', updater.runtime.secretEnvironment, updaterProvider],

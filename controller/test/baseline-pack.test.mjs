@@ -145,11 +145,13 @@ function fixture() {
     feedbackRecords,
     feedbackPacket: feedbackPacket(),
   })
-  return { document, identity }
+  return { document, identity, selectionRecords, feedbackRecords }
 }
 
 test('BaselinePack 固化同一份 H0 Selection 与初始 Feedback', () => {
   const { document, identity } = fixture()
+  assert.ok(document.spec.selection)
+  assert.equal(document.spec.decision, undefined)
   const pack = validateBaselinePackDocument(document, {
     benchmark: benchmark(),
     expectedIdentity: identity,
@@ -159,6 +161,63 @@ test('BaselinePack 固化同一份 H0 Selection 与初始 Feedback', () => {
   assert.equal(pack.feedback.records.size, 1)
   assert.equal(pack.selection.evaluation.primary.value, 0.08)
   assert.equal(pack.feedback.packet.metadata.runId, 'source-run')
+})
+
+test('新版通用参数在 Selection 模式下仍输出兼容的 spec.selection', () => {
+  const { identity, selectionRecords, feedbackRecords } = fixture()
+  const document = createBaselinePackDocument({
+    id: 'cowork-h0-selection-compatible-v1',
+    createdAt: '2026-09-04T00:00:00.000Z',
+    source: { runId: 'source-run', baselineId: 'h0', candidateDigest: 'b'.repeat(64) },
+    identity,
+    benchmark: benchmark(),
+    decisionPartition: 'selection',
+    decisionRecords: selectionRecords,
+    decisionEvaluation: {
+      apiVersion: 'harness-rsi/v1alpha1',
+      kind: 'EvaluationSummary',
+      candidateId: 'h0',
+      primary: { metric: 'mean-reward', value: 0.08, direction: 'maximize', total: null },
+    },
+    feedbackRecords,
+    feedbackPacket: feedbackPacket(),
+  })
+  assert.ok(document.spec.selection)
+  assert.equal(document.spec.decision, undefined)
+})
+
+test('BaselinePack 可固定 Feedback 作为训练集内晋升基线', () => {
+  const { feedbackRecords } = fixture()
+  const identity = {
+    target: { id: 'msa-minimal', candidateDigest: 'b'.repeat(64) },
+    benchmark: { id: 'cowork-baseline-pack-test' },
+    policy: { primaryMetric: 'mean-reward', decisionPartition: 'feedback' },
+    seeds: [20260827],
+  }
+  const document = createBaselinePackDocument({
+    id: 'cowork-h0-feedback-v1',
+    createdAt: '2026-09-04T00:00:00.000Z',
+    source: { runId: 'source-run', baselineId: 'h0', candidateDigest: 'b'.repeat(64) },
+    identity,
+    benchmark: benchmark(),
+    decisionPartition: 'feedback',
+    decisionRecords: feedbackRecords,
+    decisionEvaluation: {
+      apiVersion: 'harness-rsi/v1alpha1',
+      kind: 'EvaluationSummary',
+      candidateId: 'h0',
+      primary: { metric: 'mean-reward', value: 0.25, direction: 'maximize', total: null },
+    },
+    feedbackRecords,
+    feedbackPacket: feedbackPacket(),
+  })
+  const pack = validateBaselinePackDocument(document, {
+    benchmark: benchmark(),
+    expectedIdentity: identity,
+  })
+  assert.equal(pack.decision.partition, 'feedback')
+  assert.equal(pack.decision.records.size, 1)
+  assert.equal(pack.selection, undefined)
 })
 
 test('BaselinePack 对内容篡改、Final 注入和身份漂移 fail closed', () => {

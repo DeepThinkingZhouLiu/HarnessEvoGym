@@ -80,6 +80,19 @@ test('selection 配对指标产生可晋升决策', async () => {
   assert.equal(report.decision.eligible, true)
 })
 
+test('feedback 配对指标可按配置直接决定训练集内晋升', async () => {
+  const fixture = await loadFixture()
+  const report = evaluateBenchmark({
+    ...fixture,
+    policy: { ...fixture.policy, decisionPartition: 'feedback' },
+    partitions: ['feedback'],
+  })
+  assert.equal(report.decision.partition, 'feedback')
+  assert.equal(report.partitions.feedback.paired.newlyResolved, 1)
+  assert.equal(report.decision.mode, 'promotion')
+  assert.equal(report.decision.eligible, true)
+})
+
 test('final 单独运行只生成报告，不做 Candidate 选择', async () => {
   const fixture = await loadFixture('final')
   const report = evaluateBenchmark({ ...fixture, partitions: ['final'], allowSealed: true })

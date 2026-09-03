@@ -8,7 +8,7 @@ import {
   buildExperimentRuntime,
   finalizeEvolution,
   preflightExperiment,
-  resumePopulationEvolution,
+  resumeConfiguredEvolution,
   runConfiguredBaseline,
   runConfiguredEvolution,
 } from './cowork-orchestrator.mjs'
@@ -244,7 +244,7 @@ async function baselinePackExportCommand(args) {
 
 async function evolveResumeCommand(args) {
   const { options } = parseOptions(args, { valueOptions: new Set(['run', 'output']) })
-  const result = await resumePopulationEvolution({
+  const result = await resumeConfiguredEvolution({
     repositoryRoot: REPOSITORY_ROOT,
     runDirectory: requiredPath(options, 'run'),
     onEvent: progress,
@@ -255,7 +255,7 @@ async function evolveResumeCommand(args) {
     runId: result.runId,
     runRoot: result.runRoot,
     championId: result.championId,
-    status: result.state.status,
+    status: result.state.status ?? result.state.metadata.status,
   }, options.get('output'))
 }
 

@@ -300,7 +300,10 @@ proves engineering connectivity, not statistical significance.
 
 Infrastructure failures become `PAUSED_INFRASTRUCTURE` and fail the command
 instead of masquerading as a zero-score success. `experiment resume` continues
-the same Population after the fault is repaired. Gateway request limits are
+the same Population after the fault is repaired. It also accepts a legacy GRHS
+Run whose `failed` state explicitly records an infrastructure failure; committed
+per-task checkpoints are revalidated and reused while incomplete tasks are
+quarantined and rerun. Gateway request limits are
 currently scoped per Branch rather than as one Population-wide cost ceiling.
 Production HLE/PutnamBench retains its dedicated runtime and sealed broker; the
 public smoke suite is not a substitute for a production benchmark.

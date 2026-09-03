@@ -148,7 +148,8 @@ Candidate Digest、配置摘要和 Source Revision 都会重验。若 Final 已�
 无论成功或失败都不能重新运行。
 
 进化期若因 Provider、Docker 或 Verifier 基础设施异常暂停，使用
-`experiment resume --run <population-run>` 显式恢复。OmegaUse 以“Candidate + Partition +
+`experiment resume --run <run>` 显式恢复。该命令也接受明确记录“基础设施失败”的旧版
+GRHS `failed` Run，并在校验 Controller 继承关系及冻结配置后恢复。OmegaUse 以“Candidate + Partition +
 Task + 全部 Seed”为一个题目断点，评分完成后原子写入 `committed-result.json`；Resume 会
 复用已提交结果（包括 0 分），只补跑未完成题。半成品目录会归档到
 `recovery/trial-attempts/`，同一条失败命令不会自动重跑整题。

@@ -1169,16 +1169,26 @@ export async function archiveIncompleteCoworkGeneration({
   if (state.metadata?.status === 'stopped') return null
   const level = state.spec.mutationLevel
   const nextCandidateId = safeCandidateId(`g${String(generation).padStart(3, '0')}-${level}`)
+  const incompleteCandidateIds = new Set([nextCandidateId])
   const candidateIds = new Set([
     nextCandidateId,
     ...state.spec.candidates
       .filter((candidate) => candidate?.digest !== null)
       .map((candidate) => safeCandidateId(candidate.id)),
   ])
+  if (state.spec.grhs?.configuration?.groupSize) {
+    for (let member = 1; member <= state.spec.grhs.configuration.groupSize; member += 1) {
+      const siblingId = safeCandidateId(
+        `g${String(generation).padStart(3, '0')}-grhs-s${String(member).padStart(3, '0')}-${level}`,
+      )
+      incompleteCandidateIds.add(siblingId)
+      candidateIds.add(siblingId)
+    }
+  }
   const sources = new Set([
     join(runRoot, 'generations', `generation-${generation}`),
     join(runRoot, 'results', `generation-${generation}`),
-    join(runRoot, 'candidates', nextCandidateId),
+    ...[...incompleteCandidateIds].map((candidateId) => join(runRoot, 'candidates', candidateId)),
   ])
   if (!preserveTrialCheckpoints) {
     for (const candidateId of candidateIds) {
@@ -2817,6 +2827,239 @@ export async function runEvolution({
   return { runId, runRoot, championId: champion.id, state }
 }
 
+function assertRestorableLegacyEvolutionState(value, runId) {
+  if (!value || value.apiVersion !== 'harness-rsi/v1alpha1'
+      || value.kind !== 'EvolutionRunState'
+      || value.metadata?.id !== runId
+      || value.metadata?.status !== 'failed'
+      || !value.spec || typeof value.spec !== 'object' || Array.isArray(value.spec)
+      || value.spec.grhs?.algorithm !== 'group-relative-harness-search-v1'
+      || !Array.isArray(value.spec.candidates) || !Array.isArray(value.spec.searchHistory)
+      || !Number.isSafeInteger(value.spec.generationsCompleted)
+      || value.spec.generationsCompleted < 0
+      || value.spec.final !== null) {
+    throw new ProtocolError('旧 GRHS Run 不是可恢复的 failed 基础设施检查点')
+  }
+  if (!/基础设施失败/u.test(value.spec.failure?.message ?? '')) {
+    throw new ProtocolError('旧 GRHS Run 失败未被明确归类为基础设施故障')
+  }
+  const ids = value.spec.candidates.map((candidate) => safeCandidateId(candidate?.id))
+  if (new Set(ids).size !== ids.length || !ids.includes(value.spec.baselineId)
+      || !ids.includes(value.spec.championId)) {
+    throw new ProtocolError('旧 GRHS Run Candidate 谱系无效')
+  }
+  return value
+}
+
+/**
+ * 恢复 recipePath=null 的旧 GRHS Run。只接受已明确记录的基础设施失败，逐题
+ * checkpoint 仍由 Environment 重新校验；未提交题目会被隔离后补跑。
+ */
+export async function resumeLegacyEvolution({
+  repositoryRoot,
+  runDirectory,
+  onEvent = () => {},
+}) {
+  const requestedRunRoot = resolve(runDirectory)
+  await assertPathKind(requestedRunRoot, '旧 GRHS Run Root')
+  const runRoot = await realpath(requestedRunRoot)
+  const runId = safeRunId(basename(runRoot))
+  const initialState = assertRestorableLegacyEvolutionState(
+    await readJsonFile(join(runRoot, 'state.json')),
+    runId,
+  )
+  const experimentPath = resolveInside(
+    repositoryRoot,
+    initialState.spec.experimentPath,
+    '旧 GRHS Experiment Path',
+  )
+  const context = await createContext({ repositoryRoot, experimentPath, gatewayScope: runId })
+  context.repositoryRoot = repositoryRoot
+  context.runId = runId
+  context.runRoot = runRoot
+  if (context.bundle.experiment.recipePath !== null
+      || context.bundle.experiment.evolution.grhs === null) {
+    throw new ProtocolError('旧 Run 当前配置不再是 legacy GRHS Experiment')
+  }
+  const runtimeBase = resolveInside(
+    repositoryRoot,
+    context.bundle.target.materialization.runtimeRoot,
+    'Target Runtime Root',
+  )
+  await assertPathKind(runtimeBase, 'Target Runtime Root')
+  const actualRuntimeBase = await realpath(runtimeBase)
+  if (runRoot !== join(actualRuntimeBase, runId)) {
+    throw new ProtocolError('旧 GRHS Run Root 不属于 Experiment 声明的 Runtime Root')
+  }
+  const release = await acquireCampaignLock({
+    campaignsRoot: actualRuntimeBase,
+    campaignId: runId,
+    command: 'experiment resume legacy-grhs',
+  })
+  try {
+    const state = assertRestorableLegacyEvolutionState(
+      await readJsonFile(join(runRoot, 'state.json')),
+      runId,
+    )
+    const controllerRevision = await trustedControllerRevision(repositoryRoot)
+    await assertControllerRevisionForFinal({
+      repositoryRoot,
+      frozenRevision: state.spec.controllerRevision,
+      currentRevision: controllerRevision,
+      recoveryRequested: true,
+    })
+    if (state.spec.configDigest !== jsonDigest(publicBundleSnapshot(context.bundle))) {
+      throw new ProtocolError('旧 GRHS Run 冻结 Config 与当前 Experiment 不一致')
+    }
+    assertSecrets(requiredSecrets(context.bundle))
+    validateModelGatewayEnvironment(context.bundle.environment.modelGateway)
+
+    const environment = createEnvironmentRunner({
+      repositoryRoot,
+      environment: context.bundle.environment,
+      benchmark: context.bundle.benchmark,
+      target: context.bundle.target,
+      solverDriver: context.solverDriver,
+      docker: context.docker,
+      runRoot,
+    })
+    const environmentStatus = await environment.preflight()
+    if (environmentStatus.sourceRevision !== state.spec.benchmarkSourceRevision
+        || context.targetSourceRevision !== state.spec.targetSourceRevision
+        || context.updaterSourceRevision !== state.spec.updaterSourceRevision) {
+      throw new ProtocolError('旧 GRHS Run 的 Target、Updater 或 Benchmark Revision 已变化')
+    }
+    for (const instanceId of context.bundle.benchmark.allInstanceIds) await environment.taskLayout(instanceId)
+    await context.updaterDriver.ensureRuntime()
+
+    const mutationCatalog = mutationCatalogFor(context.bundle.target)
+    const compatibilityPolicy = mutationPolicyFor(
+      context.bundle.target,
+      context.bundle.experiment.evolution.mutationLevel,
+    )
+    const [storedCatalog, storedPolicy] = await Promise.all([
+      readJsonFile(join(runRoot, 'mutation-catalog.json')),
+      readJsonFile(join(runRoot, 'mutation-policy.json')),
+    ])
+    if (canonicalJsonDigest(storedCatalog) !== canonicalJsonDigest(mutationCatalog)
+        || canonicalJsonDigest(storedPolicy) !== canonicalJsonDigest(compatibilityPolicy)) {
+      throw new ProtocolError('旧 GRHS Run 的 Mutation 权限边界已变化')
+    }
+
+    const materializedCandidates = new Map()
+    for (const record of state.spec.candidates) {
+      if (record.digest === null) continue
+      const root = join(runRoot, 'candidates', safeCandidateId(record.id))
+      const workspace = join(root, 'workspace')
+      const manifest = await readJsonFile(join(root, 'manifest.json'))
+      if (manifest.metadata?.parentId !== record.parentId) {
+        throw new ProtocolError(`Candidate ${record.id} Parent 谱系不一致`)
+      }
+      await assertCandidateIntegrity({
+        candidateId: record.id,
+        workspace,
+        manifest,
+        sourceRevision: state.spec.targetSourceRevision,
+        expectedDigest: record.digest,
+        maximumFileBytes: context.bundle.target.mutation.limits.maximumFileBytes,
+        maximumTreeEntries: context.bundle.target.mutation.limits.maximumTreeEntries,
+        label: `恢复 Candidate ${record.id}`,
+      })
+      const semanticReport = await validateCandidate({ workspace, target: context.bundle.target })
+      if (!semanticReport.valid) {
+        throw new ProtocolError(`恢复 Candidate ${record.id} 语义检查失败`,
+          semanticReport.violations.map((item) => `${item.path}: ${item.reason}`))
+      }
+      materializedCandidates.set(record.id, { id: record.id, root, workspace, digest: record.digest })
+    }
+    let champion = materializedCandidates.get(state.spec.championId)
+    if (!champion || !materializedCandidates.has(state.spec.baselineId)) {
+      throw new ProtocolError('旧 GRHS Run 无法恢复 Baseline 或 Champion')
+    }
+    const expectedSeeds = context.bundle.experiment.evolution.seeds.slice(
+      0,
+      context.bundle.experiment.evolution.trialsPerInstance,
+    )
+    if (canonicalJsonDigest(state.spec.seeds) !== canonicalJsonDigest(expectedSeeds)) {
+      throw new ProtocolError('旧 GRHS Run 的 Trial Seeds 已变化')
+    }
+
+    await archiveIncompleteCoworkGeneration({
+      runRoot,
+      state,
+      preserveTrialCheckpoints: true,
+    })
+    const previousFailure = structuredClone(state.spec.failure)
+    state.metadata.status = 'running'
+    delete state.spec.failure
+    state.spec.recoveries = [
+      ...(Array.isArray(state.spec.recoveries) ? state.spec.recoveries : []),
+      {
+        at: new Date().toISOString(),
+        fromControllerRevision: state.spec.controllerRevision,
+        recoveryControllerRevision: controllerRevision,
+        reason: previousFailure,
+        preservedTrialCheckpoints: true,
+      },
+    ]
+    await writeJsonFile(join(runRoot, 'state.json'), state)
+
+    const startedAt = Date.now()
+    let candidatesEvaluated = state.spec.candidates.filter((candidate) => candidate.digest !== null
+      && candidate.id !== state.spec.baselineId).length
+    try {
+      for (let generation = state.spec.generationsCompleted + 1;
+        generation <= state.spec.generationsRequested; generation += 1) {
+        const generationRoot = join(runRoot, 'generations', `generation-${generation}`)
+        await mkdir(generationRoot, { recursive: true })
+        const round = await runGrhsRound({
+          context,
+          environment,
+          runRoot,
+          runId,
+          generation,
+          generationRoot,
+          champion,
+          state,
+          mutationCatalog,
+          materializedCandidates,
+          candidatesEvaluated,
+          startedAt,
+          onEvent,
+        })
+        champion = round.champion
+        candidatesEvaluated = round.candidatesEvaluated
+        state.spec.championId = champion.id
+        state.spec.generationsCompleted = generation
+        await writeJsonFile(join(runRoot, 'state.json'), state)
+      }
+    } catch (error) {
+      state.metadata.status = 'failed'
+      state.spec.failure = { message: error.message, details: error.details ?? [] }
+      await writeJsonFile(join(runRoot, 'state.json'), state)
+      throw error
+    } finally {
+      const cleanupErrors = await context.modelGateway.stop()
+      if (cleanupErrors.length > 0) {
+        onEvent({ stage: 'cleanup-warning', message: `Model Gateway 清理失败：${cleanupErrors.join('；')}` })
+      }
+    }
+    state.metadata.status = 'completed'
+    state.spec.ledger = buildLedger({
+      generations: state.spec.generationsCompleted,
+      candidatesEvaluated,
+      startedAt,
+      solverUsage: context.solverDriver.usage(),
+      updaterUsage: context.updaterDriver.usage(),
+    })
+    await writeJsonFile(join(runRoot, 'state.json'), state)
+    onEvent({ stage: 'completed', message: `进化完成，Champion=${champion.id}` })
+    return { runId, runRoot, championId: champion.id, state }
+  } finally {
+    await release()
+  }
+}
+
 export async function runPopulationEvolution({
   repositoryRoot,
   experimentPath,
@@ -3028,6 +3271,14 @@ export async function runConfiguredEvolution(options) {
   return experiment.experiment.recipePath === null
     ? await runEvolution(options)
     : await runPopulationEvolution(options)
+}
+
+/** 按 Run 目录协议分派 Population 或旧 GRHS 基础设施恢复。 */
+export async function resumeConfiguredEvolution(options) {
+  const runRoot = resolve(options.runDirectory)
+  return await pathExists(join(runRoot, 'public', 'state.json'))
+    ? await resumePopulationEvolution(options)
+    : await resumeLegacyEvolution(options)
 }
 
 /** 只跑单 Branch H0 selection，不调用 Updater、不进入进化轮次。 */

@@ -75,7 +75,7 @@ async function loadLocalCommittedPartition({
   }
   if (records.length !== instanceIds.length) return null
   const normalized = validateResultRecords(records, benchmark, `${candidateId}/${partition} local checkpoint`)
-  await writeJsonLines(outputPath, normalized)
+  await writeJsonLines(outputPath, records)
   return normalized
 }
 

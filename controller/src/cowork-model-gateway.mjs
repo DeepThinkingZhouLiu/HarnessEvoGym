@@ -290,12 +290,14 @@ export class ModelGateway {
           ]).catch(() => null)
         : null
       await this.stop()
-      throw new ProtocolError('Model Gateway 启动失败', [
+      const wrapped = new ProtocolError('Model Gateway 启动失败', [
         error.message,
         ...(error.details ?? []),
         logs?.stderr,
         logs?.stdout,
       ].filter(Boolean))
+      wrapped.kind = 'infrastructure'
+      throw wrapped
     }
   }
 

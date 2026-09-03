@@ -2239,7 +2239,7 @@ async function runGrhsRound({
     } catch (error) {
       // Candidate 变异失败属于组内无效样本；Selection/Environment 失败属于
       // Controller 基础设施，不能伪装成低 utility 后继续做晋升决策。
-      if (proposal !== null) throw error
+      if (proposal !== null || error?.kind === 'infrastructure') throw error
       rejection = {
         stage: 'update-and-diff',
         message: error.message,

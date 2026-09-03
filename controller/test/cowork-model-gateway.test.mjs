@@ -233,3 +233,44 @@ test('Model Gateway 在启动前拒绝带凭据或 Query 的上游 URL', () => {
     else process.env.TEST_RSI_BASE_URL = originalUrl
   }
 })
+
+test('Model Gateway 启动错误保留为可恢复的基础设施故障', async () => {
+  const originalKey = process.env.TEST_RSI_API_KEY
+  const originalUrl = process.env.TEST_RSI_BASE_URL
+  process.env.TEST_RSI_API_KEY = 'real-provider-secret'
+  process.env.TEST_RSI_BASE_URL = 'https://provider.example/v1'
+  const gateway = new ModelGateway({
+    config: {
+      image: 'gateway:test',
+      dockerfile: 'docker/model-gateway/Dockerfile',
+      alias: 'model-gateway',
+      port: 8080,
+      egressNetwork: 'bridge',
+      upstreamApiKeyEnvironment: 'TEST_RSI_API_KEY',
+      upstreamBaseUrlEnvironment: 'TEST_RSI_BASE_URL',
+      maximumRequestsPerRun: 8,
+      maximumConcurrentRequests: 1,
+      resources: { cpus: 1, memory: '512m', pids: 128 },
+    },
+    docker: {
+      async imageExists() { return true },
+      async createNetwork() { throw new Error('remote Docker network conflict') },
+      async removeContainer() {},
+      async removeNetwork() {},
+    },
+    repositoryRoot: REPOSITORY_ROOT,
+    scopeId: 'failed-start',
+  })
+  try {
+    await assert.rejects(
+      () => gateway.access(),
+      (error) => error?.kind === 'infrastructure'
+        && /Model Gateway 启动失败/u.test(error.message),
+    )
+  } finally {
+    if (originalKey === undefined) delete process.env.TEST_RSI_API_KEY
+    else process.env.TEST_RSI_API_KEY = originalKey
+    if (originalUrl === undefined) delete process.env.TEST_RSI_BASE_URL
+    else process.env.TEST_RSI_BASE_URL = originalUrl
+  }
+})

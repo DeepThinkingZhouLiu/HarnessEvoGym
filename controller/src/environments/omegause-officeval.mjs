@@ -69,8 +69,9 @@ async function loadLocalCommittedPartition({
     } catch {
       return null
     }
-    if (record?.instance_id !== instanceId) return null
-    records.push(record)
+    const taskRecord = record?.spec?.record ?? record
+    if (taskRecord?.instance_id !== instanceId) return null
+    records.push(taskRecord)
   }
   if (records.length !== instanceIds.length) return null
   const normalized = validateResultRecords(records, benchmark, `${candidateId}/${partition} local checkpoint`)

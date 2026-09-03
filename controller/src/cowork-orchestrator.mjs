@@ -2988,6 +2988,10 @@ export async function resumeLegacyEvolution({
         || context.updaterSourceRevision !== state.spec.updaterSourceRevision) {
       throw new ProtocolError('旧 GRHS Run 的 Target、Updater 或 Benchmark Revision 已变化')
     }
+    // 共享 partition 与已完成 sibling 可能全部走本地 checkpoint 快速路径；
+    // 恢复时仍需先显式准备一次 Solver runtime，避免把首次 Docker 初始化
+    // 延迟到下一个 sibling，表现为 Selection 长时间无 task。
+    await environment.ensureRuntime?.()
     for (const instanceId of context.bundle.benchmark.allInstanceIds) await environment.taskLayout(instanceId)
     await context.updaterDriver.ensureRuntime()
 

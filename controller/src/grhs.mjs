@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto'
-
 import { MUTATION_RISK_LEVELS, validateMutationPlan } from './mutation-catalog.mjs'
 import { ProtocolError } from './protocol.mjs'
 
@@ -83,11 +81,6 @@ function normalizedPrior(regions, prior) {
   return weights.map((value) => value / total)
 }
 
-function deterministicJitter(generation, regionId) {
-  const digest = createHash('sha256').update(`${generation}\0${regionId}`).digest()
-  return digest.readUInt32BE(0) / 0xffffffff
-}
-
 function requiredRegionIds(regionId, regionById, selected = new Set()) {
   if (selected.has(regionId)) return selected
   const region = regionById.get(regionId)
@@ -117,10 +110,8 @@ export function createGrhsMutationPlans({
   const ranked = regions.map((region, index) => ({
     region,
     probability: probabilities[index],
-    jitter: deterministicJitter(generation, region.id),
   })).sort((left, right) => (
     right.probability - left.probability
-    || right.jitter - left.jitter
     || left.region.id.localeCompare(right.region.id)
   ))
   const regionById = new Map(regions.map((region) => [region.id, region]))

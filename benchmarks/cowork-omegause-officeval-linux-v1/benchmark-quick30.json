@@ -19,26 +19,27 @@
     "partitions": {
       "feedback": {
         "visibility": "detailed",
-        "expectedCount": 15,
+        "expectedCount": 12,
         "instanceIds": [
           "officeval_003", "officeval_004", "officeval_005", "officeval_006", "officeval_007",
           "officeval_009", "officeval_010", "officeval_013", "officeval_014", "officeval_017",
-          "officeval_018", "officeval_020", "officeval_021", "officeval_024", "officeval_025"
+          "officeval_018", "officeval_020"
         ]
       },
       "selection": {
         "visibility": "aggregate-only",
-        "expectedCount": 10,
+        "expectedCount": 12,
         "instanceIds": [
           "officeval_002", "officeval_016", "officeval_034", "officeval_036", "officeval_040",
-          "officeval_049", "officeval_055", "officeval_058", "officeval_062", "officeval_064"
+          "officeval_049", "officeval_055", "officeval_058", "officeval_062", "officeval_064",
+          "officeval_075", "officeval_076"
         ]
       },
       "final": {
         "visibility": "sealed",
-        "expectedCount": 5,
+        "expectedCount": 6,
         "instanceIds": [
-          "officeval_011", "officeval_015", "officeval_026", "officeval_027", "officeval_033"
+          "officeval_011", "officeval_015", "officeval_026", "officeval_027", "officeval_033", "officeval_037"
         ]
       }
     },

@@ -43,6 +43,41 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
 }
 
+async function loadLocalCommittedPartition({
+  runRoot,
+  executionId,
+  candidateId,
+  partition,
+  instanceIds,
+  outputPath,
+  benchmark,
+}) {
+  const records = []
+  for (const instanceId of instanceIds) {
+    const checkpointPath = join(
+      runRoot,
+      'trials',
+      executionId,
+      safeSegment(candidateId, 'Candidate ID'),
+      partition,
+      instanceId,
+      'committed-result.json',
+    )
+    let record
+    try {
+      record = JSON.parse(await readFile(checkpointPath, 'utf8'))
+    } catch {
+      return null
+    }
+    if (record?.instance_id !== instanceId) return null
+    records.push(record)
+  }
+  if (records.length !== instanceIds.length) return null
+  const normalized = validateResultRecords(records, benchmark, `${candidateId}/${partition} local checkpoint`)
+  await writeJsonLines(outputPath, normalized)
+  return normalized
+}
+
 function object(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new ProtocolError(`${label} 必须是对象`)
@@ -752,6 +787,16 @@ export class OmegaUseOfficeValEnvironment {
     })
     await assertPathKind(candidate, `Candidate ${candidateId} Workspace`)
     const executionId = sha256(resolve(outputPath)).slice(0, 12)
+    const localCheckpoint = await loadLocalCommittedPartition({
+      runRoot: this.runRoot,
+      executionId,
+      candidateId,
+      partition,
+      instanceIds: partitionSpec.instanceIds,
+      outputPath,
+      benchmark: this.benchmark,
+    })
+    if (localCheckpoint) return localCheckpoint
     await this.ensureRuntime()
     const plans = await concurrentMap(
       partitionSpec.instanceIds,

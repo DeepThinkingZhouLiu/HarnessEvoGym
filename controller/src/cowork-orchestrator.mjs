@@ -1181,7 +1181,11 @@ export async function archiveIncompleteCoworkGeneration({
       const siblingId = safeCandidateId(
         `g${String(generation).padStart(3, '0')}-grhs-s${String(member).padStart(3, '0')}-${level}`,
       )
-      incompleteCandidateIds.add(siblingId)
+      const siblingRoot = join(runRoot, 'candidates', siblingId)
+      const hasCheckpoint = await existingControllerDirectory(siblingRoot, 'GRHS sibling Candidate')
+        && await existingControllerFile(join(siblingRoot, 'manifest.json'))
+        && await existingControllerFile(join(siblingRoot, 'mutation-report.json'))
+      if (!hasCheckpoint) incompleteCandidateIds.add(siblingId)
       candidateIds.add(siblingId)
     }
   }
@@ -1229,6 +1233,17 @@ export async function archiveIncompleteCoworkGeneration({
   }
   await writeJsonFile(join(recoveryRoot, 'manifest.json'), manifest)
   return { root: recoveryRoot, manifest }
+}
+
+async function existingControllerFile(pathValue) {
+  try {
+    const info = await lstat(pathValue)
+    if (info.isSymbolicLink() || !info.isFile()) return false
+    return true
+  } catch (error) {
+    if (error.code === 'ENOENT') return false
+    throw error
+  }
 }
 
 function assertRestorableCoworkState(value, { runId, branchId }) {
@@ -2194,20 +2209,49 @@ async function runGrhsRound({
         generation,
         message: `启动 GRHS sibling ${member}/${configuration.groupSize} Codex Updater Session`,
       })
-      proposal = await runUpdaterGeneration({
-        context,
-        runRoot,
-        generation,
-        parent: champion,
-        feedbackPacket,
-        mutationPolicy: leases[index],
-        candidateId,
-        groupContext: {
-          memberIndex: member,
-          groupSize: configuration.groupSize,
-          proposalPrior,
-        },
-      })
+      const existingRoot = join(runRoot, 'candidates', candidateId)
+      const existingManifest = await readJsonFile(join(existingRoot, 'manifest.json')).catch(() => null)
+      const existingReport = await readJsonFile(join(existingRoot, 'mutation-report.json')).catch(() => null)
+      if (existingManifest && existingReport) {
+        const existingWorkspace = join(existingRoot, 'workspace')
+        await assertCandidateIntegrity({
+          candidateId,
+          workspace: existingWorkspace,
+          manifest: existingManifest,
+          sourceRevision: context.sourceRevision,
+          expectedDigest: existingManifest.spec?.treeDigest,
+          maximumFileBytes: context.bundle.target.mutation.limits.maximumFileBytes,
+          maximumTreeEntries: context.bundle.target.mutation.limits.maximumTreeEntries,
+          label: `复用 Candidate ${candidateId}`,
+        })
+        const existingSnapshot = await snapshotTree(existingWorkspace, {
+          maximumFileBytes: context.bundle.target.mutation.limits.maximumFileBytes,
+          maximumTreeEntries: context.bundle.target.mutation.limits.maximumTreeEntries,
+        })
+        proposal = {
+          id: candidateId,
+          root: existingRoot,
+          workspace: existingWorkspace,
+          digest: treeDigest(existingSnapshot),
+          report: existingReport,
+          policyReport: (await readJsonFile(join(existingRoot, 'mutation-diff.json'))).spec,
+        }
+      } else {
+        proposal = await runUpdaterGeneration({
+          context,
+          runRoot,
+          generation,
+          parent: champion,
+          feedbackPacket,
+          mutationPolicy: leases[index],
+          candidateId,
+          groupContext: {
+            memberIndex: member,
+            groupSize: configuration.groupSize,
+            proposalPrior,
+          },
+        })
+      }
       materializedCandidates.set(proposal.id, proposal)
       onEvent({ stage: 'selection', generation, message: `${champion.id} 与 ${proposal.id} 配对评测` })
       const candidateRecords = await environment.runCandidatePartition({

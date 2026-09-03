@@ -161,6 +161,18 @@ class Bridge:
                     "stderr": result_fields(errors)["stdout"],
                 }
             time.sleep(10)
+        # Docker build/pull can finish writing the image while its CLI remains
+        # blocked on the remote control-plane stream. Treat a usable tagged
+        # image as success before killing the stale process group.
+        if args and args[0] == "build":
+            try:
+                tag_index = args.index("--tag")
+                image_tag = args[tag_index + 1]
+                ready = self._vm(["sudo", "docker", "image", "inspect", image_tag], 30)
+                if result_fields(ready)["exitCode"] == 0:
+                    return {"exitCode": 0, "stdout": image_tag, "stderr": ""}
+            except (ValueError, IndexError):
+                pass
         self._vm(
             ["sh", "-lc", f"test -f {shlex.quote(pid_path)} && sudo kill -TERM -- -$(cat {shlex.quote(pid_path)}) 2>/dev/null || true"],
             30,

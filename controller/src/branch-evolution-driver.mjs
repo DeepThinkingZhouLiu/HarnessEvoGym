@@ -83,7 +83,10 @@ function normalizeLastStep(value, completedSteps) {
     const step = object(raw, 'BranchProjection.lastStep')
     rejectUnknown(
       step,
-      new Set(['stepId', 'stepNumber', 'candidateId', 'decision', 'ranking']),
+      new Set([
+        'stepId', 'stepNumber', 'candidateId', 'candidateRevision', 'candidateDigest',
+        'decision', 'ranking',
+      ]),
       'BranchProjection.lastStep',
     )
     const stepId = safeId(step.stepId, 'BranchProjection.lastStep.stepId')
@@ -97,6 +100,15 @@ function normalizeLastStep(value, completedSteps) {
     const candidateId = step.candidateId === null
       ? null
       : safeId(step.candidateId, 'BranchProjection.lastStep.candidateId')
+    const candidateRevision = step.candidateRevision === undefined || step.candidateRevision === null
+      ? null
+      : safeId(step.candidateRevision, 'BranchProjection.lastStep.candidateRevision', /^[^\u0000-\u001f\u007f]{1,512}$/u)
+    const candidateDigest = step.candidateDigest === undefined || step.candidateDigest === null
+      ? null
+      : safeId(step.candidateDigest, 'BranchProjection.lastStep.candidateDigest', SHA256)
+    if (candidateId === null && (candidateRevision !== null || candidateDigest !== null)) {
+      throw new ProtocolError('BranchProjection.lastStep 无 Candidate 时不能包含 Artifact 身份')
+    }
     const ranking = object(step.ranking, 'BranchProjection.lastStep.ranking')
     rejectUnknown(
       ranking,
@@ -141,6 +153,8 @@ function normalizeLastStep(value, completedSteps) {
       stepId,
       stepNumber,
       candidateId,
+      candidateRevision,
+      candidateDigest,
       decision: step.decision,
       ranking: Object.freeze({
         eligible: ranking.eligible,

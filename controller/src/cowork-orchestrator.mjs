@@ -329,14 +329,27 @@ function requiredSecrets(bundle) {
   return [...new Set([
     ...bundle.target.solver.runtime.secretEnvironment,
     ...bundle.updater.runtime.secretEnvironment,
-    bundle.environment.modelGateway.upstreamApiKeyEnvironment,
-    bundle.environment.modelGateway.upstreamBaseUrlEnvironment,
+    ...Object.values(bundle.providers).flatMap((provider) => [
+      provider.credentials.apiKeyEnvironment,
+      provider.credentials.baseUrlEnvironment,
+    ]),
   ])]
 }
 
 function assertSecrets(names) {
   const missing = names.filter((name) => !process.env[name])
   if (missing.length > 0) throw new ProtocolError('缺少模型 Provider 运行时凭据', missing)
+}
+
+async function stopContextModelGateways(context) {
+  const gateways = [...new Set([
+    context.modelGateway,
+    context.updaterModelGateway,
+  ].filter(Boolean))]
+  const failures = (await Promise.all(gateways.map(async (gateway) => (
+    await gateway.stop().catch((error) => [error.message])
+  )))).flat()
+  return failures
 }
 
 async function createContext({
@@ -420,9 +433,29 @@ async function createContext({
         scopeId: gatewayScope,
       })
     : null
+  const dshUpdater = ['dsh-headless-docker', 'dsh-headless-docker-v1'].includes(bundle.updater.protocol)
+  const updaterUsesSolverProvider = bundle.providers.updater.id === bundle.providers.solver.id
+    && bundle.providers.updater.credentials.apiKeyEnvironment
+      === bundle.providers.solver.credentials.apiKeyEnvironment
+    && bundle.providers.updater.credentials.baseUrlEnvironment
+      === bundle.providers.solver.credentials.baseUrlEnvironment
+  const updaterModelGateway = !gatewayScope || !dshUpdater
+    ? null
+    : updaterUsesSolverProvider
+      ? modelGateway
+      : new ModelGateway({
+          config: {
+            ...bundle.environment.modelGateway,
+            upstreamApiKeyEnvironment: bundle.providers.updater.credentials.apiKeyEnvironment,
+            upstreamBaseUrlEnvironment: bundle.providers.updater.credentials.baseUrlEnvironment,
+          },
+          docker,
+          repositoryRoot,
+          scopeId: `${gatewayScope}-updater`,
+        })
   const solverDriver = createSolverDriver({
     target: bundle.target,
-    provider: bundle.provider,
+    provider: bundle.providers.solver,
     docker,
     repositoryRoot,
     sourceRevision: targetSource.revision,
@@ -431,12 +464,13 @@ async function createContext({
   })
   const updaterDriver = createUpdaterDriver({
     updater: bundle.updater,
-    provider: bundle.provider,
+    provider: bundle.providers.updater,
     docker,
     repositoryRoot,
     sourceRevision: updaterSourceRevision,
     sourcePath: bundle.updater.source?.path ?? null,
-    modelGateway,
+    modelGateway: dshUpdater ? updaterModelGateway : modelGateway,
+    solverModelGateway: modelGateway,
   })
   const runRoot = runRootOverride
   return {
@@ -453,6 +487,7 @@ async function createContext({
     updaterDriver,
     searchStrategy,
     modelGateway,
+    updaterModelGateway,
     runRoot,
     absoluteExperimentPath,
   }
@@ -464,7 +499,13 @@ export async function preflightExperiment({ repositoryRoot, experimentPath, requ
   const names = requiredSecrets(context.bundle)
   if (requireSecrets) {
     assertSecrets(names)
-    validateModelGatewayEnvironment(context.bundle.environment.modelGateway)
+    for (const provider of Object.values(context.bundle.providers)) {
+      validateModelGatewayEnvironment({
+        ...context.bundle.environment.modelGateway,
+        upstreamApiKeyEnvironment: provider.credentials.apiKeyEnvironment,
+        upstreamBaseUrlEnvironment: provider.credentials.baseUrlEnvironment,
+      })
+    }
   }
   const temporaryRunRoot = resolve(repositoryRoot, '.rsi/preflight')
   const environment = createEnvironmentRunner({
@@ -653,6 +694,7 @@ function publicBundleSnapshot(bundle) {
     target: bundle.target,
     updater: bundle.updater,
     provider: bundle.provider,
+    ...(bundle.providers === undefined ? {} : { providers: bundle.providers }),
     environment: bundle.environment,
     strategy: bundle.strategy,
     benchmark: {
@@ -1086,6 +1128,8 @@ function coworkBranchProjection({ branchId, state, stepId = null }) {
           stepId: stepId ?? state.spec.lastStepId,
           stepNumber: state.spec.generationsCompleted,
           candidateId: lastCandidate.id,
+          candidateRevision: lastCandidate.digest ?? null,
+          candidateDigest: lastCandidate.digest ?? null,
           decision: lastCandidate.status === 'promoted'
             ? 'promoted'
             : lastCandidate.status === 'rejected'
@@ -1419,7 +1463,7 @@ export function createCoworkBranchEvolutionDriver({
       await persist()
       throw error
     } finally {
-      await context.modelGateway.stop()
+      await stopContextModelGateways(context)
     }
     const baselineEvaluation = createEvaluationSummary({
       candidateId: champion.id,
@@ -1684,7 +1728,7 @@ export function createCoworkBranchEvolutionDriver({
         await persist()
         throw error
       } finally {
-        await context.modelGateway.stop()
+        await stopContextModelGateways(context)
       }
       baselineRecord.evaluation = createEvaluationSummary({
         candidateId: champion.id,
@@ -1958,7 +2002,7 @@ export function createCoworkBranchEvolutionDriver({
         rejection: { stage: rejection.stage, message: rejection.message },
       }
     } finally {
-      await context.modelGateway.stop()
+      await stopContextModelGateways(context)
     }
 
     state.spec.searchHistory.push(historyEntry)
@@ -2383,7 +2427,7 @@ export async function runEvolution({
     await writeJsonFile(join(runRoot, 'state.json'), state)
     throw error
   } finally {
-    const cleanupErrors = await context.modelGateway.stop()
+    const cleanupErrors = await stopContextModelGateways(context)
     if (cleanupErrors.length > 0) {
       onEvent({ stage: 'cleanup-warning', message: `Model Gateway 清理失败：${cleanupErrors.join('；')}` })
     }
@@ -3143,7 +3187,7 @@ async function finalizeCoworkRun({
     }
     throw error
   } finally {
-    const cleanupErrors = await context.modelGateway.stop()
+    const cleanupErrors = await stopContextModelGateways(context)
     if (cleanupErrors.length > 0) {
       onEvent({ stage: 'cleanup-warning', message: `Model Gateway 清理失败：${cleanupErrors.join('；')}` })
     }

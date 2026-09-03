@@ -12,6 +12,7 @@ import {
 } from './runtimes/dsh.mjs'
 import { createMsaMinimalCoworkSolverDriver } from './runtimes/msa-minimal-cowork.mjs'
 import { createCodexUpdaterDriver } from './runtimes/codex-updater.mjs'
+import { createClaudeCodeUpdaterDriver } from './runtimes/claude-code-updater.mjs'
 
 const DRIVER_PROTOCOL = /^[a-z0-9]+(?:-[a-z0-9]+)*-v[0-9]+$/u
 const ENVIRONMENT_FACTORIES = new Map()
@@ -197,7 +198,16 @@ function createDshSolverDriver({ target, provider, docker, repositoryRoot, sourc
   }
 }
 
-function createDshUpdaterDriver({ updater, provider, docker, repositoryRoot, sourceRevision, sourcePath, modelGateway = null }) {
+function createDshUpdaterDriver({
+  updater,
+  provider,
+  docker,
+  repositoryRoot,
+  sourceRevision,
+  sourcePath,
+  modelGateway = null,
+  solverModelGateway = modelGateway,
+}) {
   const measuredUsage = usageAccumulator()
   return {
     id: updater.protocol,
@@ -215,10 +225,12 @@ function createDshUpdaterDriver({ updater, provider, docker, repositoryRoot, sou
       return await stageUpdaterContext(options)
     },
     async run(options) {
-      if (!modelGateway) throw new ProtocolError('Updater 运行必须使用隔离 Model Gateway')
+      if (!modelGateway || !solverModelGateway) {
+        throw new ProtocolError('Updater 运行必须使用隔离 Model Gateway')
+      }
       // Feedback 可能是恶意 Solver 生成的，所以不能仅依赖字符串脱敏。
       // 进入 Updater 前在 Gateway 中原子轮换 Solver Token，使反馈中的旧令牌立即失效。
-      await modelGateway.rotateRoleToken('solver')
+      await solverModelGateway.rotateRoleToken('solver')
       let result
       let operationError
       try {
@@ -257,6 +269,7 @@ registerSolverDriver('dsh-headless-docker-v1', createDshSolverDriver)
 registerSolverDriver('msa-minimal-docker-v1', createMsaMinimalCoworkSolverDriver)
 registerUpdaterDriver('dsh-headless-docker-v1', createDshUpdaterDriver)
 registerUpdaterDriver('codex-exec-v1', createCodexUpdaterDriver)
+registerUpdaterDriver('claude-code-exec-v1', createClaudeCodeUpdaterDriver)
 
 export function createSolverDriver(options) {
   const protocol = options.target.solver.protocol === 'dsh-headless-docker'

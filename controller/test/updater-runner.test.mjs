@@ -183,6 +183,55 @@ test('Codex updater uses only the isolated local configuration and keeps DSH ava
   assert.ok(invocation.args.includes('/proc/self/exe'))
 })
 
+test('Claude Code updater 只使用隔离的 Anthropic Gateway 和固定 CLI 参数', () => {
+  const options = invocationOptions()
+  Object.assign(options, {
+    backend: 'claude-code-cli',
+    claudeCodePath: '/srv/claude-code/bin/claude.exe',
+    claudeCodeDistributionRoot: '/srv/claude-code',
+    updaterModel: 'claude-sonnet-4-6',
+    updaterReasoningEffort: 'high',
+    gatewaySocketPath: '/srv/updater-run/model-gateway.sock',
+    upstreamRoot: '/srv/upstream',
+    outputRoot: '/srv/output',
+    baseEnv: {
+      ...options.baseEnv,
+      ANTHROPIC_API_KEY: 'must-not-pass',
+      ANTHROPIC_BASE_URL: 'https://host-provider.invalid/v1',
+      CLAUDE_CONFIG_DIR: '/host/claude-config',
+      HTTPS_PROXY: 'http://proxy.invalid:8017',
+    },
+  })
+  const invocation = buildUpdaterInvocation(options)
+  assert.ok(invocation.args.includes('/opt/harness-rsi/updater-runtime/bin/claude.exe'))
+  for (const flag of [
+    '--print',
+    '--bare',
+    '--no-session-persistence',
+    '--dangerously-skip-permissions',
+    '--strict-mcp-config',
+    '--disable-slash-commands',
+    '--no-chrome',
+  ]) assert.ok(invocation.args.includes(flag))
+  const model = invocation.args.lastIndexOf('--model')
+  const effort = invocation.args.lastIndexOf('--effort')
+  assert.equal(invocation.args[model + 1], 'claude-sonnet-4-6')
+  assert.equal(invocation.args[effort + 1], 'high')
+  assert.equal(invocation.env.ANTHROPIC_BASE_URL, options.gatewayUrl)
+  assert.equal(invocation.env.ANTHROPIC_API_KEY, 'local-dummy')
+  assert.equal(invocation.env.CLAUDE_CONFIG_DIR, undefined)
+  assert.equal(invocation.env.HTTPS_PROXY, undefined)
+  assert.equal(invocation.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, '1')
+  assert.equal(
+    mountMode(invocation.args, '/srv/claude-code', UPDATER_SANDBOX_PATHS.runtime),
+    '--ro-bind',
+  )
+  assert.equal(mountMode(invocation.args, '/srv/upstream', UPDATER_SANDBOX_PATHS.upstream), '--ro-bind')
+  assert.equal(mountMode(invocation.args, '/srv/output', UPDATER_SANDBOX_PATHS.output), '--bind')
+  assert.ok(invocation.args.includes('--unshare-net'))
+  assert.ok(invocation.args.includes('--proc'))
+})
+
 test('extracts RSI_STOP from Codex JSONL final agent message', () => {
   const output = [
     JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'working' } }),
@@ -197,6 +246,17 @@ test('extracts RSI_STOP from Codex JSONL final agent message', () => {
   )
   assert.equal(extractUpdaterStopReason('codex-cli', 'RSI_STOP: plain output'), 'plain output')
   assert.equal(extractUpdaterStopReason('deepseek-harness', 'RSI_STOP: done'), 'done')
+})
+
+test('extracts RSI_STOP from Claude Code stream-json result', () => {
+  const output = [
+    JSON.stringify({ type: 'assistant', message: { content: [] } }),
+    JSON.stringify({ type: 'result', subtype: 'success', result: 'RSI_STOP: no useful mutation' }),
+  ].join('\n')
+  assert.equal(
+    extractUpdaterStopReason('claude-code-cli', output),
+    'no useful mutation',
+  )
 })
 
 test('mutation phase accepts free-text output and only checks process success', async () => {

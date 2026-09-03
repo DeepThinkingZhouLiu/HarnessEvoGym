@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -30,7 +30,7 @@ function population(mode) {
   }
 }
 
-function loaded(mode) {
+function loaded(mode, checkpointing = null) {
   return {
     fingerprint: FINGERPRINT,
     config: {
@@ -48,6 +48,7 @@ function loaded(mode) {
           riskCeiling: 'l1',
           strategy: null,
         },
+        ...(checkpointing === null ? {} : { checkpointing }),
       },
     }),
   }
@@ -76,6 +77,7 @@ async function runMode(mode, {
   initialValues = {},
   candidateValues = {},
   pairedBaselineValues = {},
+  checkpointing = null,
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'population-generic-'))
   const campaignsRoot = join(root, 'campaigns')
@@ -84,7 +86,7 @@ async function runMode(mode, {
   const calls = new Map()
 
   const orchestrator = new PopulationOrchestrator({
-    loadedCampaign: loaded(mode),
+    loadedCampaign: loaded(mode, checkpointing),
     campaignsRoot,
     campaignId: `generic-${mode}`,
     createBranch({ branchId, branchesRoot }) {
@@ -137,6 +139,8 @@ async function runMode(mode, {
             stepId,
             stepNumber: next,
             candidateId,
+            candidateRevision: state.revision,
+            candidateDigest: state.digest,
             decision: 'promoted',
             ranking: {
               eligible: true,
@@ -186,7 +190,7 @@ async function runMode(mode, {
 
   await orchestrator.initialize()
   const state = await orchestrator.run()
-  return { state, contexts, calls }
+  return { state, contexts, calls, campaignsRoot }
 }
 
 test('SearchStrategy 耗尽后 Branch 可提前停止并保留未用 Population 预算', async () => {
@@ -231,6 +235,68 @@ test('Population 使用 Branch 同期配对基线计算增量与 Competition 预
       { branchId: 'branch-001', validationScore: 9, deltaScore: 1 },
       { branchId: 'branch-002', validationScore: 11, deltaScore: 0.5 },
     ],
+  )
+})
+
+test('Population 跨过 Budget 里程碑时保留 Champion、Branch Incumbent 和当轮 Candidate 身份', async () => {
+  const result = await runMode('independent', {
+    checkpointing: {
+      budgetMilestones: [0, 1, 2, 3, 4],
+      capture: {
+        populationBest: true,
+        branchIncumbents: true,
+        latestAttempts: true,
+      },
+    },
+  })
+  assert.deepEqual(
+    result.state.checkpoints.map(({ requestedBudget, actualConsumedBudget }) => ({
+      requestedBudget,
+      actualConsumedBudget,
+    })),
+    [
+      { requestedBudget: 0, actualConsumedBudget: 0 },
+      { requestedBudget: 1, actualConsumedBudget: 2 },
+      { requestedBudget: 2, actualConsumedBudget: 2 },
+      { requestedBudget: 3, actualConsumedBudget: 4 },
+      { requestedBudget: 4, actualConsumedBudget: 4 },
+    ],
+  )
+
+  const checkpointPath = join(
+    result.campaignsRoot,
+    'generic-independent',
+    'public',
+    'checkpoints',
+    'budget-0001.json',
+  )
+  const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf8'))
+  assert.equal((await stat(checkpointPath)).mode & 0o777, 0o400)
+  assert.equal(checkpoint.kind, 'PopulationBudgetCheckpoint')
+  assert.equal(checkpoint.requestedBudget, 1)
+  assert.equal(checkpoint.actualConsumedBudget, 2)
+  assert.equal(
+    checkpoint.capturedAt,
+    result.state.events.find((entry) => (
+      entry.type === 'POPULATION_WAVE_COMPLETED' && entry.epoch === 1
+    )).at,
+  )
+  assert.equal(checkpoint.populationBest.candidateId, 'branch-002-c1')
+  assert.deepEqual(
+    checkpoint.branchIncumbents.map((entry) => entry.incumbent.candidateId),
+    ['branch-001-c1', 'branch-002-c1'],
+  )
+  assert.deepEqual(
+    checkpoint.latestAttempts.map((entry) => ({
+      candidateId: entry.step.candidateId,
+      candidateRevision: entry.step.candidateRevision,
+      candidateDigest: entry.step.candidateDigest,
+    })),
+    ['branch-001', 'branch-002'].map((branchId) => ({
+      candidateId: `${branchId}-c1`,
+      candidateRevision: digest(`${branchId}-c1-revision`),
+      candidateDigest: digest(`${branchId}-c1`),
+    })),
   )
 })
 

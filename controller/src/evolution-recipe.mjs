@@ -55,6 +55,60 @@ function normalizeModuleSearch(input) {
   return Object.freeze({ authority: search.authority, riskCeiling: search.riskCeiling, strategy })
 }
 
+function normalizeCheckpointing(input, totalBudget) {
+  if (input === undefined) return null
+  const checkpointing = object(input, 'EvolutionRecipe.spec.checkpointing')
+  rejectUnknown(
+    checkpointing,
+    new Set(['budgetMilestones', 'capture']),
+    'EvolutionRecipe.spec.checkpointing',
+  )
+  if (!Array.isArray(checkpointing.budgetMilestones)
+      || checkpointing.budgetMilestones.length === 0) {
+    throw new ProtocolError('EvolutionRecipe checkpointing.budgetMilestones 必须是非空数组')
+  }
+  const budgetMilestones = checkpointing.budgetMilestones.map((value, index) => {
+    if (!Number.isSafeInteger(value) || value < 0 || value > totalBudget) {
+      throw new ProtocolError(
+        `EvolutionRecipe checkpointing.budgetMilestones[${index}] 必须是 0..${totalBudget} 的整数`,
+      )
+    }
+    return value
+  })
+  if (new Set(budgetMilestones).size !== budgetMilestones.length) {
+    throw new ProtocolError('EvolutionRecipe checkpointing.budgetMilestones 不能重复')
+  }
+  if (budgetMilestones.some((value, index) => index > 0 && value <= budgetMilestones[index - 1])) {
+    throw new ProtocolError('EvolutionRecipe checkpointing.budgetMilestones 必须严格递增')
+  }
+
+  const rawCapture = checkpointing.capture === undefined
+    ? {}
+    : object(checkpointing.capture, 'EvolutionRecipe.spec.checkpointing.capture')
+  rejectUnknown(
+    rawCapture,
+    new Set(['populationBest', 'branchIncumbents', 'latestAttempts']),
+    'EvolutionRecipe.spec.checkpointing.capture',
+  )
+  const capture = {
+    populationBest: rawCapture.populationBest ?? true,
+    branchIncumbents: rawCapture.branchIncumbents ?? true,
+    latestAttempts: rawCapture.latestAttempts ?? true,
+  }
+  for (const [name, value] of Object.entries(capture)) {
+    if (typeof value !== 'boolean') {
+      throw new ProtocolError(`EvolutionRecipe checkpointing.capture.${name} 必须是 boolean`)
+    }
+  }
+  if (!Object.values(capture).some(Boolean)) {
+    throw new ProtocolError('EvolutionRecipe checkpointing.capture 至少必须启用一项')
+  }
+  return Object.freeze({
+    budgetMilestones: Object.freeze(budgetMilestones),
+    capture: Object.freeze(capture),
+  })
+}
+
 function freezePopulation(input) {
   return Object.freeze({
     ...input,
@@ -73,13 +127,17 @@ export function normalizeEvolutionRecipe(input) {
     throw new ProtocolError('EvolutionRecipe 协议无效')
   }
   const spec = object(recipe.spec, 'EvolutionRecipe.spec')
-  rejectUnknown(spec, new Set(['population', 'moduleSearch']), 'EvolutionRecipe.spec')
+  rejectUnknown(spec, new Set(['population', 'moduleSearch', 'checkpointing']), 'EvolutionRecipe.spec')
   const population = freezePopulation(normalizeControllerConfig(spec.population))
   const moduleSearch = normalizeModuleSearch(spec.moduleSearch)
+  const checkpointing = normalizeCheckpointing(
+    spec.checkpointing,
+    population.budget.total_budget,
+  )
   return Object.freeze({
     apiVersion: API_VERSION,
     kind: 'EvolutionRecipe',
-    spec: Object.freeze({ population, moduleSearch }),
+    spec: Object.freeze({ population, moduleSearch, checkpointing }),
   })
 }
 

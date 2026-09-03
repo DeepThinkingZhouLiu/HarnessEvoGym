@@ -164,6 +164,7 @@ export function formatPopulationStatus(state) {
     budget: structuredClone(state.budget),
     best: state.best === null ? null : structuredClone(state.best),
     baselinePack: state.baselinePack === undefined ? null : structuredClone(state.baselinePack),
+    checkpoints: Array.isArray(state.checkpoints) ? structuredClone(state.checkpoints) : [],
     branches: state.branches.map((branch) => ({
       branchId: branch.branchId,
       status: branch.status,
@@ -176,6 +177,18 @@ export function formatPopulationStatus(state) {
       peerLogPath: branch.peerLogPath,
     })),
   }
+}
+
+function stableCheckpointTime(state) {
+  const stableEvent = [...state.events].reverse().find((entry) => (
+    entry.type === 'POPULATION_WAVE_COMPLETED'
+      || entry.type === 'POPULATION_BASELINE_EVALUATED'
+  ))
+  if (!stableEvent || typeof stableEvent.at !== 'string'
+      || !Number.isFinite(Date.parse(stableEvent.at))) {
+    throw new ProtocolError('Population Checkpoint 缺少稳定评测时点')
+  }
+  return stableEvent.at
 }
 
 export class PopulationOrchestrator {
@@ -204,6 +217,7 @@ export class PopulationOrchestrator {
     this.loaded = loadedCampaign
     this.config = loadedCampaign.config
     this.controller = normalizeControllerConfig(populationConfig)
+    this.checkpointing = loadedCampaign?.recipe?.spec?.checkpointing ?? null
     this.plan = createBudgetPlan(this.controller)
     this.campaignId = campaignId
     this.createBranch = createBranch
@@ -269,6 +283,7 @@ export class PopulationOrchestrator {
       },
       branches,
       best: null,
+      checkpoints: [],
       ...(this.baselinePack === null ? {} : { baselinePack: structuredClone(this.baselinePack) }),
       final: null,
       events: [{
@@ -332,8 +347,95 @@ export class PopulationOrchestrator {
       })],
     }
     await this.store.saveState(state)
+    state = await this.#captureCheckpointsOrPause(state)
     this.progress({ type: 'population-baseline-evaluated', branches: branches.length })
     return state
+  }
+
+  async #captureReachedCheckpoints(state) {
+    if (this.checkpointing === null || state.inFlightWave) return state
+    const recorded = new Set((state.checkpoints ?? []).map((entry) => entry.requestedBudget))
+    const reached = this.checkpointing.budgetMilestones.filter((budget) => (
+      budget <= state.budget.consumed && !recorded.has(budget)
+    ))
+    if (reached.length === 0) return state
+
+    const projections = this.checkpointing.capture.latestAttempts
+      ? await Promise.all(state.branches.map(async (branch) => (
+          validateBranchProjection(await (await this.#handle(branch.branchId)).inspect())
+        )))
+      : []
+    const capturedAt = stableCheckpointTime(state)
+    let next = state
+    for (const requestedBudget of reached) {
+      const checkpoint = redactSecrets({
+        apiVersion: 'harness-rsi/v1alpha1',
+        kind: 'PopulationBudgetCheckpoint',
+        campaignId: state.campaignId,
+        mode: state.mode,
+        requestedBudget,
+        actualConsumedBudget: state.budget.consumed,
+        epoch: state.epoch,
+        capturedAt,
+        retention: {
+          policy: 'population-run-owned-artifacts-v1',
+          note: '本文件只索引不可变 Candidate 身份；实际 Workspace/Git 对象随 Population Run 保留。',
+        },
+        ...(this.checkpointing.capture.populationBest
+          ? { populationBest: structuredClone(state.best) }
+          : {}),
+        ...(this.checkpointing.capture.branchIncumbents
+          ? {
+              branchIncumbents: state.branches.map((branch) => ({
+                branchId: branch.branchId,
+                branchRoot: `branches/${branch.branchId}`,
+                incumbent: structuredClone(branch.incumbent),
+              })),
+            }
+          : {}),
+        ...(this.checkpointing.capture.latestAttempts
+          ? {
+              latestAttempts: projections
+                .filter((projection) => projection.lastStep !== null)
+                .map((projection) => ({
+                  branchId: projection.branchId,
+                  branchRoot: `branches/${projection.branchId}`,
+                  step: structuredClone(projection.lastStep),
+                })),
+            }
+          : {}),
+      }, this.secretValues)
+      const written = await this.store.writeBudgetCheckpoint(requestedBudget, checkpoint)
+      const eventAt = iso(this.clock)
+      const record = {
+        requestedBudget,
+        actualConsumedBudget: state.budget.consumed,
+        epoch: state.epoch,
+        capturedAt,
+        path: written.relativePath,
+      }
+      next = {
+        ...next,
+        updatedAt: eventAt,
+        checkpoints: [...(next.checkpoints ?? []), record],
+        events: [...next.events, event(
+          next,
+          'POPULATION_BUDGET_CHECKPOINT_WRITTEN',
+          eventAt,
+          record,
+        )],
+      }
+    }
+    await this.store.saveState(next)
+    return next
+  }
+
+  async #captureCheckpointsOrPause(state) {
+    try {
+      return await this.#captureReachedCheckpoints(state)
+    } catch (error) {
+      return await this.#pauseInfrastructure(state, [{ branchId: 'controller', error }], 'checkpoint')
+    }
   }
 
   async #readState() {
@@ -434,6 +536,10 @@ export class PopulationOrchestrator {
     }
     if (state.status === 'BASELINE_FROZEN') {
       throw new ProtocolError('Population 已固化为 H0 Baseline，不能在同一 Run 中继续进化')
+    }
+    if (state.status === 'EVOLVING' && !state.inFlightWave) {
+      state = await this.#captureCheckpointsOrPause(state)
+      if (state.status === 'PAUSED_INFRASTRUCTURE') return state
     }
     let completedWaves = 0
     while (state.status === 'EVOLVING' && completedWaves < waveLimit) {
@@ -541,6 +647,8 @@ export class PopulationOrchestrator {
         )],
       }
       await this.store.saveState(state)
+      state = await this.#captureCheckpointsOrPause(state)
+      if (state.status === 'PAUSED_INFRASTRUCTURE') return state
       this.progress({ type: 'population-baseline-evaluated', branches: branches.length })
       return this.run(options)
     }
@@ -801,7 +909,7 @@ export class PopulationOrchestrator {
       branches: results.length,
       ...(bonusWinner ? { branchId: bonusWinner.branchId, bonusGrant } : {}),
     })
-    return next
+    return await this.#captureCheckpointsOrPause(next)
   }
 
   async #close(state) {

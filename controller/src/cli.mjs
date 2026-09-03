@@ -143,6 +143,10 @@ async function validateExperimentCommand(args) {
     target: bundle.target.id,
     updater: bundle.updater.id,
     provider: bundle.provider.id,
+    providers: {
+      solver: bundle.providers.solver.id,
+      updater: bundle.providers.updater.id,
+    },
     strategy: bundle.strategy.id,
     environment: bundle.environment.id,
     benchmark: bundle.benchmark.id,

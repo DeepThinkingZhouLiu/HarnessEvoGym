@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
+import { readConfigFile } from '../src/config.mjs'
 import { createBudgetPlan } from '../src/evolution-modes.mjs'
 import {
   normalizeCoworkEvolutionRecipe,
@@ -10,6 +13,7 @@ import {
 import { ProtocolError } from '../src/protocol.mjs'
 
 const MODES = ['single', 'independent', 'mutualism', 'competition', 'combined']
+const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
 function controllerConfig(mode, { total = 12 } = {}) {
   const sharing = ['mutualism', 'combined'].includes(mode)
@@ -97,4 +101,59 @@ test('EvolutionRecipe 严格约束搜索权限与 Strategy 的关系', () => {
     }),
     (error) => error instanceof ProtocolError && /必须指定/u.test(error.message),
   )
+})
+
+test('EvolutionRecipe 可按 Population Budget 里程碑配置消融 Checkpoint', () => {
+  const input = {
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'EvolutionRecipe',
+    spec: {
+      population: controllerConfig('independent', { total: 16 }),
+      moduleSearch: {
+        authority: 'strategy-directed',
+        riskCeiling: 'l2',
+        strategy: 'linear-hill-climb',
+      },
+      checkpointing: {
+        budgetMilestones: [0, 4, 8, 12, 16],
+        capture: {
+          populationBest: true,
+          branchIncumbents: true,
+          latestAttempts: true,
+        },
+      },
+    },
+  }
+  const recipe = normalizeEvolutionRecipe(input)
+  assert.deepEqual(recipe.spec.checkpointing.budgetMilestones, [0, 4, 8, 12, 16])
+  assert.deepEqual(recipe.spec.checkpointing.capture, {
+    populationBest: true,
+    branchIncumbents: true,
+    latestAttempts: true,
+  })
+
+  input.spec.checkpointing.budgetMilestones = [0, 8, 4]
+  assert.throws(() => normalizeEvolutionRecipe(input), /必须严格递增/u)
+  input.spec.checkpointing.budgetMilestones = [0, 17]
+  assert.throws(() => normalizeEvolutionRecipe(input), /0\.\.16/u)
+  input.spec.checkpointing.budgetMilestones = [0, 4]
+  input.spec.checkpointing.capture = {
+    populationBest: false,
+    branchIncumbents: false,
+    latestAttempts: false,
+  }
+  assert.throws(() => normalizeEvolutionRecipe(input), /至少必须启用一项/u)
+})
+
+test('五种 N2B16 消融 Recipe 共用同一组 Budget 里程碑', async () => {
+  for (const mode of MODES) {
+    const recipe = normalizeEvolutionRecipe(await readConfigFile(resolve(
+      REPOSITORY_ROOT,
+      `recipes/population-ablation-linear-16/${mode}.yml`,
+    )))
+    assert.equal(recipe.spec.population.mode, mode)
+    assert.equal(recipe.spec.population.budget.total_budget, 16)
+    assert.equal(recipe.spec.population.concurrency.n_branches, mode === 'single' ? 1 : 2)
+    assert.deepEqual(recipe.spec.checkpointing.budgetMilestones, [0, 4, 8, 12, 16])
+  }
 })

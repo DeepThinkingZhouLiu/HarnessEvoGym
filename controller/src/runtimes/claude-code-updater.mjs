@@ -12,14 +12,13 @@ import { basename, dirname, join } from 'node:path'
 
 import { validateModelGatewayEnvironment } from '../cowork-model-gateway.mjs'
 import { MODEL_GATEWAY_RELAY_URL } from '../model-gateway-relay.mjs'
+import { startModelGateway } from '../model-gateway.mjs'
 import { ProtocolError } from '../protocol.mjs'
 import { runProcess } from '../subprocess.mjs'
 import {
   UPDATER_SANDBOX_PATHS,
   buildUpdaterInvocation,
 } from '../updater-runner.mjs'
-import { startModelGateway } from '../model-gateway.mjs'
-import { stageUpdaterContext } from './dsh.mjs'
 import {
   cliUpdaterTask,
   createCliUsageLedger,
@@ -28,12 +27,13 @@ import {
   readCliMutationReport,
   recordCliUsageAudit,
 } from './cli-updater-common.mjs'
+import { stageUpdaterContext } from './dsh.mjs'
 
 /**
- * 官方 Codex CLI Updater。模型只经过 Controller-owned Responses Gateway，
- * 文件系统只暴露 Candidate、只读反馈/上游源码和单独的报告目录。
+ * 固定版本 Claude Code CLI Updater。Claude 只看到本地 Anthropic Messages
+ * Gateway 的假凭据；真实 ZCloud Key 始终留在 Controller 进程。
  */
-export function createCodexUpdaterDriver({
+export function createClaudeCodeUpdaterDriver({
   updater,
   provider,
   repositoryRoot,
@@ -46,10 +46,10 @@ export function createCodexUpdaterDriver({
 
   async function ensureRuntime() {
     runtimePromise ??= inspectCliUpdaterRuntime(updater.runtime, {
-      label: 'Codex',
-      versionCommand: () => updater.runtime.nodeBinary,
-      versionArgs: (executable) => [executable, '--version'],
-      expectedVersionOutput: (version) => `codex-cli ${version}`,
+      label: 'Claude Code',
+      versionCommand: (executable) => executable,
+      versionArgs: () => ['--version'],
+      expectedVersionOutput: (version) => `${version} (Claude Code)`,
     })
     return await runtimePromise
   }
@@ -77,32 +77,37 @@ export function createCodexUpdaterDriver({
       })
     },
     async run(options) {
-      if (!modelGateway) throw new ProtocolError('Codex Updater 运行必须与 Solver 隔离网关协同')
+      if (!modelGateway) throw new ProtocolError('Claude Code Updater 运行必须与 Solver 隔离网关协同')
+      if (provider.protocol !== 'anthropic-messages') {
+        throw new ProtocolError('Claude Code Updater 必须使用 Anthropic Messages Provider')
+      }
       const runtime = await ensureRuntime()
       const { apiKey, baseUrl } = validateModelGatewayEnvironment({
         upstreamApiKeyEnvironment: provider.credentials.apiKeyEnvironment,
         upstreamBaseUrlEnvironment: provider.credentials.baseUrlEnvironment,
       })
       if (options.model.provider !== provider.id) {
-        throw new ProtocolError('Codex Updater Model 与 Provider Adapter 不匹配')
+        throw new ProtocolError('Claude Code Updater Model 与 Provider Adapter 不匹配')
       }
       const reportName = basename(options.reportName)
-      if (reportName !== options.reportName) throw new ProtocolError('Codex Mutation Report name 必须是单个文件名')
+      if (reportName !== options.reportName) {
+        throw new ProtocolError('Claude Code Mutation Report name 必须是单个文件名')
+      }
       await Promise.all([
         mkdir(options.outputDirectory, { recursive: true }),
         mkdir(options.dshHome, { recursive: true }),
       ])
       if ((await readdir(options.outputDirectory)).length !== 0) {
-        throw new ProtocolError('Codex Updater 输出目录在 Session 前必须为空')
+        throw new ProtocolError('Claude Code Updater 输出目录在 Session 前必须为空')
       }
 
       const candidateRoot = dirname(options.candidateWorkspace)
-      const gitRoot = join(candidateRoot, 'updater-codex.git')
+      const gitRoot = join(candidateRoot, 'updater-claude-code.git')
       const evolutionLogPath = join(candidateRoot, 'updater-evolution-log.jsonl')
       await writeFile(evolutionLogPath, '', { encoding: 'utf8', flag: 'wx', mode: 0o400 })
-      await initializeCliCandidateGit(options.candidateWorkspace, gitRoot, 'Codex')
+      await initializeCliCandidateGit(options.candidateWorkspace, gitRoot, 'Claude Code')
 
-      const shortRunRoot = await mkdtemp(join(tmpdir(), 'harness-rsi-codex-'))
+      const shortRunRoot = await mkdtemp(join(tmpdir(), 'harness-rsi-claude-'))
       await chmod(shortRunRoot, 0o700)
       await Promise.all([
         mkdir(join(shortRunRoot, 'home'), { mode: 0o700 }),
@@ -113,15 +118,15 @@ export function createCodexUpdaterDriver({
       const uid = process.getuid?.()
       const gid = process.getgid?.()
       if (!Number.isInteger(uid) || uid < 1 || !Number.isInteger(gid) || gid < 1) {
-        throw new ProtocolError('Codex Updater 拒绝以 root 或未知宿主身份运行')
+        throw new ProtocolError('Claude Code Updater 拒绝以 root 或未知宿主身份运行')
       }
 
       let gateway
       let result
       try {
-        // Feedback 可能包含 Solver 曾见过的短期令牌；进入 Updater 前先撤销。
         await modelGateway.rotateRoleToken('solver')
         gateway = await startGateway({
+          wireProtocol: 'anthropic-messages',
           upstreamBaseUrl: baseUrl,
           getApiKey: async () => apiKey,
           trustedModel: options.model.model,
@@ -137,18 +142,17 @@ export function createCodexUpdaterDriver({
           audit: async (record) => recordCliUsageAudit(measuredUsage, record),
         })
         const invocation = buildUpdaterInvocation({
-          backend: 'codex-cli',
+          backend: 'claude-code-cli',
           nodeBinary: updater.runtime.nodeBinary,
           updaterRuntime: runtime.distributionRoot,
-          codexPath: runtime.executable,
-          codexDistributionRoot: runtime.distributionRoot,
-          updaterProvider: updater.runtime.providerId,
+          claudeCodePath: runtime.executable,
+          claudeCodeDistributionRoot: runtime.distributionRoot,
           updaterModel: options.model.model,
           updaterReasoningEffort: options.model.reasoningEffort ?? 'high',
           candidateRoot: options.candidateWorkspace,
           gitRoot,
           runRoot: shortRunRoot,
-          runtimePatch: join(repositoryRoot, 'controller/src/codex-updater.runtime-placeholder'),
+          runtimePatch: join(repositoryRoot, 'controller/src/claude-code-updater.runtime-placeholder'),
           gatewayRelayPath: join(repositoryRoot, 'controller/src/model-gateway-relay.mjs'),
           gatewayUrl: gateway.url,
           gatewaySocketPath: gateway.socketPath,
@@ -167,8 +171,6 @@ export function createCodexUpdaterDriver({
           peerLogs: [],
           bwrapPath: updater.runtime.bwrapPath,
           setprivPath: updater.runtime.setprivPath,
-          // 本 Driver 在普通宿主用户下运行，setgroups 对非 root 不可用；
-          // UID/GID 已核验为当前身份，保留附加组不扩大空根 Bubblewrap 的挂载边界。
           preserveSupplementaryGroups: true,
           baseEnv: {
             PATH: '/usr/local/bin:/usr/bin:/bin',
@@ -184,7 +186,7 @@ export function createCodexUpdaterDriver({
           secretValues: [apiKey, dummyKey],
         })
         if (!result.ok) {
-          const error = new ProtocolError('Codex Updater 执行失败', [
+          const error = new ProtocolError('Claude Code Updater 执行失败', [
             result.timedOut ? 'reason=timeout' : `exitCode=${result.exitCode}`,
             result.stderr.slice(-4_000),
             result.stdout.slice(-2_000),
@@ -196,7 +198,7 @@ export function createCodexUpdaterDriver({
           options.outputDirectory,
           reportName,
           [apiKey, dummyKey],
-          'Codex',
+          'Claude Code',
         )
         return {
           report,

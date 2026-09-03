@@ -146,8 +146,23 @@ class Bridge:
             30,
         )
         del started
+        image_tag = None
+        if args and args[0] == "build":
+            try:
+                tag_index = args.index("--tag")
+                image_tag = args[tag_index + 1]
+            except (ValueError, IndexError):
+                image_tag = None
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            if image_tag:
+                ready = self._vm(["sudo", "docker", "image", "inspect", image_tag], 30)
+                if result_fields(ready)["exitCode"] == 0:
+                    self._vm(
+                        ["sh", "-lc", f"test -f {shlex.quote(pid_path)} && sudo kill -TERM -- -$(cat {shlex.quote(pid_path)}) 2>/dev/null || true"],
+                        30,
+                    )
+                    return {"exitCode": 0, "stdout": image_tag, "stderr": ""}
             probe = self._vm(["sh", "-lc", f"test -f {shlex.quote(rc_path)} && cat {shlex.quote(rc_path)}"], 30)
             fields = result_fields(probe)
             if fields["exitCode"] == 0 and fields["stdout"].strip():
@@ -164,10 +179,8 @@ class Bridge:
         # Docker build/pull can finish writing the image while its CLI remains
         # blocked on the remote control-plane stream. Treat a usable tagged
         # image as success before killing the stale process group.
-        if args and args[0] == "build":
+        if image_tag:
             try:
-                tag_index = args.index("--tag")
-                image_tag = args[tag_index + 1]
                 ready = self._vm(["sudo", "docker", "image", "inspect", image_tag], 30)
                 if result_fields(ready)["exitCode"] == 0:
                     return {"exitCode": 0, "stdout": image_tag, "stderr": ""}

@@ -64,14 +64,14 @@ test('Cowork 恢复归档未完成编排产物，但保留 Environment 管理的
 
   assert.ok(archived)
   assert.equal(await exists(completed), true)
-  for (const pathValue of [generation, results, candidate]) {
+  for (const pathValue of [generation, candidate]) {
     assert.equal(await exists(pathValue), false)
   }
+  assert.equal(await exists(results), true)
   assert.equal(await exists(trial), true)
   assert.deepEqual(archived.manifest.spec.archived.sort(), [
     'candidates/g004-l1',
     'generations/generation-4',
-    'results/generation-4',
   ])
   assert.equal(
     JSON.parse(await readFile(join(archived.root, 'manifest.json'), 'utf8')).kind,

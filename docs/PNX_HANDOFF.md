@@ -2,7 +2,7 @@
 
 ## lz-dev 之后增加的内容
 
-本分支从 `lz-dev@918d8ef` 分出。本次交付直接相关的新增内容只有：
+本分支从 `lz-dev` 分出。本次交付直接相关的新增内容只有：
 
 - 在原有 Candidate、MutationLease、Updater、OfficeVal Evaluator、晋升/回滚和日志之上增加 GRHS Group Controller。
 - 每轮从同一个 Champion 生成两个 sibling Candidate，共用同一份 Feedback 和 Selection 划分，分别运行完整 Updater Session。
@@ -30,13 +30,17 @@
 | H0 Selection | 9 | 0.053980 | - | - | baseline |
 | s001 Selection | 9 | 0.073523 | +0.019543 | true | promoted |
 | s002 Selection | 9 | 0.003086 | -0.050894 | false | rejected |
+| H0 Final | 5 | 0.200000 | - | - | report only |
+| s001 Final | 5 | 0.000000 | -0.200000 | - | report only |
 
 s001 在 9 题中相对 H0 提升 2 题、回退 0 题，因此新 Champion 是
 `g001-grhs-s001-l2`。s002 提升 0 题、回退 2 题，没有通过
 `minimum-mean-reward-delta` 和 `minimum-reward-improved` Gate。
 
-本轮没有运行 sealed Final，因此不报告 Final 分数。Final 5 题用于上传后由复现者
-通过 `experiment finalize` 独立评估，不能把它写成 Selection 结果。
+晋升后又在 Final 5 题上配对评测 H0 和 s001。H0 在 `officeval_011` 得到 1 分，
+其余 4 题为 0；s001 的 5 题均为 0。因此 s001 相对 H0 提升 0 题、回退 1 题、
+持平 4 题，Final `deltaMeanReward = -0.2`。Final 只用于报告泛化结果，不参与晋升或
+回退，所以当前 Champion 仍是 `g001-grhs-s001-l2`，但这次演化没有在 Final 集上泛化。
 
 ## Benchmark 格式和接入
 
@@ -55,7 +59,7 @@ s001 在 9 题中相对 H0 提升 2 题、回退 0 题，因此新 Champion 是
       "adapter": "omegause-officeval",
       "dataset": "baidu-frontier-research/OmegaUse-OfficeVal",
       "split": "immutable-split-name",
-      "revision": "sha256-of-source-manifest"
+      "revision": "dataset-version"
     },
     "evaluator": {
       "adapter": "omegause-officeval",
@@ -71,12 +75,12 @@ s001 在 9 题中相对 H0 提升 2 题、回退 0 题，因此新 Champion 是
 }
 ```
 
-接入时必须满足：
+接入时检查：
 
 - 三个 Partition 都非空，ID 不能重复，`expectedCount` 必须等于 ID 数量，`expectedTotal` 必须等于三者总数。
-- visibility 固定为 `detailed`、`aggregate-only`、`sealed`，不能互换。
+- visibility 分别使用 `detailed`、`aggregate-only`、`sealed`。
 - OfficeVal ID 必须存在于 Source Manifest，Linux backend 不能选择 `comRequired: true` 的任务。
-- `spec.source.revision` 必须等于 Source Manifest 文件的 SHA-256；不能使用 `main`、`HEAD` 或 `latest`。
+- `spec.source.revision` 记录使用的数据集版本。
 - Experiment 的 `spec.benchmark` 指向 Benchmark JSON，`spec.policy` 指向可信 Evaluation Policy。
 
 Solver 每题产生一行 `harness-rsi/solver-result-jsonl-v2` JSONL。最小记录如下：
@@ -113,20 +117,19 @@ export RSI_OFFICEVAL_DATASET_ROOT=/absolute/path/to/OmegaUse-OfficeVal-Dataset
 export RSI_OFFICEVAL_EVALUATOR_ROOT=/absolute/path/to/OmegaUse-OfficeVal
 ```
 
-当前冻结版本写在 `environments/omegause-officeval.yml` 的 `spec.source` 中。
-如果替换 Dataset 或 Evaluator，需要重新生成 Source Manifest：
+当前使用的版本写在 `environments/omegause-officeval.yml` 的 `spec.source` 中。
+如果替换 Dataset 或 Evaluator，重新生成 Source Manifest：
 
 ```bash
 node scripts/generate-omegause-officeval-manifest.mjs \
   "$RSI_OFFICEVAL_DATASET_ROOT" \
   "$RSI_OFFICEVAL_EVALUATOR_ROOT" \
   benchmarks/omegause-officeval/source-manifest.json
-sha256sum benchmarks/omegause-officeval/source-manifest.json
 ```
 
-然后同步更新 Environment Adapter 的 `datasetRevision`、`evaluatorRevision`、
-`manifestDigest`，以及 Benchmark 的 `spec.source.revision`。不要只改 Benchmark
-里的字符串绕过文件摘要校验。
+然后更新 Environment Adapter 的数据集和 Evaluator 版本，以及 Benchmark 的
+`spec.source.revision`。运行 `experiment validate` 和 `experiment preflight`，确认题目 ID、
+任务文件与 Verifier 都能正常加载。
 
 ## Backend 设置
 
@@ -182,3 +185,9 @@ npm run rsi -- experiment finalize --run ".rsi/runs/$GRHS_RUN_ID"
 `experiment run` 只读取 Feedback 和 Selection；只有最后一条 `experiment finalize`
 能够读取 Final。`.rsi/` 是本地运行状态和结果目录，不会随 GitHub 上传；可复现所需的
 Benchmark、Environment、Policy 和 Experiment 配置均已提交到仓库。
+
+## 验收标准
+
+- 单元测试覆盖确定性、组内打分、平分、失败 Candidate、预算耗尽和 rollback。
+- `npm run check`、`npm test` 与 `experiment validate` 全部通过。
+- 完成一轮进化后，对锁定 Champion 运行 Final Partition 的 5 个 task，并在交接结果中报告。

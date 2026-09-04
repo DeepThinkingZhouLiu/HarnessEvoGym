@@ -199,8 +199,7 @@ npm run rsi -- experiment finalize --run ".rsi/runs/$GRHS_RUN_ID"
 echo "GRHS run completed: .rsi/runs/$GRHS_RUN_ID"
 ```
 
-脚本不包含用户目录或凭据。Linux、Docker Desktop 和已经启动 Docker daemon 的环境会
-直接使用当前 Docker context；仅当 Docker 不可用且本机安装了 Colima 时才自动启动
+Linux、Docker Desktop 和已经启动 Docker daemon 的环境会直接使用当前 Docker context；仅当 Docker 不可用且本机安装了 Colima 时才自动启动
 Colima。`GRHS_CONFIG`、`GRHS_BENCHMARK` 和 `GRHS_RUN_ID` 均可由调用方覆盖。
 
 `experiment run` 只读取 Feedback 和 Selection；只有最后一条 `experiment finalize`
@@ -230,5 +229,4 @@ Benchmark、Environment、Policy 和 Experiment 配置均已提交到仓库。
 
 H0 Final mean reward 为 0.2，s001 为 0，`deltaMeanReward = -0.2`。因此 Selection
 阶段的晋升已经成功，当前 Champion 仍是 `g001-grhs-s001-l2`；但这次晋升没有在
-Final 5 题上泛化。完整 trial 和评测报告保存在本地 `.rsi/runs/`，该目录不会上传 GitHub，
-所以上表是随仓库交付的实验结果记录。
+Final 5 题上泛化。

@@ -12,21 +12,18 @@ MutationLease，并启动一个完整 Codex Updater Session。
 
 ```text
 utility_g = selection_reward_delta
-            - regression_penalty * paired_regression_rate
-            - cost_penalty * relative_token_delta
-            - complexity_penalty * normalized_patch_complexity
 
 advantage_g = (utility_g - group_mean) / (group_stddev + epsilon)
 ```
 
 越界 Diff、不安全结果、不完整评测和重复 Patch 不进入组内统计。有效 sibling
 少于两个时跳过 relative update 并回滚；否则用 advantage 更新 Target Region ID
-上的分类 proposal prior。只有通过冻结 Gate 且惩罚后 paired-bootstrap LCB
-严格超过预注册 margin 的最佳 sibling 才会晋升。平分按 Candidate ID 决胜，保证
-重放确定性。
+上的分类 proposal prior。现有 Evaluator Policy 仍是唯一晋升门槛，与原始串行
+Controller 一致：Group Controller 只在 eligible sibling 中晋升 Selection reward delta
+最高者。平分按 Candidate ID 决胜，保证重放确定性。
 
 不可变 Group Decision 会记录父子谱系、MutationPlan 和 Region ID、utility
-分项、relative advantage、更新前后 proposal prior、LCB、晋升结果和回滚原因。
+、relative advantage、更新前后 proposal prior、Evaluator decision、晋升结果和回滚原因。
 Final 在 Champion 冻结并显式 finalize 前始终 sealed。
 
 MVP 配置位于
@@ -66,6 +63,5 @@ loopback-to-Unix-socket relay 转发模型请求，不把宿主 Node runtime 或
 
 当前限制：MVP 依次调度 sibling Updater/Solver。AgentBay bridge 在单 VM 内串行启动
 远端 Trial、并行执行已启动的 Trial；正式 feedback split 的 55 条 Trial 可全部并行，
-通用平台并发上限为 200。Provider 没有可信 Rate Card，因此暂用
-Token 增量作为成本代理；有效 sibling 少于两个时不在本轮预算内重试。更大候选组、
+通用平台并发上限为 200。有效 sibling 少于两个时不在本轮预算内重试。更大候选组、
 有界重试和 sibling 级并行调度留到后续阶段。

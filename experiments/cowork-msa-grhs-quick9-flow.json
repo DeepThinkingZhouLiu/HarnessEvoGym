@@ -37,12 +37,8 @@
       "grhs": {
         "groupSize": 2,
         "minimumValidCandidates": 2,
-        "regressionPenalty": 0.5,
-        "costPenalty": 0.05,
-        "complexityPenalty": 0.05,
         "advantageEpsilon": 1e-8,
-        "priorLearningRate": 0.1,
-        "promotionMargin": 0
+        "priorLearningRate": 0.1
       }
     }
   }

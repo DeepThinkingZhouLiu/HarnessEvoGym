@@ -162,6 +162,11 @@ for (const candidateId of candidateIds) {
 await Promise.all([
   cp(join(sourceRun, 'mutation-catalog.json'), join(outputRun, 'mutation-catalog.json')),
   cp(join(sourceRun, 'mutation-policy.json'), join(outputRun, 'mutation-policy.json')),
+  cp(
+    join(sourceRun, 'generations', 'generation-1', 'grhs-group'),
+    join(outputRun, 'generations', 'generation-1', 'grhs-group'),
+    { recursive: true, errorOnExist: true },
+  ),
 ])
 for (const [candidateId, records] of selectionRecords) {
   await writeText(join(outputRun, 'results', 'generation-1', `${candidateId}-selection.jsonl`), jsonl(records))

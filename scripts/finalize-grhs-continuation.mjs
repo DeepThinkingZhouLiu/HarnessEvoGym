@@ -55,13 +55,6 @@ function publicDecision(decision) {
   }
 }
 
-function patchComplexity(diff, limits) {
-  return (
-    diff.spec.changedFiles / limits.maximumChangedFiles
-    + diff.spec.changedBytes / limits.maximumChangedBytes
-  ) / 2
-}
-
 function emptyUsage() {
   return {
     complete: true,
@@ -163,7 +156,6 @@ for (const [index, candidateId] of siblingIds.entries()) {
   })
   await writeJsonFile(join(runRoot, 'candidates', candidateId, 'evaluation.json'), evaluation)
   const selection = evaluation.partitions.selection
-  const tokenDelta = selection.deltas.tokens.relative
   siblingResults.push({
     id: candidateId,
     parentId: baselineId,
@@ -171,11 +163,6 @@ for (const [index, candidateId] of siblingIds.entries()) {
     valid: policyValid(evaluation),
     promotionEligible: evaluation.decision.eligible,
     qualityDelta: selection.paired.deltaMeanReward,
-    qualityLowerBound:
-      selection.paired.pairedRewardDeltaCi?.lower ?? selection.paired.deltaMeanReward,
-    regressionRate: selection.paired.rewardRegressed / requiredIds.length,
-    incrementalCost: typeof tokenDelta === 'number' ? tokenDelta : 0,
-    patchComplexity: patchComplexity(diff, bundle.target.mutation.limits),
     manifest,
     report,
     plan,
@@ -212,7 +199,6 @@ for (const sibling of siblingResults) {
     regionIds: sibling.regionIds,
     utility: scored.utility,
     relativeAdvantage: scored.advantage,
-    utilityLowerBound: scored.utilityLowerBound,
     decision: sibling.evaluation.decision,
   })
   state.spec.searchHistory.push({
@@ -225,7 +211,6 @@ for (const sibling of siblingResults) {
     regionIds: sibling.regionIds,
     utility: scored.utility,
     relativeAdvantage: scored.advantage,
-    utilityLowerBound: scored.utilityLowerBound,
     hypothesis: sibling.report.hypothesis,
     changedFiles: sibling.report.changedFiles,
     expectedImpact: sibling.report.expectedImpact,

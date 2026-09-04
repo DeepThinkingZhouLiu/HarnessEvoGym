@@ -313,12 +313,6 @@ function publicDecision(decision) {
   }
 }
 
-function grhsPatchComplexity(proposal, limits) {
-  const changedFiles = proposal.policyReport.changedFiles / limits.maximumChangedFiles
-  const changedBytes = proposal.policyReport.changedBytes / limits.maximumChangedBytes
-  return (changedFiles + changedBytes) / 2
-}
-
 function grhsPolicyValid(evaluation) {
   const invalidGateIds = new Set([
     'baseline-record-coverage',
@@ -2352,7 +2346,6 @@ async function runGrhsRound({
       continue
     }
     const selection = evaluation.partitions.selection
-    const tokenDelta = selection.deltas.tokens.relative
     siblingResults.push({
       id: proposal.id,
       parentId: champion.id,
@@ -2360,11 +2353,6 @@ async function runGrhsRound({
       valid: grhsPolicyValid(evaluation),
       promotionEligible: evaluation.decision.eligible,
       qualityDelta: selection.paired.deltaMeanReward,
-      qualityLowerBound: selection.paired.pairedRewardDeltaCi?.lower ?? selection.paired.deltaMeanReward,
-      regressionRate: selection.paired.rewardRegressed
-        / context.bundle.benchmark.partitions.selection.instanceIds.length,
-      incrementalCost: typeof tokenDelta === 'number' ? tokenDelta : 0,
-      patchComplexity: grhsPatchComplexity(proposal, context.bundle.target.mutation.limits),
       proposal,
       evaluation,
       rejection: grhsPolicyValid(evaluation) ? null : {
@@ -2418,7 +2406,6 @@ async function runGrhsRound({
       regionIds: sibling.regionIds,
       utility: scored.utility,
       relativeAdvantage: scored.advantage,
-      utilityLowerBound: scored.utilityLowerBound,
       ...(sibling.evaluation ? { decision: sibling.evaluation.decision } : {}),
       ...(sibling.rejection ? { rejection: sibling.rejection } : {}),
     })
@@ -2432,7 +2419,6 @@ async function runGrhsRound({
       regionIds: sibling.regionIds,
       utility: scored.utility,
       relativeAdvantage: scored.advantage,
-      utilityLowerBound: scored.utilityLowerBound,
       ...(sibling.proposal ? {
         hypothesis: sibling.proposal.report.hypothesis,
         changedFiles: sibling.proposal.report.changedFiles,

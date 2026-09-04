@@ -24,12 +24,8 @@ export function validateGrhsConfiguration(value) {
   const allowed = new Set([
     'groupSize',
     'minimumValidCandidates',
-    'regressionPenalty',
-    'costPenalty',
-    'complexityPenalty',
     'advantageEpsilon',
     'priorLearningRate',
-    'promotionMargin',
   ])
   const unknown = Object.keys(value).filter((key) => !allowed.has(key))
   if (unknown.length > 0) throw new ProtocolError('GRHS 配置含有未知字段', unknown)
@@ -42,9 +38,6 @@ export function validateGrhsConfiguration(value) {
   return Object.freeze({
     groupSize,
     minimumValidCandidates,
-    regressionPenalty: finite(value.regressionPenalty ?? 0, 'grhs.regressionPenalty', { minimum: 0 }),
-    costPenalty: finite(value.costPenalty ?? 0, 'grhs.costPenalty', { minimum: 0 }),
-    complexityPenalty: finite(value.complexityPenalty ?? 0, 'grhs.complexityPenalty', { minimum: 0 }),
     advantageEpsilon: finite(value.advantageEpsilon ?? 1e-8, 'grhs.advantageEpsilon', {
       minimum: Number.EPSILON,
       maximum: 1,
@@ -53,7 +46,6 @@ export function validateGrhsConfiguration(value) {
       minimum: 0,
       maximum: 100,
     }),
-    promotionMargin: finite(value.promotionMargin ?? 0, 'grhs.promotionMargin'),
   })
 }
 
@@ -140,25 +132,6 @@ function round(value) {
   return Number(value.toFixed(12))
 }
 
-function candidateUtility(candidate, configuration) {
-  const quality = finite(candidate.qualityDelta, `${candidate.id}.qualityDelta`)
-  const regressions = finite(candidate.regressionRate, `${candidate.id}.regressionRate`, { minimum: 0 })
-  const cost = finite(candidate.incrementalCost, `${candidate.id}.incrementalCost`)
-  const complexity = finite(candidate.patchComplexity, `${candidate.id}.patchComplexity`, { minimum: 0 })
-  const penalty = configuration.regressionPenalty * regressions
-    + configuration.costPenalty * cost
-    + configuration.complexityPenalty * complexity
-  const qualityLowerBound = candidate.qualityLowerBound === null
-    || candidate.qualityLowerBound === undefined
-    ? quality
-    : finite(candidate.qualityLowerBound, `${candidate.id}.qualityLowerBound`)
-  return {
-    utility: quality - penalty,
-    utilityLowerBound: qualityLowerBound - penalty,
-    components: { quality, regressions, cost, complexity, penalty },
-  }
-}
-
 export function updateProposalPrior({ prior, candidates, learningRate }) {
   finite(learningRate, 'GRHS prior learningRate', { minimum: 0, maximum: 100 })
   const regionIds = Object.keys(prior ?? {}).sort()
@@ -187,9 +160,13 @@ export function scoreGrhsGroup({ candidates, configuration, proposalPrior }) {
   }
   const scored = candidates.map((candidate) => {
     if (!candidate.valid) {
-      return { ...candidate, utility: null, utilityLowerBound: null, advantage: null, components: null }
+      return { ...candidate, utility: null, advantage: null }
     }
-    return { ...candidate, ...candidateUtility(candidate, configuration), advantage: null }
+    return {
+      ...candidate,
+      utility: finite(candidate.qualityDelta, `${candidate.id}.qualityDelta`),
+      advantage: null,
+    }
   })
   const valid = scored.filter((candidate) => candidate.valid)
   if (valid.length >= configuration.minimumValidCandidates) {
@@ -202,33 +179,24 @@ export function scoreGrhsGroup({ candidates, configuration, proposalPrior }) {
   }
   for (const candidate of scored) {
     candidate.utility = round(candidate.utility)
-    candidate.utilityLowerBound = round(candidate.utilityLowerBound)
     candidate.advantage = round(candidate.advantage)
-    if (candidate.components) {
-      candidate.components = Object.fromEntries(
-        Object.entries(candidate.components).map(([key, value]) => [key, round(value)]),
-      )
-    }
   }
   const relativeUpdateApplied = valid.length >= configuration.minimumValidCandidates
   const nextPrior = relativeUpdateApplied
     ? updateProposalPrior({ prior: proposalPrior, candidates: scored, learningRate: configuration.priorLearningRate })
     : { ...proposalPrior }
   const ranked = valid.filter((candidate) => candidate.promotionEligible).sort((left, right) => (
-    right.utilityLowerBound - left.utilityLowerBound
-    || right.utility - left.utility
+    right.utility - left.utility
     || left.id.localeCompare(right.id)
   ))
   const best = ranked[0] ?? null
   const promotedCandidateId = relativeUpdateApplied
     && best !== null
-    && best.utilityLowerBound > configuration.promotionMargin
     ? best.id
     : null
   let rollbackReason = null
   if (!relativeUpdateApplied) rollbackReason = 'insufficient-valid-candidates'
   else if (best === null) rollbackReason = 'no-candidate-passed-gates'
-  else if (promotedCandidateId === null) rollbackReason = 'utility-lcb-below-margin'
   return {
     apiVersion: API_VERSION,
     kind: 'GrhsGroupDecision',
@@ -237,7 +205,6 @@ export function scoreGrhsGroup({ candidates, configuration, proposalPrior }) {
     relativeUpdateApplied,
     proposalPriorBefore: { ...proposalPrior },
     proposalPriorAfter: nextPrior,
-    promotionMargin: configuration.promotionMargin,
     promotedCandidateId,
     rollbackReason,
   }

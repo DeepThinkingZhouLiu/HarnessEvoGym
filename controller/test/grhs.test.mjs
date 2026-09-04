@@ -27,12 +27,8 @@ function configuration(overrides = {}) {
   return validateGrhsConfiguration({
     groupSize: 2,
     minimumValidCandidates: 2,
-    regressionPenalty: 0.5,
-    costPenalty: 0.1,
-    complexityPenalty: 0.2,
     advantageEpsilon: 1e-8,
     priorLearningRate: 0.25,
-    promotionMargin: 0,
     ...overrides,
   })
 }
@@ -45,10 +41,6 @@ function candidate(id, regionIds, overrides = {}) {
     valid: true,
     promotionEligible: true,
     qualityDelta: 0.2,
-    qualityLowerBound: 0.1,
-    regressionRate: 0,
-    incrementalCost: 0,
-    patchComplexity: 0,
     ...overrides,
   }
 }
@@ -77,20 +69,14 @@ test('GRHS 从同一父版本确定性生成离散 sibling MutationPlan', () => 
   }))
 })
 
-test('GRHS utility 组合质量、回退、成本和 Patch 复杂度并更新 proposal prior', () => {
+test('GRHS 用 Selection quality delta 计算组内优势并更新 proposal prior', () => {
   const prior = { profile: 0.5, skills: 0.5 }
   const decision = scoreGrhsGroup({
     configuration: configuration(),
     proposalPrior: prior,
     candidates: [
-      candidate('candidate-a', ['profile'], { qualityDelta: 0.3, qualityLowerBound: 0.2 }),
-      candidate('candidate-b', ['skills'], {
-        qualityDelta: 0.3,
-        qualityLowerBound: 0.2,
-        regressionRate: 0.2,
-        incrementalCost: 0.5,
-        patchComplexity: 0.5,
-      }),
+      candidate('candidate-a', ['profile'], { qualityDelta: 0.3 }),
+      candidate('candidate-b', ['skills'], { qualityDelta: 0.05 }),
     ],
   })
   const [better, worse] = decision.candidates
@@ -143,14 +129,23 @@ test('Candidate 预算全部耗尽时记录 rollback，且不产生非有限 JSO
   assert.doesNotMatch(JSON.stringify(decision), /Infinity|NaN/u)
 })
 
-test('LCB 未超过预注册 margin 时 rollback，即使 Candidate 通过普通 Gate', () => {
+test('Evaluator eligibility 是唯一晋升门槛，Group Controller 只排序合格 sibling', () => {
   const decision = scoreGrhsGroup({
-    configuration: configuration({ promotionMargin: 0.15 }),
+    configuration: configuration(),
     proposalPrior: { profile: 0.5, skills: 0.5 },
-    candidates: [candidate('candidate-a', ['profile']), candidate('candidate-b', ['skills'])],
+    candidates: [
+      candidate('candidate-a', ['profile'], { qualityDelta: 0.5, promotionEligible: false }),
+      candidate('candidate-b', ['skills'], { qualityDelta: 0.1 }),
+    ],
   })
-  assert.equal(decision.promotedCandidateId, null)
-  assert.equal(decision.rollbackReason, 'utility-lcb-below-margin')
+  assert.equal(decision.promotedCandidateId, 'candidate-b')
+  assert.equal(decision.rollbackReason, null)
+})
+
+test('GRHS 拒绝旧 LCB 和 penalty 配置，避免隐式改写 Evaluator 晋升语义', () => {
+  for (const field of ['regressionPenalty', 'costPenalty', 'complexityPenalty', 'promotionMargin']) {
+    assert.throws(() => configuration({ [field]: 0 }), /未知字段/u)
+  }
 })
 
 test('GRHS Controller Core E2E：H0 生成两个 sibling、评分类优势并晋升一个版本', () => {
@@ -170,8 +165,8 @@ test('GRHS Controller Core E2E：H0 生成两个 sibling、评分类优势并晋
       `g001-grhs-s00${index + 1}-l2`,
       plan.spec.regionIds,
       index === 0
-        ? { qualityDelta: 0.4, qualityLowerBound: 0.2 }
-        : { qualityDelta: 0.1, qualityLowerBound: 0.05 },
+        ? { qualityDelta: 0.4 }
+        : { qualityDelta: 0.1 },
     )),
   })
   assert.equal(decision.validCandidates, 2)

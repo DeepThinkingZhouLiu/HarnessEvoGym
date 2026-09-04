@@ -26,7 +26,7 @@ EvoCowork 不只是测一个 Agent 当前能不能完成 PPT、Word、Excel 或�
 同一个 Champion 下生成至少 2 个离散 Harness Patch；每个 Patch 只能改 MutationLease 允许的 Region。
 3
 实现 GRHS 打分
-组合质量提升、回退、成本和 Patch 复杂度得到 utility，并在组内标准化为 relative advantage。
+以 Selection reward delta 作为 utility，并在组内标准化为 relative advantage。
 4
 选择并更新
 选择最佳 Candidate 晋升；没有合格改进则回滚。记录 lineage、utility、advantage 和 proposal prior/state。
@@ -39,7 +39,7 @@ EvoCowork 不只是测一个 Agent 当前能不能完成 PPT、Word、Excel 或�
 - evaluator.mjs：配对评测、Gate 和 promotion decision。
 - round-robin Strategy 示例：外部算法插件的最小结构。
 - CONTRIBUTING.md：扩展协议、测试和安全边界。
-实现原则：优先复用现有 Candidate、Lease、Updater、Evaluator 和持久化逻辑；如果当前 Strategy 协议拿不到 GRHS 必需的候选组、质量、成本或复杂度信息，再做最小、可测试的协议扩展，不重写整套 Infra。
+实现原则：优先复用现有 Candidate、Lease、Updater、Evaluator 和持久化逻辑；Evaluator Policy 是唯一晋升门槛，Group Controller 只扩展候选组调度、质量排序与相对优势更新，不重写整套 Infra。
 跑通标准
 - 可运行：固定同一 H0、模型、Seed 和预算，至少生成并评测 2 个兄弟 Candidate。
 - 可审计：日志能还原 parent、patch、region、utility、relative advantage、最终晋升或回滚决定。

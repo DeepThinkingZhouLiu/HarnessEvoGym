@@ -13,9 +13,6 @@ For valid sibling `g`, the Controller computes:
 
 ```text
 utility_g = selection_reward_delta
-            - regression_penalty * paired_regression_rate
-            - cost_penalty * relative_token_delta
-            - complexity_penalty * normalized_patch_complexity
 
 advantage_g = (utility_g - group_mean) / (group_stddev + epsilon)
 ```
@@ -23,13 +20,14 @@ advantage_g = (utility_g - group_mean) / (group_stddev + epsilon)
 Invalid diffs, unsafe results, incomplete evaluations, and duplicate patches do
 not enter group statistics. Fewer than two valid siblings skips the relative
 update and rolls back. Otherwise, advantages update a categorical prior over
-Target Region IDs. The best gate-eligible sibling is promoted only when its
-penalized paired-bootstrap lower bound exceeds the precommitted margin. Ties are
-resolved by Candidate ID, so replay is deterministic.
+Target Region IDs. The existing Evaluator policy remains the sole promotion
+gate, matching the original sequential controller: among eligible siblings the
+Controller promotes the highest Selection reward delta. Ties are resolved by
+Candidate ID, so replay is deterministic.
 
 The immutable group decision records parent and sibling lineage, MutationPlan
-and Region IDs, utility components, relative advantage, proposal prior before
-and after the round, LCB, promotion, and rollback reason. Final remains sealed
+and Region IDs, Selection utility, relative advantage, proposal prior before
+and after the round, Evaluator decision, promotion, and rollback reason. Final remains sealed
 until the frozen Champion is finalized.
 
 The MVP composition is
@@ -79,7 +77,6 @@ Current limits: the MVP schedules sibling Updater and Solver calls
 sequentially. Within its single VM, the AgentBay bridge launches remote trials
 serially and runs launched trials concurrently. All 55 trials in the formal
 feedback split may run concurrently under the general platform cap of 200.
-The experiment uses token delta as the available cost proxy because the provider
-has no trusted rate card, and does not retry a group that has fewer than two
-valid siblings. Larger groups, bounded retries, and sibling-level parallelism
+The Controller does not retry a group that has fewer than two valid siblings.
+Larger groups, bounded retries, and sibling-level parallelism
 remain follow-up work.

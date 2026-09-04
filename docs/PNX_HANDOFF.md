@@ -1,104 +1,184 @@
-# pnx-dev 交接说明
+# pnx-dev GRHS 交接
 
-## 版本边界
+## liuzhou-dev 之后增加的内容
 
-- 分叉基线：`lz-dev@918d8efe190fedbeb65b5ccde8371085f8037cf8`
-- 当前 GRHS 语义提交：`7d311425ecdab87fb0e6bbdff1863d4913555920`
-- `sources/deepseek-harness/` 始终是只读上游；RSI 功能由 Controller 在 `.rsi/` 中实例化并运行。
-- liuzhou 原有的根 README、架构文档和 Cowork MVP 文档已保留，并恢复为分叉点内容。
+本分支从 `lz-dev@918d8ef` 分出。本次交付直接相关的新增内容只有：
 
-## 分叉后实现概况
+- 在原有 Candidate、MutationLease、Updater、OfficeVal Evaluator、晋升/回滚和日志之上增加 GRHS Group Controller。
+- 每轮从同一个 Champion 生成两个 sibling Candidate，共用同一份 Feedback 和 Selection 划分，分别运行完整 Updater Session。
+- 用 Selection `deltaMeanReward` 作为 utility，在组内标准化为 relative advantage，并更新 Region proposal prior。
+- 保持 liuzhou 原晋升语义：`evaluation.decision.eligible` 是唯一 Gate；Group Controller 只在 eligible sibling 中选择 utility 最大者。
+- 增加按题 checkpoint、失败恢复，以及 Local Docker 和 AgentBay 两种 OfficeVal 执行 backend。
 
-分叉后的有效代码扩展主要包括：
+主要代码是 `controller/src/grhs.mjs` 和
+`controller/src/cowork-orchestrator.mjs`。可直接复现的一轮配置是
+`experiments/cowork-msa-grhs-one-round-codex.json`。
 
-- 通用 Candidate、MutationLease、Mutation Catalog、Updater Runner 和 Diff Guard。
-- 可插拔 Target、Environment、Updater、Search Strategy 与 Evolution Recipe。
-- Cowork OfficeVal 环境、Model Gateway、AgentBay Docker bridge、按题 checkpoint 和基础设施恢复。
-- MSA Minimal Cowork/Reasoning Target，以及 HLE、PutnamBench 和文本推理运行路径。
-- Population Controller、五种演化模式、BaselinePack、sealed-final broker、资源计量和状态报告。
-- 最小 GRHS Group Controller：从同一 Champion 生成 sibling MutationPlan，复用独立 Lease、Updater、Evaluator、promotion/rollback 和日志组件，再计算组内相对优势。
+## 实验：12 → 9 → 5
 
-这些能力均位于 Controller 信任边界；Candidate 和 Updater 不能读取 sealed final、Evaluator Policy、凭据或 Controller 决策逻辑。
+实验使用 OmegaUse-OfficeVal 的 Linux static-verifier 任务：
 
-## 当前 GRHS 机制
+- Feedback：12 题。只用于生成反馈包，Updater 可见详细反馈。
+- Selection：9 题。H0 和两个 sibling 在同一组题上配对比较，只向 Controller 暴露聚合结果。
+- Final：5 题。演化期间 sealed，不参与修改或晋升；只允许在 Champion 冻结后显式 finalize。
 
-当前实现与 liuzhou 原始线性 Controller 的晋升语义对齐：
+本轮结果：
 
-```text
-utility_g = selection_delta_mean_reward_g
-advantage_g = (utility_g - group_mean) / (group_stddev + epsilon)
+| 对象 | 题数 | Mean reward | 相对 H0 | Eligible | 结果 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| H0 Feedback | 12 | 0.004545 | - | - | 生成反馈包 |
+| H0 Selection | 9 | 0.053980 | - | - | baseline |
+| s001 Selection | 9 | 0.073523 | +0.019543 | true | promoted |
+| s002 Selection | 9 | 0.003086 | -0.050894 | false | rejected |
+
+s001 在 9 题中相对 H0 提升 2 题、回退 0 题，因此新 Champion 是
+`g001-grhs-s001-l2`。s002 提升 0 题、回退 2 题，没有通过
+`minimum-mean-reward-delta` 和 `minimum-reward-improved` Gate。
+
+本轮没有运行 sealed Final，因此不报告 Final 分数。Final 5 题用于上传后由复现者
+通过 `experiment finalize` 独立评估，不能把它写成 Selection 结果。
+
+## Benchmark 格式和接入
+
+本实验的完整 Benchmark 文件是
+`benchmarks/cowork-omegause-officeval-linux-v1/benchmark-grhs-12-9-5.json`。
+它是 JSON，不依赖 `.rsi/`。以下只展示字段结构，数组内容已省略，不能直接拿这段
+示意做 validation；可运行内容以仓库中的完整文件为准：
+
+```json
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "Benchmark",
+  "metadata": { "id": "unique-id", "name": "human-readable name" },
+  "spec": {
+    "source": {
+      "adapter": "omegause-officeval",
+      "dataset": "baidu-frontier-research/OmegaUse-OfficeVal",
+      "split": "immutable-split-name",
+      "revision": "sha256-of-source-manifest"
+    },
+    "evaluator": {
+      "adapter": "omegause-officeval",
+      "resultFormat": "harness-rsi/solver-result-jsonl-v2"
+    },
+    "partitions": {
+      "feedback": { "visibility": "detailed", "expectedCount": 12, "instanceIds": [] },
+      "selection": { "visibility": "aggregate-only", "expectedCount": 9, "instanceIds": [] },
+      "final": { "visibility": "sealed", "expectedCount": 5, "instanceIds": [] }
+    },
+    "expectedTotal": 26
+  }
+}
 ```
 
-- `evaluation.decision.eligible` 是唯一晋升门槛。
-- Group Controller 只在 eligible sibling 中按 `deltaMeanReward` 从高到低排序。
-- 平分时按 Candidate ID 确定性决胜。
-- 有效 sibling 少于 `minimumValidCandidates` 时不做 relative update，并回滚。
-- 没有 sibling 通过 Evaluator Gate 时回滚。
-- relative advantage 只用于更新 Region proposal prior，不增加第二套晋升 Policy。
+接入时必须满足：
 
-旧实验性字段 `qualityLowerBound`、`regressionPenalty`、`costPenalty`、
-`complexityPenalty` 和 `promotionMargin` 已移除。GRHS 配置只保留
-`groupSize`、`minimumValidCandidates`、`advantageEpsilon` 和
-`priorLearningRate`。
+- 三个 Partition 都非空，ID 不能重复，`expectedCount` 必须等于 ID 数量，`expectedTotal` 必须等于三者总数。
+- visibility 固定为 `detailed`、`aggregate-only`、`sealed`，不能互换。
+- OfficeVal ID 必须存在于 Source Manifest，Linux backend 不能选择 `comRequired: true` 的任务。
+- `spec.source.revision` 必须等于 Source Manifest 文件的 SHA-256；不能使用 `main`、`HEAD` 或 `latest`。
+- Experiment 的 `spec.benchmark` 指向 Benchmark JSON，`spec.policy` 指向可信 Evaluation Policy。
 
-主要入口：
+Solver 每题产生一行 `harness-rsi/solver-result-jsonl-v2` JSONL。最小记录如下：
 
-- `controller/src/grhs.mjs`：确定性 sibling 计划、组内打分和 proposal prior。
-- `controller/src/cowork-orchestrator.mjs`：复用现有可信组件执行完整 GRHS round。
-- `controller/test/grhs.test.mjs`：确定性、打分、Gate、平分、失败和 rollback 测试。
-- `experiments/cowork-msa-grhs-smoke-codex.json`：一轮 smoke。
-- `experiments/cowork-msa-grhs-formal32-codex.json`：32 轮正式配置。
-
-## 已完成的 quick9 决策
-
-最终可审计 Run：
-
-```text
-.rsi/runs/grhs-agentbay-quick9-liuzhou-20260904-01
+```json
+{"instance_id":"officeval_002","status":"unresolved","reward":0.23,"trial_rewards":[0.23],"trial_seeds":[20260827],"policy_violations":[]}
 ```
 
-该 Run 从 `grhs-agentbay-formal32-20260902-03` 复用了 H0、s001、s002
-在同一组 9 个 Selection task 上的 committed checkpoint，没有重新调用
-Updater、Solver、OfficeVal 或模型。使用的 task 为：
+`status` 只能是 `resolved`、`unresolved`、`error`、`timeout` 或
+`not_attempted`；reward 范围是 `[0, 1]`。只有 feedback Partition 可以包含
+`feedback` 对象。Controller 会负责收集 Solver 输出，通常不需要手工创建 JSONL。
+
+## Dataset、Evaluator 和路径
+
+OfficeVal Dataset Root 需要包含：
 
 ```text
-officeval_002 officeval_034 officeval_036 officeval_040 officeval_049
-officeval_055 officeval_062 officeval_064 officeval_075
+task-en/officeval_NNN.json
+rubrics-en/officeval_NNN.json
+task_files/officeval_NNN/*
 ```
 
-因原网关空响应而未纳入本轮的两个 task 是 `officeval_058` 和
-`officeval_076`。三方均按相同 9-task Selection 集合比较。
+Evaluator Root 是干净的 Git checkout，需要包含：
 
-结果：
+```text
+verifiers/officeval_NNN_verifier.py
+verifiers/pdf_backend.py
+```
 
-| Candidate | Eligible | Mean reward | Delta mean reward | 结果 |
-| --- | ---: | ---: | ---: | --- |
-| `g001-grhs-s001-l2` | true | 0.073523 | +0.019543 | promoted |
-| `g001-grhs-s002-l2` | false | 0.003086 | -0.050894 | rejected |
+设置绝对路径：
 
-新 Champion 是 `g001-grhs-s001-l2`，Run 状态为 `completed`，
-`rollbackReason` 为 `null`。审计入口是该 Run 的 `state.json` 与
-`generations/generation-1/grhs-group/group-decision.json`。
+```bash
+export RSI_OFFICEVAL_DATASET_ROOT=/absolute/path/to/OmegaUse-OfficeVal-Dataset
+export RSI_OFFICEVAL_EVALUATOR_ROOT=/absolute/path/to/OmegaUse-OfficeVal
+```
 
-为保留证据链，当前只保留上述成功 Run 和它的源 Run
-`grhs-agentbay-formal32-20260902-03`；其他本地试跑已清理。
+当前冻结版本写在 `environments/omegause-officeval.yml` 的 `spec.source` 中。
+如果替换 Dataset 或 Evaluator，需要重新生成 Source Manifest：
 
-## 验证状态
+```bash
+node scripts/generate-omegause-officeval-manifest.mjs \
+  "$RSI_OFFICEVAL_DATASET_ROOT" \
+  "$RSI_OFFICEVAL_EVALUATOR_ROOT" \
+  benchmarks/omegause-officeval/source-manifest.json
+sha256sum benchmarks/omegause-officeval/source-manifest.json
+```
 
-- `npm run check`：通过。
-- GRHS 单测与配置测试：11/11 通过。
-- 当前保留的 smoke 与 formal32 GRHS Experiment：均通过 `experiment validate`。
-- 全套测试：447/448 通过。
-- 唯一已知失败位于 `controller/test/cowork-recovery.test.mjs`：旧测试期待归档
-  trial result，而当前恢复逻辑会保留可复用 checkpoint。这是清理前已存在的测试/行为
-  不一致，不是当前 GRHS 晋升逻辑导致。
+然后同步更新 Environment Adapter 的 `datasetRevision`、`evaluatorRevision`、
+`manifestDigest`，以及 Benchmark 的 `spec.source.revision`。不要只改 Benchmark
+里的字符串绕过文件摘要校验。
 
-## 后续操作
+## Backend 设置
 
-运行正式实验前需要在运行时注入 Provider 与 AgentBay 凭据，并确保 OfficeVal
-Dataset/Evaluator 固定版本通过 preflight。不要将凭据写入 Experiment、Candidate、
-反馈包、轨迹或 Mutation Report。
+Experiment 通过 `spec.adapters.environment` 选择执行 backend：
 
-下一步若继续扩展 GRHS，应优先增加 sibling 并行调度、组失败的有界重试和更多轮次
-验证；不要把 LCB 或成本/复杂度惩罚重新放进 Group Controller。任何新的晋升约束都应
-显式修改可信 Evaluator Policy，而不是建立第二套隐藏 Gate。
+| Backend | Environment Adapter | 额外要求 |
+| --- | --- | --- |
+| Local Docker | `environments/omegause-officeval.yml` | 本机 Docker daemon 可用，当前用户有权限执行 `docker` |
+| AgentBay | `environments/omegause-officeval-agentbay.yml` | AgentBay SDK、API key、Image ID 和 Policy ID |
+
+仓库提供的一轮配置默认使用 Local Docker。切换到 AgentBay 时，把 Experiment 中的
+environment 改为 `environments/omegause-officeval-agentbay.yml`，并把该文件中的
+`spec.docker.agentBay.pythonExecutable` 改成安装了 AgentBay SDK 的 Python 绝对路径。
+运行前再设置：
+
+```bash
+export AGENTBAY_API_KEY=your-agentbay-key
+export HARNESS_RSI_AGENTBAY_IMAGE_ID=your-image-id
+export HARNESS_RSI_AGENTBAY_POLICY_ID=your-policy-id
+```
+
+`spec.docker.backend` 只允许 `local` 或 `agentbay`。Updater backend 由
+`spec.adapters.updater` 单独控制，本实验固定为 `adapters/updaters/codex-cli.yml`。
+
+## 完整运行一轮进化
+
+以下命令使用默认 Local Docker backend，依次完成配置检查、preflight、镜像构建、
+一轮 GRHS 进化，以及对最终 Champion 的 5 题 sealed Final：
+
+```bash
+npm ci
+git submodule update --init --recursive
+
+export RSI_OFFICEVAL_DATASET_ROOT=/absolute/path/to/OmegaUse-OfficeVal-Dataset
+export RSI_OFFICEVAL_EVALUATOR_ROOT=/absolute/path/to/OmegaUse-OfficeVal
+export RSI_PROVIDER_BASE_URL=https://api.zcloudapi.com/v1
+read -rsp "Provider API key: " RSI_PROVIDER_API_KEY && echo
+export RSI_PROVIDER_API_KEY
+
+GRHS_CONFIG=experiments/cowork-msa-grhs-one-round-codex.json
+GRHS_RUN_ID=grhs-one-round-$(date -u +%Y%m%d-%H%M%S)
+
+npm run check
+npm run rsi -- benchmark validate \
+  --config benchmarks/cowork-omegause-officeval-linux-v1/benchmark-grhs-12-9-5.json
+npm run rsi -- experiment validate --config "$GRHS_CONFIG"
+npm run rsi -- experiment preflight --config "$GRHS_CONFIG"
+npm run rsi -- runtime build --experiment "$GRHS_CONFIG"
+npm run rsi -- experiment run --config "$GRHS_CONFIG" --run-id "$GRHS_RUN_ID"
+npm run rsi -- experiment finalize --run ".rsi/runs/$GRHS_RUN_ID"
+```
+
+`experiment run` 只读取 Feedback 和 Selection；只有最后一条 `experiment finalize`
+能够读取 Final。`.rsi/` 是本地运行状态和结果目录，不会随 GitHub 上传；可复现所需的
+Benchmark、Environment、Policy 和 Experiment 配置均已提交到仓库。

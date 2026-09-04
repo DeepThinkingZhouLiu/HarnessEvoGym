@@ -1,6 +1,17 @@
 #!/usr/bin/env node
 
 import { resolve } from 'node:path'
+import { loadExperimentBundle, validateAnyAdapter } from './adapters.mjs'
+import { readConfigFile, REPOSITORY_ROOT } from './config.mjs'
+import { evaluateBenchmark } from './evaluator.mjs'
+import {
+  buildExperimentRuntime,
+  finalizeEvolution,
+  preflightExperiment,
+  resumePopulationEvolution,
+  runConfiguredBaseline,
+  runConfiguredEvolution,
+} from './cowork-orchestrator.mjs'
 import {
   PARTITION_NAMES,
   ProtocolError,
@@ -12,12 +23,21 @@ import {
   validateResultRecords,
   writeJsonFile,
 } from './protocol.mjs'
-import { evaluateBenchmark } from './evaluator.mjs'
 import { isCampaignCliCommand, runCampaignCliCommand } from './campaign-cli.mjs'
+import { exportBaselinePackFromRun } from './baseline-pack.mjs'
 
-const HELP = `DeepSeek Harness RSI Controller
+const HELP = `HarnessEvoGym Controller
 
 用法：
+  harness-rsi adapter validate --config <adapter.yml>
+  harness-rsi experiment validate --config <experiment.json>
+  harness-rsi experiment preflight --config <experiment.json> [--skip-secrets]
+  harness-rsi runtime build --experiment <experiment.json>
+  harness-rsi experiment baseline --config <experiment.json> [--run-id <id>]
+  harness-rsi experiment baseline-pack-export --run <run> --output <pack.json> --id <id> [--branch <branch-id>]
+  harness-rsi experiment run --config <experiment.json> [--run-id <id>]
+  harness-rsi experiment resume --run <population-run>
+  harness-rsi experiment finalize --run <single-run | population-run> [--recover-infrastructure]
   harness-rsi benchmark validate --config <benchmark.json> [--output <report.json>]
   harness-rsi evaluate compare \\
     --benchmark <benchmark.json> \\
@@ -45,6 +65,13 @@ const HELP = `DeepSeek Harness RSI Controller
   - evolve 的 --round-limit 0 表示不设人工轮数上限，由 L1-L3 早停规则结束。
   - final Partition 标记为 sealed，必须显式提供 --allow-sealed。
   - 本入口消费标准化 Solver Result，不直接执行候选仓库里的任何命令。
+  - experiment run 只使用 feedback 与 selection，永远不会读取 final。
+  - experiment baseline 只评测 H0 selection，不启动 Updater，不消耗进化预算。
+  - experiment baseline-pack-export 从已有 Run 固化 H0 Selection 与第一轮 Feedback，不读取 final。
+  - experiment resume 只恢复同一 Controller Revision 下暂停或处于稳定 Wave 边界的 Cowork Population。
+  - experiment finalize 是唯一允许解锁 Cowork sealed final 的入口。
+  - --recover-infrastructure 只能在 Population 上次失败且从未访问 sealed final 时使用，并且只能恢复一次。
+  - Provider 密钥只从运行时环境变量读取，不写入 Experiment 或 .rsi 产物。
 `
 
 function parseOptions(args, { valueOptions, booleanFlags = new Set() }) {
@@ -87,6 +114,179 @@ async function emit(value, outputPath) {
     return
   }
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
+}
+
+function progress(event) {
+  const generation = event.generation ? ` generation=${event.generation}` : ''
+  process.stderr.write(`[${event.stage}]${generation} ${event.message}\n`)
+}
+
+async function validateAdapterCommand(args) {
+  const { options } = parseOptions(args, { valueOptions: new Set(['config', 'output']) })
+  const adapter = await validateAnyAdapter(await readConfigFile(requiredPath(options, 'config')))
+  await emit({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'AdapterValidationReport',
+    valid: true,
+    adapter: { id: adapter.id, kind: adapter.kind },
+  }, options.get('output'))
+}
+
+async function validateExperimentCommand(args) {
+  const { options } = parseOptions(args, { valueOptions: new Set(['config', 'output']) })
+  const bundle = await loadExperimentBundle(requiredPath(options, 'config'), REPOSITORY_ROOT)
+  await emit({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'ExperimentValidationReport',
+    valid: true,
+    experiment: bundle.experiment.id,
+    target: bundle.target.id,
+    updater: bundle.updater.id,
+    provider: bundle.provider.id,
+    providers: {
+      solver: bundle.providers.solver.id,
+      updater: bundle.providers.updater.id,
+    },
+    strategy: bundle.strategy.id,
+    environment: bundle.environment.id,
+    benchmark: bundle.benchmark.id,
+    policy: bundle.policy.id,
+    mutationLevel: bundle.experiment.evolution.mutationLevel,
+    partitions: Object.fromEntries(
+      Object.entries(bundle.benchmark.partitions).map(([name, value]) => [name, value.instanceIds.length]),
+    ),
+  }, options.get('output'))
+}
+
+async function preflightExperimentCommand(args) {
+  const { options, flags } = parseOptions(args, {
+    valueOptions: new Set(['config', 'output']),
+    booleanFlags: new Set(['skip-secrets']),
+  })
+  const report = await preflightExperiment({
+    repositoryRoot: REPOSITORY_ROOT,
+    experimentPath: requiredPath(options, 'config'),
+    requireSecrets: !flags.has('skip-secrets'),
+  })
+  await emit({ apiVersion: 'harness-rsi/v1alpha1', kind: 'PreflightReport', valid: true, ...report }, options.get('output'))
+}
+
+async function buildRuntimeCommand(args) {
+  const { options } = parseOptions(args, { valueOptions: new Set(['experiment', 'output']) })
+  const result = await buildExperimentRuntime({
+    repositoryRoot: REPOSITORY_ROOT,
+    experimentPath: requiredPath(options, 'experiment'),
+  })
+  await emit({ apiVersion: 'harness-rsi/v1alpha1', kind: 'RuntimeBuildReport', ...result }, options.get('output'))
+}
+
+async function evolveRunCommand(args) {
+  const { options } = parseOptions(args, { valueOptions: new Set(['config', 'run-id', 'output']) })
+  const result = await runConfiguredEvolution({
+    repositoryRoot: REPOSITORY_ROOT,
+    experimentPath: requiredPath(options, 'config'),
+    ...(options.get('run-id') ? { runId: options.get('run-id') } : {}),
+    onEvent: progress,
+  })
+  await emit({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'EvolutionRunReport',
+    runId: result.runId,
+    runRoot: result.runRoot,
+    championId: result.championId,
+    status: result.population ? result.state.status : result.state.metadata.status,
+  }, options.get('output'))
+}
+
+async function baselineRunCommand(args) {
+  const { options } = parseOptions(args, { valueOptions: new Set(['config', 'run-id', 'output']) })
+  const result = await runConfiguredBaseline({
+    repositoryRoot: REPOSITORY_ROOT,
+    experimentPath: requiredPath(options, 'config'),
+    ...(options.get('run-id') ? { runId: options.get('run-id') } : {}),
+    onEvent: progress,
+  })
+  await emit({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'BaselineRunReport',
+    runId: result.runId,
+    runRoot: result.runRoot,
+    baselinePath: result.baselinePath,
+    baselineId: result.state.best.candidateId,
+    status: result.state.status,
+    primary: result.state.best.evaluation.primary,
+    budgetConsumed: result.state.budget.consumed,
+  }, options.get('output'))
+}
+
+async function baselinePackExportCommand(args) {
+  const { options } = parseOptions(args, {
+    valueOptions: new Set(['run', 'output', 'id', 'branch']),
+  })
+  const result = await exportBaselinePackFromRun({
+    repositoryRoot: REPOSITORY_ROOT,
+    runDirectory: requiredPath(options, 'run'),
+    outputPath: requiredPath(options, 'output'),
+    id: requiredValue(options, 'id'),
+    ...(options.get('branch') ? { branchId: options.get('branch') } : {}),
+    secrets: [process.env.RSI_PROVIDER_API_KEY].filter(Boolean),
+  })
+  const decision = result.pack.spec.decision ?? {
+    partition: 'selection',
+    ...result.pack.spec.selection,
+  }
+  await emit({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'BaselinePackExportReport',
+    id: result.pack.metadata.id,
+    path: result.path,
+    sha256: result.pack.metadata.sha256,
+    source: result.pack.spec.source,
+    primary: decision.evaluation.primary,
+    decisionPartition: decision.partition,
+    decisionCases: decision.records.length,
+    ...(decision.partition === 'selection'
+      ? { selectionCases: decision.records.length }
+      : {}),
+    feedbackCases: result.pack.spec.feedback.records.length,
+  })
+}
+
+async function evolveResumeCommand(args) {
+  const { options } = parseOptions(args, { valueOptions: new Set(['run', 'output']) })
+  const result = await resumePopulationEvolution({
+    repositoryRoot: REPOSITORY_ROOT,
+    runDirectory: requiredPath(options, 'run'),
+    onEvent: progress,
+  })
+  await emit({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'EvolutionRunReport',
+    runId: result.runId,
+    runRoot: result.runRoot,
+    championId: result.championId,
+    status: result.state.status,
+  }, options.get('output'))
+}
+
+async function evolveFinalizeCommand(args) {
+  const { options, flags } = parseOptions(args, {
+    valueOptions: new Set(['run', 'output']),
+    booleanFlags: new Set(['recover-infrastructure']),
+  })
+  const result = await finalizeEvolution({
+    repositoryRoot: REPOSITORY_ROOT,
+    runDirectory: requiredPath(options, 'run'),
+    recoverInfrastructure: flags.has('recover-infrastructure'),
+    onEvent: progress,
+  })
+  await emit({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'FinalEvaluationRunReport',
+    runId: result.runId,
+    reportPath: result.reportPath,
+    metrics: result.report.rsiMetrics,
+  }, options.get('output'))
 }
 
 async function validateBenchmarkCommand(args) {
@@ -183,18 +383,18 @@ async function main() {
     process.stdout.write(HELP)
     return
   }
-  if (group === 'benchmark' && action === 'validate') {
-    await validateBenchmarkCommand(args)
-    return
-  }
-  if (group === 'evaluate' && action === 'compare') {
-    await compareCommand(args)
-    return
-  }
-  if (isCampaignCliCommand(group, action)) {
-    await runCampaignCliCommand(group, action, args)
-    return
-  }
+  if (group === 'adapter' && action === 'validate') return await validateAdapterCommand(args)
+  if (group === 'experiment' && action === 'validate') return await validateExperimentCommand(args)
+  if (group === 'experiment' && action === 'preflight') return await preflightExperimentCommand(args)
+  if (group === 'experiment' && action === 'baseline') return await baselineRunCommand(args)
+  if (group === 'experiment' && action === 'baseline-pack-export') return await baselinePackExportCommand(args)
+  if (group === 'experiment' && action === 'run') return await evolveRunCommand(args)
+  if (group === 'experiment' && action === 'resume') return await evolveResumeCommand(args)
+  if (group === 'experiment' && action === 'finalize') return await evolveFinalizeCommand(args)
+  if (group === 'runtime' && action === 'build') return await buildRuntimeCommand(args)
+  if (group === 'benchmark' && action === 'validate') return await validateBenchmarkCommand(args)
+  if (group === 'evaluate' && action === 'compare') return await compareCommand(args)
+  if (isCampaignCliCommand(group, action)) return await runCampaignCliCommand(group, action, args)
   throw new ProtocolError(`未知命令：${[group, action].filter(Boolean).join(' ')}`, ['使用 --help 查看入口'])
 }
 

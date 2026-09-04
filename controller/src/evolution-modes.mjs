@@ -292,11 +292,26 @@ export function selectPopulationBest(branches) {
   }
   const ranked = branches.filter((branch) => (
     BRANCH_ID_PATTERN.test(branch?.branchId ?? '')
-      && Number.isInteger(branch?.incumbent?.validationVerified)
-  )).sort((left, right) => (
-    right.incumbent.validationVerified - left.incumbent.validationVerified
-      || left.branchId.localeCompare(right.branchId)
+      && Number.isFinite(
+        branch?.incumbent?.evaluation?.primary?.value
+          ?? branch?.incumbent?.validationVerified,
+      )
   ))
   if (ranked.length === 0) throw new ProtocolError('Population 没有可排名的 branch incumbent')
+  const metric = ranked[0].incumbent.evaluation?.primary?.metric ?? 'validation-verified-count'
+  const direction = ranked[0].incumbent.evaluation?.primary?.direction ?? 'maximize'
+  for (const branch of ranked) {
+    const currentMetric = branch.incumbent.evaluation?.primary?.metric ?? 'validation-verified-count'
+    const currentDirection = branch.incumbent.evaluation?.primary?.direction ?? 'maximize'
+    if (currentMetric !== metric || currentDirection !== direction) {
+      throw new ProtocolError('同一 Population 的 Branch 主指标或方向不一致')
+    }
+  }
+  const multiplier = direction === 'maximize' ? 1 : -1
+  ranked.sort((left, right) => {
+    const leftValue = left.incumbent.evaluation?.primary?.value ?? left.incumbent.validationVerified
+    const rightValue = right.incumbent.evaluation?.primary?.value ?? right.incumbent.validationVerified
+    return multiplier * (rightValue - leftValue) || left.branchId.localeCompare(right.branchId)
+  })
   return ranked[0]
 }

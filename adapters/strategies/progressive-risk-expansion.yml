@@ -1,0 +1,15 @@
+apiVersion: harness-rsi/v1alpha1
+kind: SearchStrategyAdapter
+
+metadata:
+  id: progressive-risk-expansion
+  name: Progressive Risk Expansion
+
+spec:
+  protocol: builtin-v1
+  implementation: progressive-risk-expansion
+  configuration:
+    # 从最低风险层开始；连续无晋升后扩大到下一个 Target 已定义层级。
+    startRiskLevel: l1
+    missesBeforeExpansion: 3
+    regionSelection: all-under-active-risk-level

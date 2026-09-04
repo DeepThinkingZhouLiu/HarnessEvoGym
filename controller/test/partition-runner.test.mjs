@@ -274,6 +274,11 @@ test('solver and verifier have independent infrastructure retry budgets', async 
 test('sandboxed task leases only its gateway before Solver and releases before close', async () => {
   const { options } = await fixture()
   const events = []
+  const privileged = (process.getuid?.() ?? 0) === 0
+  const solverUid = privileged ? 1103 : process.getuid()
+  const solverGid = privileged ? 2103 : process.getgid()
+  const verifierUid = privileged ? 1104 : solverUid + 1
+  const verifierGid = privileged ? 2104 : solverGid + 1
   const runtime = {
     async startModelGateway() {
       events.push('gateway:start')
@@ -285,7 +290,7 @@ test('sandboxed task leases only its gateway before Solver and releases before c
     },
     async acquireGatewayEgressLease({ gatewayUrl, uid }) {
       assert.equal(gatewayUrl, 'http://127.0.0.1:54321/v1')
-      assert.equal(uid, 1103)
+      assert.equal(uid, solverUid)
       events.push('lease:acquire')
       return { async release() { events.push('lease:release') } }
     },
@@ -306,10 +311,10 @@ test('sandboxed task leases only its gateway before Solver and releases before c
   const result = await runPartition({
     ...options,
     lakePath: '/usr/bin/true',
-    solverUid: 1103,
-    solverGid: 2103,
-    verifierUid: 1104,
-    verifierGid: 2104,
+    solverUid,
+    solverGid,
+    verifierUid,
+    verifierGid,
     runtime,
   })
   assert.equal(result.summary.verified, 1)

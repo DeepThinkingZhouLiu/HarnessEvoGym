@@ -1,0 +1,28 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "SyntheticTextReasoningTasks",
+  "metadata": {
+    "id": "synthetic-text-reasoning-smoke-v1",
+    "notice": "Synthetic connectivity smoke only. This is not HLE and must not be used as a reasoning capability benchmark."
+  },
+  "instances": [
+    {
+      "id": "synthetic-percent-reversal",
+      "partition": "feedback",
+      "instruction": "A price is increased by 25% and then decreased by 20%. The final price is 120. What was the original price? Return the final answer as a number.",
+      "answer": "120"
+    },
+    {
+      "id": "synthetic-drawer-guarantee",
+      "partition": "selection",
+      "instruction": "A drawer contains red, blue, and green socks, with at least two socks of each color. In the dark, what is the minimum number of socks you must draw to guarantee that at least two drawn socks have the same color? Return the final answer as an integer.",
+      "answer": "4"
+    },
+    {
+      "id": "synthetic-linear-equation",
+      "partition": "final",
+      "instruction": "Solve for x: 3(x - 2) + 5 = 50. Return only the value of x as the final answer.",
+      "answer": "17"
+    }
+  ]
+}

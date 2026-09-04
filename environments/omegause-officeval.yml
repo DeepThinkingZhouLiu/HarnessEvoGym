@@ -1,0 +1,81 @@
+apiVersion: harness-rsi/v1alpha1
+kind: EnvironmentAdapter
+
+metadata:
+  id: omegause-officeval
+  name: OmegaUse-OfficeVal Linux Office Environment
+
+spec:
+  protocol: omegause-officeval-docker-v1
+
+  source:
+    datasetRootEnvironment: RSI_OFFICEVAL_DATASET_ROOT
+    evaluatorRootEnvironment: RSI_OFFICEVAL_EVALUATOR_ROOT
+    datasetRevision: cd6ba6d8fb83b3fb551e24eebc20e1fb0bd154a5
+    evaluatorRevision: ffbeecb8752447c8e40b594a0eeb1db7236ecb36
+    manifestPath: benchmarks/omegause-officeval/source-manifest.json
+    manifestDigest: 8bf749b53988822a90520eba4761c6c311e17dd0e13bd78658b261a921128291
+
+  task:
+    workspacePath: /workspace
+    environmentAssets: environments/omegause-officeval-assets
+    # 每道题的 Workspace、Solver 和 Verifier 完全隔离；仅使用网关容量的一半，
+    # 避免 Terra High 长请求在中转 Provider 上同时触发过载。
+    maximumConcurrentTrials: 4
+    workspaceLimits:
+      maximumFiles: 10000
+      maximumBytes: 1073741824
+      maximumFileBytes: 536870912
+      maximumChangedFiles: 2048
+      maximumChangedBytes: 536870912
+
+  runtime:
+    image: harness-rsi/omegause-officeval:v1
+    dockerfile: docker/omegause-officeval/Dockerfile
+    verifierRunner: docker/omegause-officeval/run-verifier.py
+
+  docker:
+    binary: docker
+    # Solver 实际由 Controller 接入每个 Run 独立的 internal Model Gateway 网络。
+    network: bridge
+    runAsCurrentUser: true
+    resources:
+      cpus: 4
+      memory: 8g
+      pids: 512
+      timeoutSeconds: 3600
+
+  modelGateway:
+    image: harness-rsi/model-gateway:v1
+    dockerfile: docker/model-gateway/Dockerfile
+    alias: model-gateway
+    port: 8080
+    egressNetwork: bridge
+    maximumRequestsPerRun: 4096
+    maximumConcurrentRequests: 8
+    # 首次上游请求失败后，Model Gateway 最多再尝试 5 次。
+    maximumUpstreamRetries: 5
+    resources:
+      cpus: 1
+      memory: 512m
+      pids: 128
+
+  verifier:
+    # 具体 Verifier 与 Submission 仅挂入独立、无网络、只读根文件系统的评分容器。
+    timeoutSeconds: 300
+    resources:
+      cpus: 2
+      memory: 4g
+      pids: 256
+
+  reward:
+    minimum: 0
+    maximum: 1
+    resolvedThreshold: 1
+
+  feedback:
+    maximumTextBytesPerCase: 32768
+    maximumArtifactEntriesPerCase: 200
+    maximumArtifactBytesPerCase: 65536
+    maximumHistoryEntries: 10
+    maximumHistoryBytes: 131072

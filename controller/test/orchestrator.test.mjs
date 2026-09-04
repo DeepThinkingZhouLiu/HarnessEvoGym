@@ -15,15 +15,17 @@ const SOFT_MUTATION_PATHS = Object.freeze({
   l2: 'agent.py',
   l3: 'model.py',
 })
-const UPDATER_UID = 65534
-const UPDATER_GID = 65534
+const PRIVILEGED = (process.getuid?.() ?? 0) === 0
+const UPDATER_UID = PRIVILEGED ? 65534 : process.getuid()
+const UPDATER_GID = PRIVILEGED ? 65534 : process.getgid()
 
 function updaterGit({ gitRoot, candidateRoot }, args) {
-  return execFileSync('/usr/bin/setpriv', [
-    `--reuid=${UPDATER_UID}`,
-    `--regid=${UPDATER_GID}`,
-    '--clear-groups',
-    '/usr/bin/git',
+  const command = PRIVILEGED ? '/usr/bin/setpriv' : '/usr/bin/git'
+  const privilegeArgs = PRIVILEGED ? [
+    `--reuid=${UPDATER_UID}`, `--regid=${UPDATER_GID}`, '--clear-groups', '/usr/bin/git',
+  ] : []
+  return execFileSync(command, [
+    ...privilegeArgs,
     `--git-dir=${gitRoot}`,
     `--work-tree=${candidateRoot}`,
     ...args,

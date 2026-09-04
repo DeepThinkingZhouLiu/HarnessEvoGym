@@ -44,6 +44,7 @@ export class LinearGitWorkspace {
     targetRevision,
     updaterUid,
     updaterGid,
+    trustedUid = process.getuid?.() ?? 0,
     mutationPolicy,
     gitPath = '/usr/bin/git',
     setprivPath = '/usr/bin/setpriv',
@@ -62,9 +63,13 @@ export class LinearGitWorkspace {
         || !Number.isInteger(updaterGid) || updaterGid < 1) {
       throw new ProtocolError('Linear Git updater uid/gid must be positive integers')
     }
+    if (!Number.isInteger(trustedUid) || trustedUid < 0) {
+      throw new ProtocolError('Linear Git trusted uid must be a non-negative integer')
+    }
     this.targetRevision = targetRevision
     this.updaterUid = updaterUid
     this.updaterGid = updaterGid
+    this.trustedUid = trustedUid
     this.mutationPolicy = mutationPolicy
     this.gitPath = resolve(gitPath)
     this.setprivPath = resolve(setprivPath)
@@ -111,7 +116,12 @@ export class LinearGitWorkspace {
 
   async #git(args, options = {}) {
     const gitArguments = [`--git-dir=${this.gitRoot}`, `--work-tree=${this.workspace}`, ...args]
-    if (!this.updaterAccess) return this.#run(this.gitPath, gitArguments, options)
+    const currentUid = process.getuid?.() ?? 0
+    const currentGid = process.getgid?.() ?? 0
+    if (!this.updaterAccess
+        || (currentUid === this.updaterUid && currentGid === this.updaterGid)) {
+      return this.#run(this.gitPath, gitArguments, options)
+    }
     return this.#run(this.setprivPath, [
       `--reuid=${this.updaterUid}`,
       `--regid=${this.updaterGid}`,
@@ -178,17 +188,36 @@ export class LinearGitWorkspace {
   async grantUpdaterAccess() {
     await this.initialize()
     if (this.updaterAccess) return
-    // These three parents only need execute permission for the updater to
-    // traverse to the two explicitly mounted writable roots.
+
+    // Campaign 外部的祖先目录不属于 Controller，只验证可穿越，绝不改所有者或权限。
+    let ancestor = dirname(this.campaignRoot)
+    while (true) {
+      const stat = await lstat(ancestor)
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        throw new ProtocolError('Linear Git campaign ancestor must be a real directory')
+      }
+      const canTraverse = (
+        (stat.uid === this.updaterUid && (stat.mode & 0o100) !== 0)
+        || (stat.gid === this.updaterGid && (stat.mode & 0o010) !== 0)
+        || (stat.mode & 0o001) !== 0
+      )
+      if (!canTraverse) {
+        throw new ProtocolError(`Updater cannot traverse campaign ancestor: ${ancestor}`)
+      }
+      const parent = dirname(ancestor)
+      if (parent === ancestor) break
+      ancestor = parent
+    }
+
+    // 仅在 Campaign 内部授予 Updater 组穿越权，信任根所有者保持不变。
     const traversalRoots = new Set([
-      dirname(this.campaignRoot),
       this.campaignRoot,
       dirname(dirname(this.workspace)),
       dirname(this.workspace),
       dirname(this.gitRoot),
     ])
     for (const path of traversalRoots) {
-      await this.#run('/usr/bin/chown', ['0:' + this.updaterGid, '--', path], {
+      await this.#run('/usr/bin/chown', [`${this.trustedUid}:${this.updaterGid}`, '--', path], {
         cwd: this.campaignRoot,
       })
       await this.#run('/usr/bin/chmod', ['710', '--', path], { cwd: this.campaignRoot })

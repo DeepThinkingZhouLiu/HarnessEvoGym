@@ -3,50 +3,185 @@ kind: TargetAdapter
 
 metadata:
   id: msa-minimal
-  name: MSA-derived Minimal Harness
+  name: MSA Minimal Cowork Harness
 
 spec:
   source:
-    kind: local-git
-    path: /mnt/data/hzy/03_dsh_rsi/sources/msa-minimal-harness
-    revision: pinned
+    kind: repository-tree
+    path: sources/msa-minimal-harness
+    revision: d3ef58816c980549f4ea296cddab3bf54e4b6f9d
 
   materialization:
-    strategy: single-git-worktree
-    compile: false
+    strategy: source-plus-seed-overlay
+    seedPath: targets/msa-minimal/cowork-v1
+    seedDigest: 27e50592951c551230080a78edc0e7c272b6ddcbe2b6fd180de38d028a5ef2bc
+    overrides:
+      - agent.py
+      - model.py
+      - run.py
+    runtimeRoot: .rsi/runs
 
   solver:
-    protocol: python-responses-over-unix-socket
-    profile: math
-    tools:
-      - bash
+    protocol: msa-minimal-docker-v1
+    runtime:
+      image: harness-rsi/msa-minimal-cowork:d3ef58816c98
+      dockerfile: docker/msa-minimal-runtime/Dockerfile
+      profile: cowork
+      pythonCommand: python3
+      answerFile: answer.txt
+      traceFile: agent.jsonl
+      maximumAnswerBytes: 1048576
+      maximumTraceBytes: 16777216
+      # 公开 Smoke 只验证真实 Solver 链路，每道题最多一次模型交互，避免把连通性测试跑成正式训练。
+      maximumSteps: 1
+      secretEnvironment:
+        - RSI_PROVIDER_API_KEY
+        - RSI_PROVIDER_BASE_URL
 
   mutation:
-    selection: updater-soft
     alwaysReadOnly:
+      - .rsi-context/**
+      - .rsi-output/**
       - .git
       - .git/**
       - LICENSE.md
       - NOTICE.md
       - README.md
-      - '**/.env'
-      - '**/.env.*'
+      - "**/.env"
+      - "**/.env.*"
+      - "**/*credential*"
+      - "**/*secret*"
+
+    limits:
+      maximumTreeEntries: 2000
+      maximumChangedFiles: 30
+      maximumChangedBytes: 1048576
+      maximumFileBytes: 262144
+
+    semanticChecks:
+      protocol: msa-minimal-cowork-v1
+      requiredFiles:
+        - agent.py
+        - model.py
+        - run.py
+        - tools.py
+        - profiles/cowork.md
+        - profiles/cowork.json
+      pythonFiles:
+        - agent.py
+        - model.py
+        - run.py
+        - tools.py
+      profile:
+        path: profiles/cowork.json
+        maximums:
+          max_steps: 32
+          command_timeout_seconds: 600
+          max_observation_chars: 131072
+          max_output_tokens: 32768
+          maximum_skill_files: 128
+          maximum_skill_chars: 524288
+      skills:
+        root: skills
+        requiredNamePrefix: cowork-
+
+    catalog:
+      maximumRegionsPerPlan: 6
+      regions:
+        - id: profile-policy
+          description: 调整 Cowork 角色、行为约束、步骤和上下文预算。
+          riskLevel: l1
+          writable:
+            - profiles/cowork.md
+            - profiles/cowork.json
+          extensions: [.md, .json]
+          requires: []
+          conflicts: []
+
+        - id: skill-guidance
+          description: 调整文档、PDF、演示文稿和表格的 Cowork Playbook。
+          riskLevel: l1
+          writable:
+            - skills/**/*.md
+            - skills/**/*.json
+            - skills/**/*.yml
+            - skills/**/*.yaml
+            - skills/**/*.txt
+          extensions: [.md, .json, .yml, .yaml, .txt]
+          requires: []
+          conflicts: []
+
+        - id: agent-loop
+          description: 调整消息历史、动作解析、重试、自检和上下文编排。
+          riskLevel: l2
+          writable: [agent.py]
+          extensions: [.py]
+          requires: []
+          conflicts: []
+
+        - id: tool-runtime
+          description: 调整 Bash 工具的超时、输出编码和错误反馈。
+          riskLevel: l2
+          writable: [tools.py]
+          extensions: [.py]
+          requires: []
+          conflicts: []
+
+        - id: model-transport
+          description: 调整 Chat Completions 传输、SSE 解析和错误恢复。
+          riskLevel: l3
+          writable: [model.py]
+          extensions: [.py]
+          requires: []
+          conflicts: []
+
+        - id: runtime-wiring
+          description: 调整 CLI、Profile 和 Answer/Trace 生命周期装配。
+          riskLevel: l3
+          writable: [run.py]
+          extensions: [.py]
+          requires: []
+          conflicts: []
+
     levels:
       l1:
-        description: Declarative strategy in math.md/math.json—Solver role, math/coding and Bash policy, action/final contract, answer format, self-checking guidance, and step/token/tool budgets.
+        description: 只允许修改 Cowork Prompt、Profile 与 Skill 文档。
         writable:
-          - profiles/**
+          - profiles/cowork.md
+          - profiles/cowork.json
+          - skills/**/*.md
+          - skills/**/*.json
+          - skills/**/*.yml
+          - skills/**/*.yaml
+          - skills/**/*.txt
+        extensions: [.md, .json, .yml, .yaml, .txt]
+
       l2:
-        description: Local behavioral extensions in agent.py/tools.py—the minimal Harness's combined middleware, hooks, memory/router, workflow, parser, trace, and Bash-tool surfaces.
+        description: 在 L1 基础上允许修改 Agent Loop 与 Bash Tool Runtime。
         writable:
-          - profiles/**
+          - profiles/cowork.md
+          - profiles/cowork.json
+          - skills/**/*.md
+          - skills/**/*.json
+          - skills/**/*.yml
+          - skills/**/*.yaml
+          - skills/**/*.txt
           - agent.py
           - tools.py
+        extensions: [.md, .json, .yml, .yaml, .txt, .py]
+
       l3:
-        description: Structural Solver-core changes plus Responses/SSE transport, error/retry semantics, session/CLI wiring, artifact lifecycle, adapters, and runtime entrypoint assembly.
+        description: 在 L2 基础上允许修改模型传输与 Runtime Wiring；评测根和网关仍冻结。
         writable:
-          - profiles/**
+          - profiles/cowork.md
+          - profiles/cowork.json
+          - skills/**/*.md
+          - skills/**/*.json
+          - skills/**/*.yml
+          - skills/**/*.yaml
+          - skills/**/*.txt
           - agent.py
           - tools.py
           - model.py
           - run.py
+        extensions: [.md, .json, .yml, .yaml, .txt, .py]

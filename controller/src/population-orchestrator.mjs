@@ -1,6 +1,12 @@
 import { relative } from 'node:path'
 
+import {
+  validateBranchEvolutionDriver,
+  validateBranchProjection,
+} from './branch-evolution-driver.mjs'
+import { createReasoningBranchDriver } from './branches/reasoning.mjs'
 import { redactSecrets } from './campaign-store.mjs'
+import { primaryMetricDelta } from './evaluation-summary.mjs'
 import {
   buildCoordinationContext,
   createBudgetPlan,
@@ -13,10 +19,6 @@ import {
 import { PopulationStore } from './population-store.mjs'
 import { ProtocolError } from './protocol.mjs'
 
-const EVOLVING_CHILD_STATES = new Set([
-  'EVOLVING', 'EVOLVING_L1', 'EVOLVING_L2', 'EVOLVING_L3',
-])
-const TERMINAL_CHILD_STATES = new Set(['CLOSED', 'REPORTED'])
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u
 
 function iso(clock) {
@@ -32,35 +34,55 @@ function event(state, type, at, details = {}) {
   }
 }
 
-function publicIncumbent(childState) {
-  const incumbent = childState?.incumbent
-  if (!incumbent || !Number.isInteger(incumbent.validationVerified)) {
+function publicIncumbent(projection) {
+  const incumbent = projection?.incumbent
+  const primary = incumbent?.evaluation?.primary
+  if (!incumbent || !Number.isFinite(primary?.value)) {
     throw new ProtocolError('Branch 缺少已评测 incumbent')
   }
   return {
     candidateId: incumbent.candidateId,
     digest: incumbent.digest,
-    commit: incumbent.commit,
-    validationVerified: incumbent.validationVerified,
-    validationTotal: incumbent.validationTotal,
+    revision: incumbent.revision,
+    evaluation: incumbent.evaluation,
+    primaryMetric: primary.metric,
+    primaryValue: primary.value,
+    primaryDirection: primary.direction,
+    primaryTotal: primary.total,
+    // 兼容旧 Reasoning State/Report；新场景只消费上面的通用字段。
+    ...(primary.metric === 'validation-verified-count'
+      ? {
+          commit: incumbent.revision,
+          validationVerified: primary.value,
+          validationTotal: primary.total,
+        }
+      : {}),
   }
+}
+
+function incumbentScore(incumbent) {
+  return incumbent.primaryDirection === 'minimize' ? -incumbent.primaryValue : incumbent.primaryValue
 }
 
 function branchRemaining(branch) {
   return branch.baseBudget + branch.bonusBudget - branch.consumed
 }
 
-function childStopped(childState) {
-  return TERMINAL_CHILD_STATES.has(childState.status)
-}
-
-function childPaused(childState) {
-  return childState.status === 'PAUSED_INFRASTRUCTURE'
-}
-
-function branchStatus(branch, childState) {
-  if (childStopped(childState)) return 'stopped'
+function branchStatus(branch, projection) {
+  if (projection.status === 'stopped') return 'stopped'
   return branchRemaining(branch) > 0 ? 'active' : 'exhausted'
+}
+
+function assertRestoredIncumbent(branch, projection) {
+  const expected = branch.incumbent
+  const actual = projection.incumbent
+  if (!expected || !actual
+      || expected.candidateId !== actual.candidateId
+      || expected.digest !== actual.digest
+      || expected.revision !== actual.revision
+      || JSON.stringify(expected.evaluation) !== JSON.stringify(actual.evaluation)) {
+    throw new ProtocolError(`${branch.branchId} 恢复后 incumbent 与 Population 冻结状态不一致`)
+  }
 }
 
 function assertRoundLimit(value) {
@@ -70,6 +92,7 @@ function assertRoundLimit(value) {
 }
 
 function markdownReport(summary) {
+  const bestMetric = summary.best.evaluation.primary
   const lines = [
     '# Population Evolution Report',
     '',
@@ -78,20 +101,47 @@ function markdownReport(summary) {
     `- Consumed budget: ${summary.budget.consumed}`,
     `- Unused budget: ${summary.budget.unused}`,
     `- Best branch: \`${summary.best.branchId}\``,
-    `- Best validation: ${summary.best.validationVerified}/${summary.best.validationTotal}`,
-    `- Best commit: \`${summary.best.commit}\``,
+    `- Best metric: ${bestMetric.metric}=${bestMetric.value}${bestMetric.total === null ? '' : `/${bestMetric.total}`}`,
+    `- Best revision: \`${summary.best.revision}\``,
     `- Harness implementation: \`best-harness.json\` + \`best-harness.patch\``,
     '',
-    '| Branch | Base | Bonus | Consumed | Best validation | Best candidate | Status |',
+    '| Branch | Base | Bonus | Consumed | Best metric | Best candidate | Status |',
     '|---|---:|---:|---:|---:|---|---|',
     ...summary.branches.map((branch) => (
-      `| ${branch.branchId} | ${branch.baseBudget} | ${branch.bonusBudget} | ${branch.consumed} | ${branch.incumbent.validationVerified}/${branch.incumbent.validationTotal} | ${branch.incumbent.candidateId} | ${branch.status} |`
+      `| ${branch.branchId} | ${branch.baseBudget} | ${branch.bonusBudget} | ${branch.consumed} | ${branch.incumbent.primaryMetric}=${branch.incumbent.primaryValue} | ${branch.incumbent.candidateId} | ${branch.status} |`
     )),
     '',
     'Competition awards and per-round deltas are retained in the parent event log; each branch keeps its full mutation history in its own evolution log.',
     '',
   ]
   return lines.join('\n')
+}
+
+function publicPopulationFinal(final) {
+  if (final === null || final === undefined || typeof final !== 'object' || Array.isArray(final)) {
+    return null
+  }
+  const safeId = (value, pattern) => (
+    typeof value === 'string' && pattern.test(value) ? value : null
+  )
+  const safeTime = (value) => (
+    typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null
+  )
+  const completed = final.evaluated === true
+  const failed = !completed && safeTime(final.failedAt) !== null
+  return {
+    status: completed ? 'completed' : failed ? 'failed' : 'running',
+    evaluated: completed,
+    branchId: safeId(final.branchId, /^branch-[0-9]{3}$/u),
+    baselineId: safeId(final.baselineId, /^[a-z0-9][a-z0-9._-]{1,119}$/u),
+    candidateId: safeId(final.candidateId, /^[a-z0-9][a-z0-9._-]{1,119}$/u),
+    startedAt: safeTime(final.startedAt),
+    completedAt: safeTime(final.completedAt),
+    failedAt: safeTime(final.failedAt),
+    report: final.report === 'report/final-evaluation.json'
+      ? 'report/final-evaluation.json'
+      : null,
+  }
 }
 
 export function formatPopulationStatus(state) {
@@ -108,9 +158,16 @@ export function formatPopulationStatus(state) {
     updatedAt: state.updatedAt,
     closedAt: state.closedAt ?? null,
     reportAvailable: ['CLOSED', 'REPORTED'].includes(state.status),
+    // Status 是公开投影：不反射 failure.details、Final 指标或未知字段。
+    final: publicPopulationFinal(state.final),
     epoch: state.epoch,
     budget: structuredClone(state.budget),
     best: state.best === null ? null : structuredClone(state.best),
+    baselinePack: state.baselinePack === undefined ? null : structuredClone(state.baselinePack),
+    checkpoints: Array.isArray(state.checkpoints) ? structuredClone(state.checkpoints) : [],
+    branchCheckpoints: Array.isArray(state.branchCheckpoints)
+      ? structuredClone(state.branchCheckpoints)
+      : [],
     branches: state.branches.map((branch) => ({
       branchId: branch.branchId,
       status: branch.status,
@@ -125,6 +182,18 @@ export function formatPopulationStatus(state) {
   }
 }
 
+function stableCheckpointTime(state) {
+  const stableEvent = [...state.events].reverse().find((entry) => (
+    entry.type === 'POPULATION_WAVE_COMPLETED'
+      || entry.type === 'POPULATION_BASELINE_EVALUATED'
+  ))
+  if (!stableEvent || typeof stableEvent.at !== 'string'
+      || !Number.isFinite(Date.parse(stableEvent.at))) {
+    throw new ProtocolError('Population Checkpoint 缺少稳定评测时点')
+  }
+  return stableEvent.at
+}
+
 export class PopulationOrchestrator {
   constructor({
     loadedCampaign,
@@ -136,25 +205,34 @@ export class PopulationOrchestrator {
     frozenConfig = null,
     secretValues = [],
   }) {
-    if (!loadedCampaign?.config?.controller_config
-        || !SHA256_PATTERN.test(loadedCampaign?.fingerprint ?? '')) {
-      throw new ProtocolError('PopulationOrchestrator 需要带 controller_config 的冻结 Campaign')
+    const populationConfig = loadedCampaign?.recipe?.spec?.population
+      ?? loadedCampaign?.config?.controller_config
+    if (!populationConfig || !SHA256_PATTERN.test(loadedCampaign?.fingerprint ?? '')) {
+      throw new ProtocolError('PopulationOrchestrator 需要带 EvolutionRecipe 或 controller_config 的冻结配置')
+    }
+    if (loadedCampaign.configDigest !== undefined
+        && !SHA256_PATTERN.test(loadedCampaign.configDigest)) {
+      throw new ProtocolError('PopulationOrchestrator configDigest 必须是 64 位小写 SHA-256')
     }
     if (typeof createBranch !== 'function') {
       throw new ProtocolError('PopulationOrchestrator 需要 createBranch()')
     }
     this.loaded = loadedCampaign
     this.config = loadedCampaign.config
-    this.controller = normalizeControllerConfig(this.config.controller_config)
+    this.controller = normalizeControllerConfig(populationConfig)
+    this.checkpointing = loadedCampaign?.recipe?.spec?.checkpointing ?? null
     this.plan = createBudgetPlan(this.controller)
     this.campaignId = campaignId
     this.createBranch = createBranch
     this.clock = clock
     this.progress = progress
     this.frozenConfig = frozenConfig ?? this.config
+    this.baselinePack = this.frozenConfig?.experiment?.baselinePack ?? null
+    this.configDigest = loadedCampaign.configDigest ?? null
     this.secretValues = secretValues
     this.store = new PopulationStore(campaignsRoot, campaignId)
     this.handles = new Map()
+    this.coordinationContexts = new Map()
   }
 
   async #handle(branchId) {
@@ -163,17 +241,14 @@ export class PopulationOrchestrator {
         branchId,
         branchesRoot: this.store.branchesRoot,
       })).then((handle) => {
-        if (!handle?.orchestrator || typeof handle.orchestrator.initialize !== 'function'
-            || typeof handle.orchestrator.run !== 'function'
-            || typeof handle.orchestrator.resume !== 'function'
-            || !handle.orchestrator.store || !handle.orchestrator.linearGit) {
-          throw new ProtocolError(`createBranch(${branchId}) 返回值无效`)
-        }
-        if (handle.setCoordinationContext !== undefined
-            && typeof handle.setCoordinationContext !== 'function') {
-          throw new ProtocolError(`createBranch(${branchId}).setCoordinationContext 无效`)
-        }
-        return handle
+        const driver = handle?.orchestrator
+          ? createReasoningBranchDriver({
+              branchId,
+              handle,
+              baseRevision: this.config.spec?.solver?.targetRevision,
+            })
+          : handle
+        return validateBranchEvolutionDriver(driver)
       }))
     }
     return this.handles.get(branchId)
@@ -195,6 +270,7 @@ export class PopulationOrchestrator {
       kind: 'PopulationCampaignState',
       campaignId: this.campaignId,
       configFingerprint: this.loaded.fingerprint,
+      ...(this.configDigest === null ? {} : { configDigest: this.configDigest }),
       mode: this.controller.mode,
       status: 'CONFIG_FROZEN',
       createdAt: at,
@@ -210,12 +286,20 @@ export class PopulationOrchestrator {
       },
       branches,
       best: null,
+      checkpoints: [],
+      branchCheckpoints: [],
+      ...(this.baselinePack === null ? {} : { baselinePack: structuredClone(this.baselinePack) }),
+      final: null,
       events: [{
         sequence: 1,
         type: 'POPULATION_CONFIG_FROZEN',
         at,
         mode: this.controller.mode,
         totalBudget: this.plan.totalBudget,
+        ...(this.baselinePack === null
+          ? {}
+          : { baselinePackSha256: this.baselinePack.sha256 }),
+        ...(this.configDigest === null ? {} : { configDigest: this.configDigest }),
       }],
     }
   }
@@ -232,15 +316,23 @@ export class PopulationOrchestrator {
     }
     await this.store.saveState(state)
 
-    const childStates = await Promise.all(state.branches.map(async ({ branchId }) => {
-      const handle = await this.#handle(branchId)
-      await handle.orchestrator.initialize()
-      return handle.orchestrator.run({ baselineOnly: true })
+    const baselineSettlements = await Promise.allSettled(state.branches.map(async ({ branchId }) => {
+      const driver = await this.#handle(branchId)
+      return await driver.initialize()
     }))
+    const baselineFailures = baselineSettlements.flatMap((settlement, index) => (
+      settlement.status === 'rejected'
+        ? [{ branchId: state.branches[index].branchId, error: settlement.reason }]
+        : []
+    ))
+    if (baselineFailures.length > 0) {
+      return await this.#pauseInfrastructure(state, baselineFailures, 'baseline')
+    }
+    const projections = baselineSettlements.map((settlement) => settlement.value)
     const branches = state.branches.map((branch, index) => ({
       ...branch,
-      incumbent: publicIncumbent(childStates[index]),
-      status: branchStatus(branch, childStates[index]),
+      incumbent: publicIncumbent(projections[index]),
+      status: branchStatus(branch, projections[index]),
     }))
     const bestBranch = selectPopulationBest(branches)
     const completedAt = iso(this.clock)
@@ -253,13 +345,181 @@ export class PopulationOrchestrator {
       events: [...state.events, event(state, 'POPULATION_BASELINE_EVALUATED', completedAt, {
         branches: branches.map((branch) => ({
           branchId: branch.branchId,
-          validationVerified: branch.incumbent.validationVerified,
+          primaryMetric: branch.incumbent.primaryMetric,
+          primaryValue: branch.incumbent.primaryValue,
         })),
       })],
     }
     await this.store.saveState(state)
+    state = await this.#captureCheckpointsOrPause(state)
     this.progress({ type: 'population-baseline-evaluated', branches: branches.length })
     return state
+  }
+
+  async #captureReachedCheckpoints(state) {
+    if (this.checkpointing === null || state.inFlightWave) return state
+    const recorded = new Set((state.checkpoints ?? []).map((entry) => entry.requestedBudget))
+    const reached = this.checkpointing.budgetMilestones.filter((budget) => (
+      budget <= state.budget.consumed && !recorded.has(budget)
+    ))
+    const recordedBranch = new Set((state.branchCheckpoints ?? []).map((entry) => (
+      `${entry.branchId}:${entry.requestedGeneration}`
+    )))
+    const needsBranchProjection = this.checkpointing.branchGenerationMilestones.length > 0
+    if (reached.length === 0 && !needsBranchProjection) return state
+
+    const projections = this.checkpointing.capture.latestAttempts || needsBranchProjection
+      ? await Promise.all(state.branches.map(async (branch) => (
+          validateBranchProjection(await (await this.#handle(branch.branchId)).inspect())
+        )))
+      : []
+    const projectionByBranch = new Map(projections.map((projection) => [projection.branchId, projection]))
+    const reachedBranch = needsBranchProjection
+      ? state.branches.flatMap((branch) => {
+          const projection = projectionByBranch.get(branch.branchId)
+          return this.checkpointing.branchGenerationMilestones
+            .filter((generation) => (
+              generation <= projection.completedSteps
+                && !recordedBranch.has(`${branch.branchId}:${generation}`)
+            ))
+            .map((requestedGeneration) => ({ branch, projection, requestedGeneration }))
+        })
+      : []
+    if (reached.length === 0 && reachedBranch.length === 0) return state
+    const capturedAt = stableCheckpointTime(state)
+    let next = state
+    for (const requestedBudget of reached) {
+      const checkpoint = redactSecrets({
+        apiVersion: 'harness-rsi/v1alpha1',
+        kind: 'PopulationBudgetCheckpoint',
+        campaignId: state.campaignId,
+        mode: state.mode,
+        requestedBudget,
+        actualConsumedBudget: state.budget.consumed,
+        epoch: state.epoch,
+        capturedAt,
+        retention: {
+          policy: 'population-run-owned-artifacts-v1',
+          note: '本文件只索引不可变 Candidate 身份；实际 Workspace/Git 对象随 Population Run 保留。',
+        },
+        ...(this.checkpointing.capture.populationBest
+          ? { populationBest: structuredClone(state.best) }
+          : {}),
+        ...(this.checkpointing.capture.branchIncumbents
+          ? {
+              branchIncumbents: state.branches.map((branch) => ({
+                branchId: branch.branchId,
+                branchRoot: `branches/${branch.branchId}`,
+                budget: {
+                  base: branch.baseBudget,
+                  bonus: branch.bonusBudget,
+                  consumed: branch.consumed,
+                  remaining: branchRemaining(branch),
+                },
+                incumbent: structuredClone(branch.incumbent),
+              })),
+            }
+          : {}),
+        ...(this.checkpointing.capture.latestAttempts
+          ? {
+              latestAttempts: projections
+                .filter((projection) => projection.lastStep !== null)
+                .map((projection) => ({
+                  branchId: projection.branchId,
+                  branchRoot: `branches/${projection.branchId}`,
+                  step: structuredClone(projection.lastStep),
+                })),
+            }
+          : {}),
+      }, this.secretValues)
+      const written = await this.store.writeBudgetCheckpoint(requestedBudget, checkpoint)
+      const eventAt = iso(this.clock)
+      const record = {
+        requestedBudget,
+        actualConsumedBudget: state.budget.consumed,
+        epoch: state.epoch,
+        capturedAt,
+        path: written.relativePath,
+      }
+      next = {
+        ...next,
+        updatedAt: eventAt,
+        checkpoints: [...(next.checkpoints ?? []), record],
+        events: [...next.events, event(
+          next,
+          'POPULATION_BUDGET_CHECKPOINT_WRITTEN',
+          eventAt,
+          record,
+        )],
+      }
+    }
+    for (const { branch, projection, requestedGeneration } of reachedBranch) {
+      const checkpoint = redactSecrets({
+        apiVersion: 'harness-rsi/v1alpha1',
+        kind: 'BranchGenerationCheckpoint',
+        campaignId: state.campaignId,
+        mode: state.mode,
+        branchId: branch.branchId,
+        requestedGeneration,
+        actualCompletedSteps: projection.completedSteps,
+        actualConsumedBudget: branch.consumed,
+        populationConsumedBudget: state.budget.consumed,
+        epoch: state.epoch,
+        capturedAt,
+        branchRoot: `branches/${branch.branchId}`,
+        budget: {
+          base: branch.baseBudget,
+          bonus: branch.bonusBudget,
+          consumed: branch.consumed,
+          remaining: branchRemaining(branch),
+        },
+        incumbent: structuredClone(branch.incumbent),
+        latestAttempt: projection.lastStep === null
+          ? null
+          : structuredClone(projection.lastStep),
+        retention: {
+          policy: 'population-run-owned-artifacts-v1',
+          note: '本文件只索引不可变 Candidate 身份；已晋升和被拒绝的 Candidate 均随 Population Run 保留。',
+        },
+      }, this.secretValues)
+      const written = await this.store.writeBranchGenerationCheckpoint(
+        branch.branchId,
+        requestedGeneration,
+        checkpoint,
+      )
+      const eventAt = iso(this.clock)
+      const record = {
+        branchId: branch.branchId,
+        requestedGeneration,
+        actualCompletedSteps: projection.completedSteps,
+        actualConsumedBudget: branch.consumed,
+        populationConsumedBudget: state.budget.consumed,
+        epoch: state.epoch,
+        capturedAt,
+        path: written.relativePath,
+      }
+      next = {
+        ...next,
+        updatedAt: eventAt,
+        branchCheckpoints: [...(next.branchCheckpoints ?? []), record],
+        events: [...next.events, event(
+          next,
+          'BRANCH_GENERATION_CHECKPOINT_WRITTEN',
+          eventAt,
+          record,
+        )],
+      }
+    }
+    await this.store.saveState(next)
+    return next
+  }
+
+  async #captureCheckpointsOrPause(state) {
+    try {
+      return await this.#captureReachedCheckpoints(state)
+    } catch (error) {
+      return await this.#pauseInfrastructure(state, [{ branchId: 'controller', error }], 'checkpoint')
+    }
   }
 
   async #readState() {
@@ -267,7 +527,88 @@ export class PopulationOrchestrator {
     if (state.configFingerprint !== this.loaded.fingerprint) {
       throw new ProtocolError('Population 配置或 Runtime 指纹与冻结 state 不一致')
     }
+    if (this.configDigest !== null && state.configDigest !== this.configDigest) {
+      throw new ProtocolError('Population Bundle 摘要与冻结 state 不一致')
+    }
     return state
+  }
+
+  /** 只固化 H0 评测，不启动 Updater，也不消耗进化 Budget。 */
+  async freezeBaseline() {
+    const state = await this.#readState()
+    if (state.status === 'PAUSED_INFRASTRUCTURE') {
+      throw new ProtocolError('Population Baseline 因基础设施故障暂停')
+    }
+    if (state.status !== 'EVOLVING' || state.epoch !== 0
+        || state.budget.consumed !== 0 || state.inFlightWave !== undefined) {
+      throw new ProtocolError('Population 只能在 H0 评测后、第一轮进化前固化 Baseline')
+    }
+    const frozenAt = iso(this.clock)
+    const baseline = redactSecrets({
+      apiVersion: 'harness-rsi/v1alpha1',
+      kind: 'PopulationBaselineReport',
+      campaignId: state.campaignId,
+      mode: state.mode,
+      frozenAt,
+      configFingerprint: state.configFingerprint,
+      ...(state.configDigest === undefined ? {} : { configDigest: state.configDigest }),
+      budgetConsumed: 0,
+      ...(state.baselinePack === undefined
+        ? {}
+        : { baselinePack: structuredClone(state.baselinePack) }),
+      best: structuredClone(state.best),
+      branches: state.branches.map((branch) => ({
+        branchId: branch.branchId,
+        incumbent: structuredClone(branch.incumbent),
+      })),
+    }, this.secretValues)
+    const baselinePath = await this.store.writeBaselineSummary(baseline)
+    const frozen = {
+      ...state,
+      status: 'BASELINE_FROZEN',
+      updatedAt: frozenAt,
+      baseline: { path: 'public/baseline-summary.json', frozenAt },
+      events: [...state.events, event(state, 'POPULATION_BASELINE_FROZEN', frozenAt, {
+        branchId: state.best.branchId,
+        candidateId: state.best.candidateId,
+        primaryMetric: state.best.primaryMetric,
+        primaryValue: state.best.primaryValue,
+      })],
+    }
+    await this.store.saveState(frozen)
+    this.progress({
+      type: 'population-baseline-frozen',
+      branchId: frozen.best.branchId,
+      primaryMetric: frozen.best.primaryMetric,
+      primaryValue: frozen.best.primaryValue,
+    })
+    return { state: frozen, baseline, baselinePath }
+  }
+
+  async #pauseInfrastructure(state, failures, phase) {
+    const pausedAt = iso(this.clock)
+    const publicFailures = redactSecrets(failures.map(({ branchId, error }) => ({
+      branchId,
+      name: error?.name ?? 'Error',
+      message: error?.message ?? String(error),
+      details: Array.isArray(error?.details) ? error.details : [],
+    })), this.secretValues)
+    const paused = {
+      ...state,
+      status: 'PAUSED_INFRASTRUCTURE',
+      updatedAt: pausedAt,
+      events: [...state.events, event(state, 'POPULATION_INFRASTRUCTURE_PAUSED', pausedAt, {
+        phase,
+        ...(state.inFlightWave ? { epoch: state.inFlightWave.epoch } : {}),
+        failures: publicFailures,
+      })],
+    }
+    await this.store.saveState(paused)
+    this.progress({
+      type: 'population-infrastructure-paused',
+      branches: publicFailures.map((failure) => failure.branchId),
+    })
+    return paused
   }
 
   async run({ roundLimit = 0 } = {}) {
@@ -276,6 +617,13 @@ export class PopulationOrchestrator {
     let state = await this.#readState()
     if (state.status === 'PAUSED_INFRASTRUCTURE') {
       throw new ProtocolError('Population 当前暂停；请使用 evolve resume')
+    }
+    if (state.status === 'BASELINE_FROZEN') {
+      throw new ProtocolError('Population 已固化为 H0 Baseline，不能在同一 Run 中继续进化')
+    }
+    if (state.status === 'EVOLVING' && !state.inFlightWave) {
+      state = await this.#captureCheckpointsOrPause(state)
+      if (state.status === 'PAUSED_INFRASTRUCTURE') return state
     }
     let completedWaves = 0
     while (state.status === 'EVOLVING' && completedWaves < waveLimit) {
@@ -304,15 +652,108 @@ export class PopulationOrchestrator {
 
   async resume(options = {}) {
     let state = await this.#readState()
-    if (state.status !== 'PAUSED_INFRASTRUCTURE') {
-      throw new ProtocolError('Population 当前不是 PAUSED_INFRASTRUCTURE')
+    const infrastructureRecovery = state.status === 'PAUSED_INFRASTRUCTURE'
+    // Checkpoint 文件与权威 state 是两个原子文件：进程可能在稳定
+    // Wave 落盘后、Checkpoint 索引记入 state 前被强制终止。只允许无
+    // in-flight Wave 的 EVOLVING 状态走这条恢复路径，不接受半轮结果。
+    const stableStateRecovery = state.status === 'EVOLVING'
+      && state.inFlightWave === undefined
+    if (!infrastructureRecovery && !stableStateRecovery) {
+      throw new ProtocolError('Population 当前不是可恢复的暂停或稳定状态')
     }
+    const pauseEvent = infrastructureRecovery
+      ? [...state.events].reverse().find((entry) => (
+          entry.type === 'POPULATION_INFRASTRUCTURE_PAUSED'
+        ))
+      : null
+    const baselineRecovery = pauseEvent?.phase === 'baseline'
+    const restoredProjections = await Promise.all(state.branches.map(async (branch) => {
+      const driver = await this.#handle(branch.branchId)
+      const restored = typeof driver.restore === 'function'
+        ? await driver.restore()
+        : await driver.inspect()
+      const projection = validateBranchProjection(restored)
+      if (projection.branchId !== branch.branchId) {
+        throw new ProtocolError(`Population 恢复得到了错误的 Branch：${projection.branchId}`)
+      }
+      const inFlight = state.inFlightWave?.participants.find(
+        (participant) => participant.branchId === branch.branchId,
+      )
+      const maximumCompleted = inFlight ? inFlight.beforeSteps + 1 : branch.consumed
+      if (projection.completedSteps < branch.consumed
+          || projection.completedSteps > maximumCompleted) {
+        throw new ProtocolError(`${branch.branchId} 恢复后 Step 与 Population Budget 不一致`, [
+          `population=${branch.consumed}`,
+          `branch=${projection.completedSteps}`,
+        ])
+      }
+      if (baselineRecovery) {
+        if (branch.consumed !== 0 || projection.completedSteps !== 0 || state.inFlightWave) {
+          throw new ProtocolError(`${branch.branchId} Baseline 恢复后出现非法进化 Step`)
+        }
+      } else if (projection.completedSteps === branch.consumed) {
+        assertRestoredIncumbent(branch, projection)
+      } else if (!inFlight || projection.lastStep === null) {
+        throw new ProtocolError(`${branch.branchId} 超前 Step 缺少对应的 in-flight 记录`)
+      }
+      return projection
+    }))
     const resumedAt = iso(this.clock)
+
+    if (baselineRecovery) {
+      const resumed = {
+        ...state,
+        updatedAt: resumedAt,
+        events: [...state.events, event(
+          state,
+          'POPULATION_INFRASTRUCTURE_RESUMED',
+          resumedAt,
+          { phase: 'baseline' },
+        )],
+      }
+      const branches = resumed.branches.map((branch, index) => ({
+        ...branch,
+        incumbent: publicIncumbent(restoredProjections[index]),
+        status: branchStatus(branch, restoredProjections[index]),
+      }))
+      const bestBranch = selectPopulationBest(branches)
+      const completedAt = iso(this.clock)
+      state = {
+        ...resumed,
+        status: 'EVOLVING',
+        updatedAt: completedAt,
+        branches,
+        best: { branchId: bestBranch.branchId, ...bestBranch.incumbent },
+        events: [...resumed.events, event(
+          resumed,
+          'POPULATION_BASELINE_EVALUATED',
+          completedAt,
+          {
+            recovered: true,
+            branches: branches.map((branch) => ({
+              branchId: branch.branchId,
+              primaryMetric: branch.incumbent.primaryMetric,
+              primaryValue: branch.incumbent.primaryValue,
+            })),
+          },
+        )],
+      }
+      await this.store.saveState(state)
+      state = await this.#captureCheckpointsOrPause(state)
+      if (state.status === 'PAUSED_INFRASTRUCTURE') return state
+      this.progress({ type: 'population-baseline-evaluated', branches: branches.length })
+      return this.run(options)
+    }
+
+    const recoveryEventType = stableStateRecovery
+      ? 'POPULATION_STABLE_STATE_RECOVERED'
+      : 'POPULATION_INFRASTRUCTURE_RESUMED'
     state = {
       ...state,
       status: 'EVOLVING',
       updatedAt: resumedAt,
-      events: [...state.events, event(state, 'POPULATION_INFRASTRUCTURE_RESUMED', resumedAt)],
+      events: [...state.events, event(state, recoveryEventType, resumedAt,
+        stableStateRecovery ? { phase: 'checkpoint-commit-boundary' } : {})],
     }
     await this.store.saveState(state)
     return this.run(options)
@@ -358,12 +799,12 @@ export class PopulationOrchestrator {
     if (participants.length === 0) return this.#close(state)
 
     const snapshots = await Promise.all(participants.map(async (branch) => {
-      const handle = await this.#handle(branch.branchId)
-      const childState = await handle.orchestrator.store.readState()
+      const driver = await this.#handle(branch.branchId)
+      const projection = await driver.inspect()
       return {
         branchId: branch.branchId,
-        beforeCandidates: childState.candidates.length,
-        beforeScore: childState.incumbent.validationVerified,
+        beforeSteps: projection.completedSteps,
+        beforeScore: incumbentScore(publicIncumbent(projection)),
       }
     }))
     const startedAt = iso(this.clock)
@@ -393,21 +834,22 @@ export class PopulationOrchestrator {
 
   async #applyCoordinationContexts(state) {
     const sharingReady = modeUsesPeerSharing(state.mode) && state.epoch > 0
-    const handles = new Map(await Promise.all(state.branches.map(async (branch) => (
+    const drivers = new Map(await Promise.all(state.branches.map(async (branch) => (
       [branch.branchId, await this.#handle(branch.branchId)]
     ))))
+    const evidence = new Map(await Promise.all(state.branches.map(async (branch) => (
+      [branch.branchId, await drivers.get(branch.branchId).exportPeerEvidence()]
+    ))))
     await Promise.all(state.inFlightWave.participants.map(async ({ branchId }) => {
-      const handle = handles.get(branchId)
-      if (!handle.setCoordinationContext) return
       const peers = sharingReady
         ? state.branches.filter((branch) => (
             branch.branchId !== branchId && branch.consumed > 0
           )).map((branch) => ({
             branchId: branch.branchId,
-            sourcePath: handles.get(branch.branchId).orchestrator.store.evolutionLogPath,
+            sourcePath: evidence.get(branch.branchId).sourcePath,
           }))
         : []
-      handle.setCoordinationContext(buildCoordinationContext({
+      this.coordinationContexts.set(branchId, buildCoordinationContext({
         controllerConfig: this.controller,
         branchId,
         peerLogs: peers,
@@ -416,81 +858,99 @@ export class PopulationOrchestrator {
     }))
   }
 
-  async #runChildRound(participant) {
-    const handle = await this.#handle(participant.branchId)
-    let childState = await handle.orchestrator.store.readState()
-    if (childState.candidates.length > participant.beforeCandidates + 1) {
+  async #runChildRound(participant, epoch) {
+    const driver = await this.#handle(participant.branchId)
+    const projection = await driver.inspect()
+    if (projection.completedSteps > participant.beforeSteps + 1) {
       throw new ProtocolError(`${participant.branchId} 超前于 Population wave`)
     }
-    if (childState.candidates.length === participant.beforeCandidates + 1
-        && !childState.inFlight) return childState
-    if (childPaused(childState)) {
-      return handle.orchestrator.resume({ roundLimit: 1 })
+    if (projection.completedSteps === participant.beforeSteps + 1) {
+      return {
+        apiVersion: 'harness-rsi/v1alpha1',
+        kind: 'BranchStepResult',
+        stepId: projection.lastStep.stepId,
+        budgetConsumed: 1,
+        projection,
+      }
     }
-    if (TERMINAL_CHILD_STATES.has(childState.status)) return childState
-    if (!EVOLVING_CHILD_STATES.has(childState.status)) {
-      throw new ProtocolError(`${participant.branchId} 状态不能执行进化轮次：${childState.status}`)
-    }
-    return handle.orchestrator.run({ roundLimit: 1 })
+    return await driver.advanceOne({
+      stepId: `epoch-${String(epoch).padStart(4, '0')}-${participant.branchId}`,
+      coordination: this.coordinationContexts.get(participant.branchId),
+    })
   }
 
   async #runWave(state) {
     await this.#applyCoordinationContexts(state)
-    const childStates = await Promise.all(
-      state.inFlightWave.participants.map((participant) => this.#runChildRound(participant)),
+    const settlements = await Promise.allSettled(
+      state.inFlightWave.participants.map((participant) => (
+        this.#runChildRound(participant, state.inFlightWave.epoch)
+      )),
     )
-    if (childStates.some(childPaused)) {
-      const pausedAt = iso(this.clock)
-      const paused = {
-        ...state,
-        status: 'PAUSED_INFRASTRUCTURE',
-        updatedAt: pausedAt,
-        events: [...state.events, event(state, 'POPULATION_INFRASTRUCTURE_PAUSED', pausedAt, {
-          epoch: state.inFlightWave.epoch,
-          branches: childStates.flatMap((childState, index) => (
-            childPaused(childState) ? [state.inFlightWave.participants[index].branchId] : []
-          )),
-        })],
-      }
-      await this.store.saveState(paused)
-      return paused
+    const failures = settlements.flatMap((settlement, index) => (
+      settlement.status === 'rejected'
+        ? [{ branchId: state.inFlightWave.participants[index].branchId, error: settlement.reason }]
+        : []
+    ))
+    if (failures.length > 0) return await this.#pauseInfrastructure(state, failures, 'wave')
+    const stepResults = settlements.map((settlement) => settlement.value)
+    if (stepResults.some((result) => result.projection.status === 'paused')) {
+      return await this.#pauseInfrastructure(state, stepResults.flatMap((result, index) => (
+        result.projection.status === 'paused'
+          ? [{
+              branchId: state.inFlightWave.participants[index].branchId,
+              error: new ProtocolError('Branch Driver 报告基础设施暂停'),
+            }]
+          : []
+      )), 'wave')
     }
 
     const results = state.inFlightWave.participants.map((participant, index) => {
-      const childState = childStates[index]
-      const candidate = childState.candidates[participant.beforeCandidates] ?? null
-      const stopped = childStopped(childState)
-      if (!stopped && candidate === null) {
+      const stepResult = stepResults[index]
+      const projection = stepResult.projection
+      const candidate = projection.lastStep
+      const stopped = projection.status === 'stopped'
+      if (!stopped && stepResult.budgetConsumed === 0) {
         throw new ProtocolError(`${participant.branchId} 未产生本轮 Candidate`)
       }
-      const validationScore = candidate?.validationVerified ?? participant.beforeScore
+      const primary = candidate?.ranking?.evaluation?.primary
+      const validationScore = primary
+        ? (primary.direction === 'minimize' ? -primary.value : primary.value)
+        : participant.beforeScore
+      const deltaScore = primary && candidate.ranking.baselineEvaluation
+        // Cowork 等随机 Environment 会在同一评测窗口重跑 Baseline；必须沿用
+        // Branch 的同期配对口径，不能再与 Population 初始化时的旧分数比较。
+        ? primaryMetricDelta(candidate.ranking.evaluation, candidate.ranking.baselineEvaluation)
+        : validationScore - participant.beforeScore
       return {
         branchId: participant.branchId,
         validationScore,
-        deltaScore: validationScore - participant.beforeScore,
+        deltaScore,
         candidateId: candidate?.candidateId ?? null,
         decision: candidate?.decision ?? 'stopped',
-        eligible: !stopped,
+        // Competition 可以比较已评测但未晋升的 Candidate；无评测的 invalid/stopped
+        // 提案不能靠 delta=0 赢得额外预算。
+        eligible: !stopped && primary !== undefined,
         stopped,
-        childState,
+        budgetConsumed: stepResult.budgetConsumed,
+        projection,
       }
     })
 
     let branches = state.branches.map((branch) => {
       const result = results.find((entry) => entry.branchId === branch.branchId)
       if (!result) return branch
-      const consumed = branch.consumed + 1
+      const consumed = branch.consumed + result.budgetConsumed
       const updated = {
         ...branch,
         consumed,
-        incumbent: publicIncumbent(result.childState),
+        incumbent: publicIncumbent(result.projection),
         lastDeltaScore: result.deltaScore,
       }
-      return { ...updated, status: branchStatus(updated, result.childState) }
+      return { ...updated, status: branchStatus(updated, result.projection) }
     })
     let budget = {
       ...state.budget,
-      consumed: state.budget.consumed + results.length,
+      consumed: state.budget.consumed + results.reduce((sum, result) => sum + result.budgetConsumed, 0),
     }
     let bonusWinner = null
     let bonusGrant = 0
@@ -545,7 +1005,7 @@ export class PopulationOrchestrator {
       branches: results.length,
       ...(bonusWinner ? { branchId: bonusWinner.branchId, bonusGrant } : {}),
     })
-    return next
+    return await this.#captureCheckpointsOrPause(next)
   }
 
   async #close(state) {
@@ -578,19 +1038,17 @@ export class PopulationOrchestrator {
       // Generate the immutable summary from child ledgers below.
     }
     const bestBranch = state.branches.find((branch) => branch.branchId === state.best.branchId)
-    const bestHandle = await this.#handle(bestBranch.branchId)
-    const implementation = await bestHandle.orchestrator.linearGit.implementation(
-      this.config.spec.solver.targetRevision,
-      bestBranch.incumbent.commit,
-    )
+    const bestDriver = await this.#handle(bestBranch.branchId)
+    const implementation = await bestDriver.exportBest()
     const branchDetails = await Promise.all(state.branches.map(async (branch) => {
-      const handle = await this.#handle(branch.branchId)
-      const mutations = await handle.orchestrator.store.readEvolutionLog()
+      const driver = await this.#handle(branch.branchId)
+      const evidence = await driver.exportPeerEvidence()
       return {
         ...branch,
         remaining: branchRemaining(branch),
-        evolutionLog: relative(this.store.root, handle.orchestrator.store.evolutionLogPath),
-        mutations,
+        evolutionLog: relative(this.store.root, evidence.sourcePath),
+        mutations: evidence.entries,
+        ...(evidence.evolution ? { evolution: evidence.evolution } : {}),
       }
     }))
     const summary = redactSecrets({
@@ -608,6 +1066,7 @@ export class PopulationOrchestrator {
         ...bestBranch.incumbent,
         changedFiles: implementation.changedFiles,
         diffStat: implementation.diffStat,
+        ...(implementation.evolution ? { evolution: implementation.evolution } : {}),
       },
       branches: branchDetails,
     }, this.secretValues)
@@ -618,23 +1077,31 @@ export class PopulationOrchestrator {
       mode: state.mode,
       branchId: bestBranch.branchId,
       candidateId: bestBranch.incumbent.candidateId,
-      baseRevision: implementation.baseCommit,
-      commit: implementation.commit,
-      tree: implementation.tree,
+      revision: implementation.revision,
+      evaluation: implementation.evaluation,
+      ...(implementation.baseRevision ? { baseRevision: implementation.baseRevision } : {}),
+      ...(implementation.revision ? { commit: implementation.revision } : {}),
+      ...(implementation.tree ? { tree: implementation.tree } : {}),
       digest: implementation.digest,
-      validationVerified: bestBranch.incumbent.validationVerified,
-      validationTotal: bestBranch.incumbent.validationTotal,
+      ...(bestBranch.incumbent.validationVerified === undefined
+        ? {}
+        : {
+            validationVerified: bestBranch.incumbent.validationVerified,
+            validationTotal: bestBranch.incumbent.validationTotal,
+          }),
       changedFiles: implementation.changedFiles,
       diffStat: implementation.diffStat,
+      ...(implementation.evolution ? { evolution: implementation.evolution } : {}),
       patchArtifact: 'best-harness.patch',
-      workspace: bestHandle.orchestrator.workspace,
-      gitRoot: bestHandle.orchestrator.linearGit.gitRoot,
+      workspace: implementation.workspace,
+      implementationRoot: implementation.implementationRoot,
+      ...(implementation.implementationRoot ? { gitRoot: implementation.implementationRoot } : {}),
     }, this.secretValues)
     const report = await this.store.writeReport({
       summary,
       markdown: markdownReport(summary),
       bestHarness,
-      patch: redactSecrets(implementation.patch, this.secretValues),
+      patch: redactSecrets(implementation.patch ?? '', this.secretValues),
     })
     return { state, ...report, summary, bestHarness }
   }

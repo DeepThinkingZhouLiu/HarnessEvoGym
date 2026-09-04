@@ -1,0 +1,40 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "EvolutionExperiment",
+  "metadata": { "id": "cowork-msa-mvp-claude-single" },
+  "spec": {
+    "recipe": "recipes/population-mvp-linear/single.yml",
+    "adapters": {
+      "target": "adapters/targets/msa-minimal.yml",
+      "updater": "adapters/updaters/claude-code-cli.yml",
+      "environment": "environments/omegause-officeval-mvp.yml",
+      "providers": {
+        "solver": "adapters/providers/zcloud-openai.yml",
+        "updater": "adapters/providers/zcloud-anthropic.yml"
+      },
+      "strategy": "adapters/strategies/linear-hill-climb.yml"
+    },
+    "benchmark": "benchmarks/cowork-omegause-officeval-mvp-v1/benchmark.json",
+    "policy": "evaluation/policies/cowork-officeval-rsi.json",
+    "models": {
+      "solver": {
+        "provider": "zcloud-openai",
+        "model": "gpt-5.6-terra",
+        "maxTokens": 8192,
+        "reasoningEffort": "high"
+      },
+      "updater": {
+        "provider": "zcloud-anthropic",
+        "model": "claude-sonnet-4-6",
+        "maxTokens": 8192,
+        "reasoningEffort": "high"
+      }
+    },
+    "evolution": {
+      "mutationLevel": "l2",
+      "generations": 1,
+      "trialsPerInstance": 1,
+      "seeds": [20260904]
+    }
+  }
+}

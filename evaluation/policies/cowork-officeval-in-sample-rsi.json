@@ -1,0 +1,32 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "EvaluationPolicy",
+  "metadata": { "id": "cowork-officeval-in-sample-rsi-v1" },
+  "spec": {
+    "decisionPartition": "feedback",
+    "primaryMetric": "mean-reward",
+    "bootstrap": { "samples": 10000, "confidence": 0.95, "seed": 20260827 },
+    "gates": {
+      "coverage": { "minimumRecords": 1, "minimumCompletion": 1 },
+      "quality": {
+        "minimumNetResolved": 0,
+        "minimumDeltaResolvedRate": -1,
+        "maximumRegressions": null,
+        "requirePositivePairedCiLowerBound": false,
+        "minimumMeanRewardDelta": 0,
+        "minimumRewardImproved": 1,
+        "maximumRewardRegressions": 3,
+        "requirePositiveRewardCiLowerBound": false
+      },
+      "cost": {
+        "maximumRelativeInferenceCostIncrease": null,
+        "maximumEvolutionCostUsd": null
+      },
+      "performance": {
+        "maximumRelativeLatencyIncrease": null,
+        "maximumRelativeTokenIncrease": null
+      },
+      "safety": { "maximumPolicyViolations": 0 }
+    }
+  }
+}

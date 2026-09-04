@@ -1,0 +1,13 @@
+apiVersion: harness-rsi/v1alpha1
+kind: SearchStrategyAdapter
+
+metadata:
+  id: linear-hill-climb
+  name: Compatible Linear Champion Search
+
+spec:
+  protocol: builtin-v1
+  implementation: linear-hill-climb
+  configuration:
+    # 选择风险上限以内的全部 Region，等价于重构前固定 mutationLevel 的行为。
+    regionSelection: all-under-risk-ceiling

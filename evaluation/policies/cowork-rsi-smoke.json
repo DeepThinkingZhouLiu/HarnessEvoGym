@@ -1,0 +1,32 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "EvaluationPolicy",
+  "metadata": { "id": "cowork-rsi-smoke-v1" },
+  "spec": {
+    "decisionPartition": "selection",
+    "primaryMetric": "mean-reward",
+    "bootstrap": { "samples": 100, "confidence": 0.95, "seed": 20260826 },
+    "gates": {
+      "coverage": { "minimumRecords": 1, "minimumCompletion": 1 },
+      "quality": {
+        "minimumNetResolved": 0,
+        "minimumDeltaResolvedRate": -1,
+        "maximumRegressions": 1,
+        "requirePositivePairedCiLowerBound": false,
+        "minimumMeanRewardDelta": -1,
+        "minimumRewardImproved": 0,
+        "maximumRewardRegressions": 1,
+        "requirePositiveRewardCiLowerBound": false
+      },
+      "cost": {
+        "maximumRelativeInferenceCostIncrease": null,
+        "maximumEvolutionCostUsd": null
+      },
+      "performance": {
+        "maximumRelativeLatencyIncrease": null,
+        "maximumRelativeTokenIncrease": null
+      },
+      "safety": { "maximumPolicyViolations": 0 }
+    }
+  }
+}

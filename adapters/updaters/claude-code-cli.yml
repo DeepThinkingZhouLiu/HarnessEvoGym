@@ -1,0 +1,33 @@
+apiVersion: harness-rsi/v1alpha1
+kind: UpdaterAdapter
+
+metadata:
+  id: claude-code-cli
+  name: Claude Code CLI Updater
+
+spec:
+  protocol: claude-code-exec-v1
+
+  # 固定本机 npm distribution；每次启动前都会复核包名、版本和完整内容摘要。
+  runtime:
+    executable: /home/ubuntu/.local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe
+    distributionRoot: /home/ubuntu/.local/lib/node_modules/@anthropic-ai/claude-code
+    nodeBinary: /usr/local/bin/node
+    bwrapPath: /usr/bin/bwrap
+    setprivPath: /usr/bin/setpriv
+    package: "@anthropic-ai/claude-code"
+    version: 2.1.259
+    distributionDigest: 6e1c6447d89cb7d1730e7b66d9c5908074ed391bc3a575f425c329e14ebf6878
+    maximumModelRequests: 64
+    secretEnvironment:
+      - RSI_CLAUDE_PROVIDER_API_KEY
+      - RSI_CLAUDE_PROVIDER_BASE_URL
+
+  prompt:
+    path: prompts/updater.md
+
+  output:
+    candidate: filesystem-diff
+    mutationReport:
+      kind: controller-artifact
+      name: mutation-report.json

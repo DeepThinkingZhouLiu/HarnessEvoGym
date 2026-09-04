@@ -1,0 +1,8 @@
+{
+  "max_steps": 12,
+  "command_timeout_seconds": 180,
+  "max_observation_chars": 16000,
+  "max_output_tokens": 8192,
+  "maximum_skill_files": 32,
+  "maximum_skill_chars": 196608
+}

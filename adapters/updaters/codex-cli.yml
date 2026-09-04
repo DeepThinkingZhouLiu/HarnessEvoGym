@@ -6,17 +6,30 @@ metadata:
   name: Codex CLI Updater
 
 spec:
-  runtime:
-    isolation: dedicated-read-only-instance
-    protocol: codex-exec
-    ephemeral: true
-    ignoreUserConfig: true
+  protocol: codex-exec-v1
 
-  inputs:
-    candidateSource: active-level-write
-    feedbackPacket: read-only
-    mutationPolicy: read-only
+  # Updater 属于冻结基础设施，不从 Candidate 或用户级 Codex 配置加载任何内容。
+  # 这里固定本机官方 npm distribution；执行时会再次核验包名、版本和路径归属。
+  runtime:
+    executable: /usr/local/lib/node_modules/@openai/codex/bin/codex.js
+    distributionRoot: /usr/local/lib/node_modules/@openai/codex
+    nodeBinary: /usr/local/bin/node
+    bwrapPath: /usr/bin/bwrap
+    setprivPath: /usr/bin/setpriv
+    package: "@openai/codex"
+    version: 0.149.1
+    distributionDigest: 995f8089b1d270bfa242e93325502be9331946b8fc0c7ec916a31bbe16c937a5
+    providerId: zcloud
+    maximumModelRequests: 64
+    secretEnvironment:
+      - RSI_PROVIDER_API_KEY
+      - RSI_PROVIDER_BASE_URL
+
+  prompt:
+    path: prompts/updater.md
 
   output:
-    candidate: git-commit
-    events: text
+    candidate: filesystem-diff
+    mutationReport:
+      kind: controller-artifact
+      name: mutation-report.json

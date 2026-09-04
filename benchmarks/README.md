@@ -4,6 +4,13 @@
 
 Benchmark 固定“评哪些任务”，不负责让 Solver 解题，也不负责修改 Candidate。每份配置必须记录不可变数据版本、Evaluator Adapter、精确 Instance ID，以及 `feedback/selection/final` 三个互斥 Partition。
 
+`cowork-omegause-officeval-linux-v1/benchmark.json` 是 Cowork 正式配置起点。
+它将 OmegaUse-OfficeVal 的 91 道 Linux 静态 Verifier 任务固定分成
+55 道 feedback/train、18 道 selection/validation 和 18 道 sealed final/test；
+另有 `cowork-omegause-officeval-smoke/benchmark.json` 从 train 中选取 Word/PPT/Excel
+各 1 道验证链路，不提前消费正式 validation/test。详细划分见
+[`cowork-omegause-officeval-linux-v1/SPLIT.md`](cowork-omegause-officeval-linux-v1/SPLIT.md)。
+
 ## 三种 Partition
 
 | Partition   | Updater 可见性  | 用途                                                        |

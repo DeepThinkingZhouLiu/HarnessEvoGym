@@ -1,0 +1,52 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "Benchmark",
+  "metadata": {
+    "id": "cowork-omegause-officeval-train26-test18-v1",
+    "name": "OmegaUse-OfficeVal 26-task in-sample main experiment split"
+  },
+  "spec": {
+    "source": {
+      "adapter": "omegause-officeval",
+      "dataset": "baidu-frontier-research/OmegaUse-OfficeVal",
+      "split": "fixed-26-feedback-0-selection-18-final",
+      "revision": "8bf749b53988822a90520eba4761c6c311e17dd0e13bd78658b261a921128291"
+    },
+    "evaluator": {
+      "adapter": "omegause-officeval",
+      "resultFormat": "harness-rsi/solver-result-jsonl-v2"
+    },
+    "expectedTotal": 44,
+    "partitions": {
+      "feedback": {
+        "visibility": "detailed",
+        "expectedCount": 26,
+        "instanceIds": [
+          "officeval_003", "officeval_004", "officeval_005", "officeval_007",
+          "officeval_017", "officeval_032", "officeval_041", "officeval_042",
+          "officeval_043", "officeval_045", "officeval_068", "officeval_073",
+          "officeval_082", "officeval_085", "officeval_086", "officeval_090",
+          "officeval_091", "officeval_095", "officeval_002", "officeval_034",
+          "officeval_040", "officeval_058", "officeval_062", "officeval_076",
+          "officeval_087", "officeval_100"
+        ]
+      },
+      "selection": {
+        "visibility": "aggregate-only",
+        "expectedCount": 0,
+        "instanceIds": []
+      },
+      "final": {
+        "visibility": "sealed",
+        "expectedCount": 18,
+        "instanceIds": [
+          "officeval_011", "officeval_015", "officeval_026", "officeval_027",
+          "officeval_033", "officeval_037", "officeval_044", "officeval_047",
+          "officeval_050", "officeval_051", "officeval_061", "officeval_065",
+          "officeval_066", "officeval_070", "officeval_084", "officeval_088",
+          "officeval_089", "officeval_097"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,151 @@
+apiVersion: harness-rsi/v1alpha1
+kind: TargetAdapter
+
+metadata:
+  id: msa-minimal-reasoning
+  name: MSA Minimal Text Reasoning Harness
+
+spec:
+  source:
+    kind: repository-tree
+    path: sources/msa-minimal-harness
+    revision: d3ef58816c980549f4ea296cddab3bf54e4b6f9d
+
+  materialization:
+    strategy: source-plus-seed-overlay
+    seedPath: targets/msa-minimal/reasoning-v1
+    seedDigest: f6ded20e49f9fdb644bae5023cfbc69132d529ee100ef0acdd026c6b77eefb29
+    overrides:
+      - model.py
+      - run.py
+    runtimeRoot: .rsi/runs
+
+  solver:
+    protocol: msa-minimal-docker-v1
+    runtime:
+      image: harness-rsi/msa-minimal-reasoning:d3ef58816c98
+      dockerfile: docker/msa-minimal-runtime/Dockerfile
+      profile: math
+      pythonCommand: python3
+      answerFile: answer.txt
+      traceFile: agent.jsonl
+      maximumAnswerBytes: 1048576
+      maximumTraceBytes: 16777216
+      secretEnvironment:
+        - RSI_PROVIDER_API_KEY
+        - RSI_PROVIDER_BASE_URL
+
+  mutation:
+    alwaysReadOnly:
+      - .rsi-context/**
+      - .rsi-output/**
+      - .git
+      - .git/**
+      - LICENSE.md
+      - NOTICE.md
+      - README.md
+      - "**/.env"
+      - "**/.env.*"
+      - "**/*credential*"
+      - "**/*secret*"
+
+    limits:
+      maximumTreeEntries: 256
+      maximumChangedFiles: 16
+      maximumChangedBytes: 524288
+      maximumFileBytes: 262144
+
+    semanticChecks:
+      protocol: msa-minimal-reasoning-v1
+      requiredFiles:
+        - agent.py
+        - model.py
+        - run.py
+        - tools.py
+        - profiles/math.md
+        - profiles/math.json
+      pythonFiles:
+        - agent.py
+        - model.py
+        - run.py
+        - tools.py
+      profile:
+        path: profiles/math.json
+        maximums:
+          max_steps: 32
+          command_timeout_seconds: 600
+          max_observation_chars: 131072
+          max_output_tokens: 32768
+
+    catalog:
+      maximumRegionsPerPlan: 5
+      regions:
+        - id: reasoning-profile
+          description: 调整数学与文本推理角色、答案协议、自检和资源预算。
+          riskLevel: l1
+          writable:
+            - profiles/math.md
+            - profiles/math.json
+          extensions: [.md, .json]
+          requires: []
+          conflicts: []
+
+        - id: reasoning-agent-loop
+          description: 调整消息历史、动作解析、自检重试和上下文编排。
+          riskLevel: l2
+          writable: [agent.py]
+          extensions: [.py]
+          requires: []
+          conflicts: []
+
+        - id: reasoning-tool-runtime
+          description: 调整可选 Bash 工具的超时、输出截断和错误反馈。
+          riskLevel: l2
+          writable: [tools.py]
+          extensions: [.py]
+          requires: []
+          conflicts: []
+
+        - id: reasoning-model-transport
+          description: 调整 Chat Completions 传输、SSE 解析和错误恢复。
+          riskLevel: l3
+          writable: [model.py]
+          extensions: [.py]
+          requires: []
+          conflicts: []
+
+        - id: reasoning-runtime-wiring
+          description: 调整 CLI、Profile 选择与 Answer/Trace 生命周期装配。
+          riskLevel: l3
+          writable: [run.py]
+          extensions: [.py]
+          requires: []
+          conflicts: []
+
+    levels:
+      l1:
+        description: 只允许修改 Reasoning Prompt 与声明式资源预算。
+        writable:
+          - profiles/math.md
+          - profiles/math.json
+        extensions: [.md, .json]
+
+      l2:
+        description: 在 L1 基础上允许修改 Agent Loop 与 Bash Tool Runtime。
+        writable:
+          - profiles/math.md
+          - profiles/math.json
+          - agent.py
+          - tools.py
+        extensions: [.md, .json, .py]
+
+      l3:
+        description: 在 L2 基础上允许修改模型传输与 Runtime Wiring；评测根和网关仍冻结。
+        writable:
+          - profiles/math.md
+          - profiles/math.json
+          - agent.py
+          - tools.py
+          - model.py
+          - run.py
+        extensions: [.md, .json, .py]

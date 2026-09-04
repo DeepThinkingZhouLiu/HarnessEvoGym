@@ -1,0 +1,14 @@
+apiVersion: harness-rsi/v1alpha1
+kind: EvolutionRecipe
+spec:
+  population:
+    mode: combined
+    concurrency: { n_branches: 2 }
+    # 两个基础轮 + 一个竞争奖励轮，第二个 Wave 同时验证 peer sharing。
+    budget: { total_budget: 3, beta: 0.67 }
+    peer_sharing: { enabled: true }
+    competition: { enabled: true, bonus_grant_unit: 1 }
+  moduleSearch:
+    authority: strategy-directed
+    riskCeiling: l1
+    strategy: linear-hill-climb

@@ -25,6 +25,8 @@ import {
 } from '../src/production-runtime.mjs'
 import { renderPrompt } from '../src/updater-runner.mjs'
 
+const TEST_TRUSTED_UID = process.getuid?.() ?? 0
+
 function validationIds() {
   return Array.from({ length: 500 }, (_, index) => (
     `putnam_${String(3000 + index).padStart(4, '0')}_a1`
@@ -322,7 +324,7 @@ async function fixture({
     verifierUid: 1104,
     verifierGid: 2104,
     bwrapPath: '/usr/bin/bwrap',
-    trustedUid: 0,
+    trustedUid: TEST_TRUSTED_UID,
     trustedGid: 2101,
     clock: () => new Date('2026-01-02T03:04:05Z'),
     legacyUnsafeExecution: true,
@@ -467,7 +469,7 @@ test('builds baseline and candidates offline inside the no-network build sandbox
   }
   assert.deepEqual(context.calls.storeValidations, [{
     root: context.paths.store,
-    trustedUid: 0,
+    trustedUid: TEST_TRUSTED_UID,
     buildUid: 1102,
   }])
   const toolchainChecks = context.calls.processes.filter((entry) => (
@@ -619,6 +621,7 @@ test('runtime cache invalidates on source digest changes and fails closed on att
   )
   const tampered = JSON.parse(await readFile(metadataPath, 'utf8'))
   tampered.candidateDigest = 'c'.repeat(64)
+  await chmod(metadataPath, 0o600)
   await writeFile(metadataPath, `${JSON.stringify(tampered, null, 2)}\n`)
   await chmod(metadataPath, 0o400)
   await assert.rejects(
@@ -1076,7 +1079,7 @@ test('validation resumes non-error checkpoints, persists each new record, and re
   assert.equal(context.calls.dataset.length, 1)
   assert.deepEqual(resumed.records.map((entry) => entry.instanceId), ids)
   assert.deepEqual(context.calls.frozenRuntimeValidations, [
-    { root: context.paths.evaluationRuntime, trustedUid: 0 },
+    { root: context.paths.evaluationRuntime, trustedUid: TEST_TRUSTED_UID },
   ])
   assert.deepEqual(context.calls.validations, [
     context.paths.evaluationRuntime,
@@ -1120,7 +1123,7 @@ test('smoke builds then reuses baseline and runs only caller-provided validation
   assert.equal(context.calls.processes.filter((entry) => entry.args.includes('install')).length, 1)
   assert.deepEqual(context.calls.frozenRuntimeValidations, [{
     root: join(context.paths.runtimes, 'baseline'),
-    trustedUid: 0,
+    trustedUid: TEST_TRUSTED_UID,
   }])
 
   await assert.rejects(

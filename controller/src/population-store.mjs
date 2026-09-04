@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { chmod, link, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 
 import { ProtocolError } from './protocol.mjs'
@@ -36,6 +36,27 @@ async function atomicJson(path, value) {
   await atomicWrite(path, `${JSON.stringify(value, null, 2)}\n`)
 }
 
+async function immutableJson(path, value) {
+  const text = `${JSON.stringify(value, null, 2)}\n`
+  await privateDirectory(dirname(path))
+  const temporary = join(dirname(path), `.${basename(path)}.tmp-${process.pid}-${randomUUID()}`)
+  await writeFile(temporary, text, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+  try {
+    try {
+      await link(temporary, path)
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error
+      const existing = await readFile(path, 'utf8')
+      if (existing !== text) {
+        throw new ProtocolError(`Population Checkpoint 已存在但内容不一致：${basename(path)}`)
+      }
+    }
+    await chmod(path, 0o400)
+  } finally {
+    await unlink(temporary).catch(() => {})
+  }
+}
+
 function assertPopulationState(state) {
   if (!state || state.kind !== 'PopulationCampaignState'
       || !Array.isArray(state.branches) || !Array.isArray(state.events)) {
@@ -54,6 +75,8 @@ export class PopulationStore {
     this.statePath = join(this.publicRoot, 'state.json')
     this.eventsPath = join(this.publicRoot, 'events.jsonl')
     this.configPath = join(this.publicRoot, 'config.snapshot.json')
+    this.baselinePath = join(this.publicRoot, 'baseline-summary.json')
+    this.checkpointsRoot = join(this.publicRoot, 'checkpoints')
   }
 
   async initialize({ config, state }) {
@@ -113,6 +136,37 @@ export class PopulationStore {
     }
   }
 
+  async writeBaselineSummary(summary) {
+    await atomicJson(this.baselinePath, summary)
+    return this.baselinePath
+  }
+
+  async writeBudgetCheckpoint(requestedBudget, checkpoint) {
+    if (!Number.isSafeInteger(requestedBudget) || requestedBudget < 0 || requestedBudget > 10_000) {
+      throw new ProtocolError('Population Checkpoint Budget 必须是 0..10000 的整数')
+    }
+    const name = `budget-${String(requestedBudget).padStart(4, '0')}.json`
+    const path = join(this.checkpointsRoot, name)
+    await immutableJson(path, checkpoint)
+    return { path, relativePath: `public/checkpoints/${name}` }
+  }
+
+  async writeBranchGenerationCheckpoint(branchId, requestedGeneration, checkpoint) {
+    assertId(branchId, 'branchId')
+    if (!Number.isSafeInteger(requestedGeneration)
+        || requestedGeneration < 1 || requestedGeneration > 10_000) {
+      throw new ProtocolError('Branch Checkpoint Generation 必须是 1..10000 的整数')
+    }
+    const directory = join(this.checkpointsRoot, 'branches', branchId)
+    const name = `generation-${String(requestedGeneration).padStart(4, '0')}.json`
+    const path = join(directory, name)
+    await immutableJson(path, checkpoint)
+    return {
+      path,
+      relativePath: `public/checkpoints/branches/${branchId}/${name}`,
+    }
+  }
+
   async writeReport({ summary, markdown, bestHarness, patch }) {
     const paths = {
       summary: join(this.reportRoot, 'population-summary.json'),
@@ -127,6 +181,12 @@ export class PopulationStore {
       atomicWrite(paths.patch, patch),
     ])
     return { directory: this.reportRoot, paths }
+  }
+
+  async writeFinalReport(report) {
+    const path = join(this.reportRoot, 'final-evaluation.json')
+    await atomicJson(path, report)
+    return path
   }
 
   async readReport() {

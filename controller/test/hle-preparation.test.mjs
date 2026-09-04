@@ -4,6 +4,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 import { loadEvolutionCampaign } from '../src/campaign.mjs'
@@ -32,7 +33,7 @@ test('preparation CLI emits a loadable private HLE campaign and 50/50 stores', a
   await writeFile(input, `${eligibleRows().map((row) => JSON.stringify(row)).join('\n')}\n`)
   const script = new URL('../../benchmarks/hle-text-math/prepare-split.mjs', import.meta.url)
   const { stdout } = await execute(process.execPath, [
-    script.pathname,
+    fileURLToPath(script),
     '--input', input,
     '--control-root', controlRoot,
     '--dataset-root', datasetRoot,

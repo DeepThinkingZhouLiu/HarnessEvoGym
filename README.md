@@ -1,327 +1,105 @@
-# HarnessEvoGym
+# DeepSeek Harness RSI
 
 English | [中文](README.zh.md)
 
-An executable Harness self-evolution platform that configures **what to evolve**,
-**where to evaluate it**, and **how to search** as independent components. The
-same trusted Controller can now combine an MSA Minimal Target with either a real
-OmegaUse-OfficeVal Cowork environment or a synthetic text-Reasoning connectivity
-environment and run all five population modes.
+**A trusted control plane that makes Coding/Cowork agents evaluable, evolvable, and rollback-safe. Its first complete path uses DeepSeek Harness as both Solver and Updater and evolves Cowork presets, prompts, skills, and constrained skill scripts on SkillsBench tasks.**
 
-The central composition is:
+> [!IMPORTANT]
+> The executable Cowork L1/L2 MVP is implemented, but the eight-task POC is only a pipeline smoke test. It is not a full SkillsBench result or evidence of general self-improvement. Formal experiments need a larger split, at least three repeated trials, provider price accounting, pinned image/verifier supply chains, quota- or tmpfs-backed write-time disk limits, and an outer gateway egress policy.
 
-```text
-Target × Environment × EvolutionRecipe
-```
-
-- A Target owns the Harness source, Candidate seed, runtime, validator, and mutable regions.
-- An Environment owns tasks, workspaces, verifiers, and metrics.
-- An EvolutionRecipe owns population coordination and per-round module search.
-- The trusted Controller owns scheduling, leases, diff checks, evaluation, promotion, and rollback.
-
-## System design
+## Implemented loop
 
 ```text
-Target Source + CandidateSeed -> Candidate Materializer -> H0 / Candidate
-             |                                               |
-             v                                               v
-      MutationCatalog -> Module Search -> MutationLease -> Updater
-                                                            |
-Environment -> Task Workspace -> Solver --------------------+
-      |                         |
-      +-> Verifier -> EvaluationSummary -> Population -> promote / rollback
+pin Controller revision, DSH Source, and SkillsBench revision
+-> materialize an immutable H0 candidate overlay
+-> run the current champion on feedback tasks
+-> create a feedback-only sanitized packet
+-> launch one complete DSH Updater session
+-> enforce the L1/L2 filesystem diff policy
+-> compare champion and proposal on selection tasks
+-> promote or reject through frozen gates
+-> lock the champion and run final exactly once
 ```
 
-| Component            | Responsibility                                                        | Boundary                                      |
-|----------------------|-----------------------------------------------------------------------|-----------------------------------------------|
-| Target               | Composes Source, Seed, Materializer, Solver Driver, Validator, Catalog | Does not provide tasks or scores              |
-| CandidateSeed        | Supplies the H0 prompt, profile, skills, and tool starting point       | Contains no benchmark answers or credentials  |
-| Environment          | Supplies tasks, workspaces, verifiers, and rewards                     | Does not declare Candidate write permissions  |
-| Population           | Coordinates branches, peer sharing, competitive budget, and ranking   | Consumes only generic projections and metrics |
-| Module Search        | Selects Region IDs from the Target Catalog                             | Cannot return file paths                      |
-| Updater              | Diagnoses feedback and edits a Candidate                              | Writes only its MutationLease                 |
-| Solver               | Solves tasks through the Candidate Harness                            | Cannot read gold, sealed final, or real keys  |
-| Controller / Gateway | Issues leases, audits diffs, evaluates, promotes, and enforces models  | Frozen trust root                             |
+The Controller implements independently pinned Target/Updater sources, strongly validated Target/Updater/Model Provider/Environment adapters, SHA-256 candidate manifests that cover files and empty directories, lineage, Docker Solver/Updater/Gateway/Verifier isolation, SkillsBench task execution, streamed artifact hashing, workspace/artifact budgets and unsafe-file rejection, a continuous-reward protocol, paired bootstrap metrics, promotion/rollback, and a separately sealed finalization command. No-op proposals are rejected before selection so random model variance cannot masquerade as evolution. Verifier reward artifacts must be regular files no larger than 1 MiB. Candidate-owned generic skills must use the `cowork-*` namespace so they cannot shadow task-provided `pdf`, `xlsx`, or similar skills. Later generations receive prior hypotheses and aggregate selection gates, never per-instance selection evidence.
 
-One evolution round is:
+## Mutation boundary
 
-```text
-incumbent
-  -> SearchStrategy selects a parent and region IDs from the Target catalog
-  -> Controller validates risk/dependencies/conflicts and issues a one-round lease
-  -> Updater reads source + validation feedback + history and applies one falsifiable change
-  -> Controller recomputes the complete diff instead of trusting self-reporting
-  -> Candidate runs validation
-  -> frozen gates pass: promote; otherwise: retain the incumbent
-```
+| Level | Writable surface                                      | Status             |
+|-------|-------------------------------------------------------|--------------------|
+| L1    | Cowork preset, persona, prompt, and skill documents  | Implemented        |
+| L2    | L1 plus scripts under `skills/**/scripts/**`         | Implemented        |
+| L3    | DSH agent loop, session, context, and core packages  | Deliberately closed |
+| Trust root | Controller, evaluator, tasks, rubrics, secrets | Never writable     |
 
-SearchStrategy controls where to search. The Updater remains a complete coding
-agent that diagnoses, proposes, edits, and checks in one session. The Controller
-does not hard-code causal analysis; it enforces permissions and objective gates.
+The prompt is guidance, not the security boundary. Updater containers never receive benchmark or verifier mounts, and the Controller recomputes every file hash after the session. Out-of-scope edits, symlinks, executable files at L1, credential-like paths, excessive tree entries, and size-limit violations reject the candidate. Cordis composition checks sanitize only explicitly allowed `!!js` lines, parse the complete YAML tree, and recursively validate plugin names and patch directives, so flow-style YAML cannot bypass the allowlist.
 
-The optional [GRHS Controller](docs/grhs.md) adds group scheduling above this
-single-plan seam: multiple discrete siblings share one parent and matched
-evidence, receive utility and group-relative advantage, update a categorical
-Region prior, and produce one audited promote/rollback decision without model
-training.
+## Isolation roles
 
-The Cowork smoke can use an AgentBay VM as its Docker host, so the Controller
-does not require a local Docker daemon. The remote backend preserves the same
-gateway, Solver, and verifier container boundaries.
+| Role          | Reads                                                | Writes                         |
+|---------------|------------------------------------------------------|--------------------------------|
+| Solver        | One task workspace and read-only candidate/task skills | Disposable trial workspace   |
+| Updater       | Read-only DSH source and feedback-only packet        | One candidate overlay          |
+| Model Gateway | Real provider URL and key                            | No persistent data             |
+| Verifier      | Trusted scoring script and solver artifacts          | Isolated verifier logs         |
+| Controller    | Config, lineage, normalized outcomes                 | Ignored `.rsi/` state          |
 
-## Pluggable Targets, Environments, and Recipes
+Solver and Updater containers join a fresh Docker internal network for each run. They receive only an ephemeral gateway token and internal URL, have no external route, and never receive the real provider key. The dual-homed Model Gateway is the only egress role, proxies only `POST /chat/completions` to the configured base URL, and enforces per-run total-request and concurrency limits. Agent containers also drop all capabilities, enable `no-new-privileges`, use a read-only root filesystem, and receive CPU, memory, PID, and timeout limits. Production can add DNS/IP allowlists outside the gateway.
 
-| Scenario / object             | Implemented composition                                      | Purpose                                      |
-|-------------------------------|--------------------------------------------------------------|----------------------------------------------|
-| Cowork                        | MSA Minimal + Cowork Seed + OmegaUse-OfficeVal               | Real Word/PPT/Excel tasks and weighted rubrics |
-| Reasoning engineering smoke   | MSA Minimal + Reasoning Seed + synthetic text reasoning      | Real model/mutation/scoring/five-mode wiring |
-| Production Reasoning          | MSA + HLE, or DSH + PutnamBench                              | Preserved HZY production path                |
-| Future Target                 | DSH, PI Agent, or another Harness + its Seed/Catalog/Driver   | Add adapters without changing Population     |
+The provider protocol, credential environment names, compatibility switches, and pinned model catalog are declared once in `adapters/providers/zcloud-openai.yml`. The Experiment still selects each role independently; the current low-cost POC uses `gpt-5.6-terra` for both Solver and Updater. The DSH runtime translates this shared profile into DSH's built-in `llm-pi-ai` OpenAI Chat Completions route. A future pi-agent runtime should translate the same provider contract instead of duplicating connection configuration.
 
-The Cowork path now uses `baidu-frontier-research/OmegaUse-OfficeVal`. Its 100
-upstream tasks are frozen by a source manifest. The Linux path supports 91 static
-verifiers and excludes nine Windows Office COM tasks. The registered split is
-55 feedback/train, 18 aggregate-only selection/validation, and 18 one-time sealed
-final/test tasks. A separate three-task Word/PPT/Excel smoke uses only IDs from
-the formal feedback partition, so it does not consume validation or test data.
+Solver workspaces and the Updater DSH home are currently host bind mounts. The Controller snapshots them after each session and rejects over-budget output, but this is not a write-time filesystem quota. Treating an Updater as adversarial in a long formal run requires quota-backed volumes or bounded tmpfs mounts.
 
-Solver sees only the instruction and original Office inputs. Rubrics, verifier
-code, and sealed-final data are never mounted into Solver or Updater. Changed
-artifacts are copied into a separate submission and scored by an offline,
-read-only-root verifier container. Reward is the Dim1-gated weighted Dim2 score
-normalized into `[0,1]`, not merely a binary skill hit.
+## Quick start
 
-Experiments with `spec.recipe` use the generic Population path. Old Cowork
-experiments without a Recipe retain their single-Champion layout, while old HZY
-Reasoning campaigns retain their production runtime. These are compatibility
-paths, not separate new algorithms.
-
-The Model Gateway gives Controller, Solver, and Updater different tokens,
-overrides agent-supplied model/token-limit fields with the frozen Experiment
-values, and meters Solver and Updater usage separately.
-
-At Population startup, the Controller also computes one `configDigest` over the
-expanded Experiment, Recipe, adapters, benchmark, policy, and Updater-prompt
-digest. Every Branch must reproduce it before creating its run directory or
-calling a model, then uses a private read-only prompt copy. Host-side changes
-therefore fail closed instead of silently giving Branches different experiments.
-
-L1/L2/L3 are now Target-owned risk layers, not aliases for DSH directories.
-Every Target declares its own paths and semantic validator. The Controller
-deterministically rechecks path allowlists, extensions, executable bits, file
-limits, symlinks, and semantic constraints after every Updater session.
-
-The platform separates the search space from the search algorithm. `mutationLevel`
-is only the experiment's risk ceiling; Target-owned `MutationCatalog.regions`
-describe the modules that can be searched. An old experiment without a
-`strategy` field automatically uses `linear-hill-climb`, which selects every
-region under the ceiling and therefore preserves the old writable set exactly.
-
-The built-in `progressive-risk-expansion` strategy is Target-independent. Each
-Branch starts at L1 and expands to L2/L3 after a configured number of consecutive
-non-promotions. Reaching the risk ceiling and stagnating again marks that Branch
-as search-exhausted, allowing Population to close it without spending unused
-budget. This is the generic SearchStrategy form of the old
-`controller-sequential` level progression; it is intentionally not named
-`legacy-*`.
-
-This strategy is opt-in; the existing ten five-mode connectivity smokes keep
-the backward-compatible `linear-hill-climb` default. The complete runnable
-composition is `experiments/reasoning-msa-progressive-strict-smoke.json`. It
-binds Single Population, a nine-round L1 -> L2 -> L3 maximum budget,
-`progressive-risk-expansion`, and a strict Reward-promotion policy. Ties do not
-promote and therefore count toward risk expansion. This synthetic Reasoning
-composition proves wiring and level transitions only; it is not an HLE score.
-
-## Turning MSA Minimal into different Solvers
-
-The shared minimal Agent loop is committed at
-[`sources/msa-minimal-harness/`](sources/msa-minimal-harness/README.md):
-
-```text
-task -> model -> optional <bash> -> observation -> model -> <final>
-```
-
-The Controller copies that pinned Source and overlays a Target-owned CandidateSeed:
-
-| Target                  | CandidateSeed                       | H0 starting point                                  |
-|-------------------------|-------------------------------------|----------------------------------------------------|
-| `msa-minimal`           | `targets/msa-minimal/cowork-v1/`    | Cowork prompt, four Office skills, Chat Completions |
-| `msa-minimal-reasoning` | `targets/msa-minimal/reasoning-v1/` | Math profile, Chat Completions, Reasoning CLI       |
-
-Each Target owns its Mutation Catalog. MSA Cowork and MSA Reasoning may both
-call a module “L1” while mapping it to different files. Controller, evaluator,
-tasks/splits, gold, credentials, budgets, and promotion rules are always frozen.
-Future PI Agent integration can declare entirely different regions without
-changing the Population algorithm.
-
-## Population modes
-
-| Mode | Branches | Coordination |
-|---|---:|---|
-| `single` | 1 | One branch owns all Budget |
-| `independent` | N | Budget is divided; branches do not communicate |
-| `mutualism` | N | Independent + read-only peer evolution logs |
-| `competition` | N | Equal Base Budget + Bonus for the largest score delta |
-| `combined` | N | Mutualism + Competition |
-
-Competition and Combined use:
-
-```text
-base_per_branch = floor(total_budget * beta / n_branches)
-bonus_pool      = total_budget - base_per_branch * n_branches
-```
-
-Branches advance in synchronized waves. Exhausted branches leave ranking; their
-existing logs may still help peers in Combined mode.
-
-## Key configuration
-
-| Change                                  | File / field                                          |
-|-----------------------------------------|-------------------------------------------------------|
-| Harness source and pinned revision      | Target Adapter: `spec.source`                         |
-| H0 prompt, skills, and tools            | Target Adapter: `spec.materialization.seedPath`       |
-| Solver launch protocol                  | Target Adapter: `spec.solver.protocol/runtime`        |
-| Mutable modules, dependencies, risk     | Target Adapter: `spec.mutation.catalog/levels`        |
-| Tasks, workspaces, and verifier         | Environment Adapter                                   |
-| Primary metric and promotion gates      | Benchmark + Evaluation Policy                         |
-| Five modes, branches, budget, beta      | EvolutionRecipe: `spec.population`                    |
-| Updater- or strategy-directed selection | EvolutionRecipe: `spec.moduleSearch.authority`        |
-| Region-combination search algorithm     | SearchStrategy Adapter                                |
-| Solver/Updater model and token limits   | Experiment: `spec.models`                             |
-| MSA per-task Solver step limit          | Target Adapter: `spec.solver.runtime.maximumSteps`    |
-
-Both smoke scenes reuse `recipes/population-smoke/*.yml` through:
-
-- `experiments/cowork-msa-smoke-<mode>.json`
-- `experiments/reasoning-msa-smoke-<mode>.json`
-- `experiments/cowork-msa-smoke-l2-single.json` and
-  `experiments/reasoning-msa-smoke-l2-single.json` exercise the L1+L2 lease and
-  semantic-validation path for one generation only.
-
-The Reasoning tasks are connectivity tests only. **They are not HLE and are not
-a model-capability score.** Existing HLE/PutnamBench production campaigns remain
-under `benchmarks/hle-text-math/` and `benchmarks/putnambench-lean/`.
-
-The current `msa-minimal` Cowork adapter pins `maximumSteps` to `1` only to keep
-real-model five-mode smoke tests inexpensive; raising Candidate `max_steps` does
-not override it. A quality experiment should use a separate Target adapter with
-an appropriate budget instead of interpreting smoke rewards as results. This is
-a trusted hard cap for the current L1-only runs. If L2/L3 can mutate
-`agent.py`/`run.py` and Candidates are treated as actively hostile, add a
-per-Solver-session request quota at the Model Gateway as an additional boundary.
-The `msa-minimal-cowork-rsi` Target allows the profile's full 12-step loop for
-the registered 55/18/18 OfficeVal experiment. The three-task smoke must not be
-reported as a capability result.
-
-### Fair five-mode linear RSI configurations
-
-`recipes/population-fair-linear/*.yml` gives every mode the same total mutable
-Candidate budget of four, uses `linear-hill-climb`, and opens only MSA Cowork L1.
-The five `experiments/cowork-msa-rsi-linear-<mode>.json` files share one H0,
-Terra Solver/Updater settings, 55 feedback tasks, 18 selection tasks, 18 sealed
-final tasks, and one promotion policy. This is a complete registered experiment
-starting point, but the current one trial per task is not a statistical benchmark
-claim. A publishable comparison should use at least three preregistered trials and
-report Solver/Updater tokens and wall time alongside reward.
-
-### Mode and Budget
-
-```yaml
-apiVersion: harness-rsi/v1alpha1
-kind: EvolutionRecipe
-spec:
-  population:
-    mode: combined
-    concurrency: { n_branches: 2 }
-    budget: { total_budget: 3, beta: 0.67 }
-    peer_sharing: { enabled: true }
-    competition: { enabled: true, bonus_grant_unit: 1 }
-  moduleSearch:
-    authority: strategy-directed
-    riskCeiling: l1
-    strategy: linear-hill-climb
-```
-
-Single requires `n_branches=1`. Peer sharing is enabled only for
-Mutualism/Combined; competition is enabled only for Competition/Combined.
-
-### Models and module search
-
-An Experiment freezes Provider, model, and `maxTokens` separately for Solver
-and Updater. `strategy-directed` asks a SearchStrategy to select Regions first;
-`updater-directed` lets the Updater choose inside the risk ceiling from the Bad
-Cases. Both paths still receive a Controller-issued MutationLease.
-
-Credentials are injected only at runtime and must never enter an Experiment,
-Adapter, Candidate, trace, or Git. Validation and sealed-final IDs must be
-disjoint, and final data must never influence mutation, promotion, or stopping.
-
-## Run and outputs
-
-Validate the repository and all ten smoke compositions first:
+Requirements: Node.js 20+, Git, Docker, and a local SkillsBench checkout pinned to `bf3793e9ec20e9682e6f18dbf4de3c69163dc9c7`. Run the Controller as a non-root user with Docker access. Before `preflight` or `evolve run`, the Controller trust-root paths (`controller/src`, `docker`, and the package manifests) must be committed. The run records the superproject SHA and Finalization requires the same revision. DSH is built completely from the pinned source submodule with Node.js 24; the first build is heavy, while candidate-only iterations reuse image caches.
 
 ```bash
+npm install
+git submodule update --init --recursive
+
+export RSI_SKILLSBENCH_ROOT=/absolute/path/to/skillsbench
+export RSI_PROVIDER_BASE_URL=https://api.zcloudapi.com/v1
+export RSI_PROVIDER_API_KEY=your-runtime-secret
+
 npm run check
 npm test
-for scene in cowork reasoning; do
-  for mode in single independent mutualism competition combined; do
-    npm run rsi -- experiment validate \
-      --config "experiments/${scene}-msa-smoke-${mode}.json"
-  done
-done
+
 npm run rsi -- experiment validate \
-  --config experiments/reasoning-msa-progressive-strict-smoke.json
-```
+  --config experiments/cowork-skillsbench-dsh-l1.json
 
-Real Cowork runs also require pinned OmegaUse Dataset/Evaluator checkouts and runtime Provider
-variables. Do not store the real key in shell history or the repository:
-
-```bash
-export RSI_OFFICEVAL_DATASET_ROOT=/absolute/path/to/OmegaUse-OfficeVal-Dataset
-export RSI_OFFICEVAL_EVALUATOR_ROOT=/absolute/path/to/OmegaUse-OfficeVal
-export RSI_PROVIDER_BASE_URL=https://provider.example/v1
-read -rsp 'Provider API Key: ' RSI_PROVIDER_API_KEY && export RSI_PROVIDER_API_KEY
+npm run rsi -- experiment preflight \
+  --config experiments/cowork-skillsbench-dsh-l1.json
 
 npm run rsi -- runtime build \
-  --experiment experiments/cowork-msa-smoke-single.json
-npm run rsi -- experiment run \
-  --config experiments/cowork-msa-smoke-single.json \
-  --run-id cowork-single-smoke-001
+  --experiment experiments/cowork-skillsbench-dsh-l1.json
 
-unset RSI_PROVIDER_API_KEY
+npm run rsi -- evolve run \
+  --experiment experiments/cowork-skillsbench-dsh-l1.json \
+  --run-id cowork-l1-smoke-001
+
+npm run rsi -- evolve finalize \
+  --run .rsi/runs/cowork-l1-smoke-001
 ```
 
-`experiment run` reads only feedback/selection while evolving. Both generic
-Population and legacy single-Champion Cowork paths use one-time
-`experiment finalize` after locking the best Candidate. The three-task smoke
-proves engineering connectivity, not statistical significance.
+Use `experiments/cowork-skillsbench-dsh-l2.json` for an independent L2 run. Runtime artifacts, candidate workspaces, results, and one-time final state are stored under `.rsi/runs/<run-id>/` and are ignored by Git. The real API key is inherited only by the Model Gateway, never placed in Docker arguments or Agent containers; Solver and Updater receive a run-scoped token. Finalization claims `final-attempt.json` with an atomic create-if-absent operation, so concurrent processes cannot both unlock the sealed set. Once claimed, success, failure, or a crash does not silently make Final reusable.
 
-Infrastructure failures become `PAUSED_INFRASTRUCTURE` and fail the command
-instead of masquerading as a zero-score success. `experiment resume` continues
-the same Population after the fault is repaired. It also accepts a legacy GRHS
-Run whose `failed` state explicitly records an infrastructure failure; committed
-per-task checkpoints are revalidated and reused while incomplete tasks are
-quarantined and rerun. Gateway request limits are
-currently scoped per Branch rather than as one Population-wide cost ceiling.
-Production HLE/PutnamBench retains its dedicated runtime and sealed broker; the
-public smoke suite is not a substitute for a production benchmark.
+## POC split and metrics
 
-For one campaign, call
-`scripts/resume-hle-short-updater-root.mjs evolve start` with explicit config,
-runtime, campaign ID, campaigns root, source root, and credential FD.
+The pinned manifest contains three feedback tasks, two selection tasks, and three sealed final tasks. The protocol accepts continuous `[0,1]` rewards and uses `meanReward` as its primary Cowork metric, but the eight selected upstream verifiers currently emit only 0/1, so `meanReward` equals resolved rate in this POC. Paired reward improvement/regression, bootstrap intervals, latency, policy violations, and feedback-to-final generalization gap are also reported.
 
-Each branch writes `public/state.json` and `public/evolution-log.jsonl`. A
-closed population campaign reports every branch incumbent plus
-`best-harness.json` and `best-harness.patch`.
+The Model Gateway now measures request and token usage per Solver/Updater session from streamed provider usage. Token fields are emitted only when every response in the session reports valid usage; otherwise they remain unknown. Dollar cost remains unknown without a trusted provider rate card, so the POC cost gates stay disabled. A token-growth gate exists but has no arbitrary POC threshold. Results explicitly record `seed_controlled=false`: seeds are paired and recorded, but the current DSH model path does not guarantee deterministic sampling, so formal runs should use repeated trials.
 
-More detail:
+## Documentation
 
-- [Controller modes](docs/controller-modes.md)
-- [Architecture](docs/architecture.md)
-- [Search space, strategy, and compatibility](docs/search-strategy.md)
-- [HLE mutation workflow](docs/hle-mutation-workflow.zh.md)
-- [Cowork L1/L2 workflow](docs/cowork-mvp.md)
+- [Cowork MVP runbook](docs/cowork-mvp.md)
+- [Control-plane architecture](docs/architecture.md)
+- [Controller](controller/README.md)
+- [Adapters](adapters/README.md)
+- [Environments](environments/README.md)
+- [Benchmarks](benchmarks/README.md)
+- [Evaluation](evaluation/README.md)
 
-Controller code is [MIT licensed](LICENSE). Vendored and submodule sources keep
-their own licenses and notices.
+## Upstream and license
+
+This is not an official DeepSeek project. `sources/deepseek-harness/` comes from [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness), retains its own history and license, and is pinned by the superproject Gitlink. Updaters never edit it directly. Controller, adapter, preset, and documentation work in this repository is available under the [MIT License](LICENSE).

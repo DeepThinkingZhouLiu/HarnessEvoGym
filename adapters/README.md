@@ -29,7 +29,8 @@ SearchStrategy 只返回父 Candidate 和 Region ID，Controller 校验后自己
 
 `builtin-v1` 用于仓库内受审查算法；`docker-json-v1` 用于 Contributor 算法。后者无网络、
 无挂载、无宿主环境变量，且镜像必须固定 SHA-256 Digest。详见
-[`docs/search-strategy.zh.md`](../docs/search-strategy.zh.md)。
+分叉后的 Search Strategy 与 GRHS 交接信息见
+[`docs/PNX_HANDOFF.md`](../docs/PNX_HANDOFF.md)。
 
 ## DeepSeek Harness Target
 

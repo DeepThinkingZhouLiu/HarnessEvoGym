@@ -71,22 +71,7 @@ class Bridge:
                     f"{getattr(attached, 'error_message', '')}"
                 )
         else:
-            created = self.client.create(
-                CreateSessionParams(
-                    image_id=image_id,
-                    policy_id=policy_id,
-                    # The currently provisioned AgentBay policy caps maxRuntime at
-                    # 1000. Keepalive handles idle expiry; Controller checkpoints
-                    # remain authoritative if the platform enforces a hard cap.
-                    lifecycle_policy=LifecyclePolicy(idle_release_timeout=900, max_runtime=1000),
-                )
-            )
-            self.session = getattr(created, "session", None)
-            if self.session is None:
-                raise RuntimeError(
-                    "AgentBay session creation failed: "
-                    f"{getattr(created, 'error_message', '')}"
-                )
+            self.session = self._create_session(image_id, policy_id, LifecyclePolicy)
         self.remote_root = f"/tmp/harness-rsi-{uuid.uuid4().hex}"
         # AgentBay control-plane calls are serialized. Long Docker commands are
         # launched in the background, so releasing this lock after launch lets
@@ -97,6 +82,46 @@ class Bridge:
         self.keepalive_stop = threading.Event()
         self.keepalive = threading.Thread(target=self._keepalive_loop, daemon=True)
         self.keepalive.start()
+
+    def _create_session(self, image_id, policy_id, lifecycle_policy_type):
+        from agentbay import CreateSessionParams
+
+        created = self.client.create(
+            CreateSessionParams(
+                image_id=image_id,
+                policy_id=policy_id,
+                # The currently provisioned AgentBay policy caps maxRuntime at
+                # 1000. Keepalive handles idle expiry; Controller checkpoints
+                # remain authoritative if the platform enforces a hard cap.
+                lifecycle_policy=lifecycle_policy_type(idle_release_timeout=900, max_runtime=1000),
+            )
+        )
+        session = getattr(created, "session", None)
+        if session is None:
+            raise RuntimeError(
+                "AgentBay session creation failed: "
+                f"{getattr(created, 'error_message', '')}"
+            )
+        return session
+
+    def _reconnect(self) -> None:
+        if not self.owns_session:
+            raise RuntimeError("attached AgentBay session expired")
+        from agentbay._common.params.lifecycle_policy import LifecyclePolicy
+
+        old = self.session
+        self.session = self._create_session(
+            os.environ["HARNESS_RSI_AGENTBAY_IMAGE_ID"],
+            os.environ["HARNESS_RSI_AGENTBAY_POLICY_ID"],
+            LifecyclePolicy,
+        )
+        try:
+            self.client.delete(old, sync_context=False)
+        except Exception:
+            pass
+        self.remote_root = f"/tmp/harness-rsi-{uuid.uuid4().hex}"
+        self._checked(["mkdir", "-p", self.remote_root], 30)
+        self._ensure_docker()
 
     def _keepalive_loop(self) -> None:
         while not self.keepalive_stop.wait(300):
@@ -109,7 +134,7 @@ class Bridge:
     def _vm(self, args: list[str], timeout: int = 120):
         command = shlex.join(args)
         last = None
-        for attempt in range(1, 4):
+        for attempt in range(1, 5):
             try:
                 with self._control_plane_lock:
                     value = self.session.command.run(command, timeout_ms=max(1, timeout) * 1000)
@@ -119,9 +144,15 @@ class Bridge:
                 return value
             except Exception as exc:
                 last = exc
-                if attempt < 3:
+                if attempt == 3 and self.owns_session:
+                    try:
+                        self._reconnect()
+                        continue
+                    except Exception as reconnect_error:
+                        last = reconnect_error
+                if attempt < 4:
                     time.sleep(attempt * 2)
-        raise RuntimeError(f"AgentBay command transport failed after 3 attempts: {type(last).__name__}: {last}")
+        raise RuntimeError(f"AgentBay command transport failed after 4 attempts: {type(last).__name__}: {last}")
 
     def _checked(self, args: list[str], timeout: int = 120):
         value = self._vm(args, timeout)

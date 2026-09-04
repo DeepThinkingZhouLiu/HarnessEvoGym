@@ -595,6 +595,31 @@ async function runUpdaterGeneration({
   const id = candidateId ?? `g${String(generation).padStart(3, '0')}-${level}`
   const root = join(runRoot, 'candidates', id)
   const workspace = join(root, 'workspace')
+  // A previous updater process may have created part of this Candidate before
+  // infrastructure failure. Preserve that evidence, then rebuild from the
+  // immutable parent instead of letting copyRegularTree fail on an existing
+  // workspace during resume/retry.
+  if (await pathExists(root)) {
+    const complete = await Promise.all([
+      pathExists(join(root, 'manifest.json')),
+      pathExists(join(root, 'mutation-report.json')),
+    ])
+    if (!complete.every(Boolean)) {
+      const recoveryRoot = join(runRoot, 'recovery', 'candidates')
+      await mkdir(recoveryRoot, { recursive: true, mode: 0o700 })
+      const archive = join(
+        recoveryRoot,
+        `${id}-${new Date().toISOString().replace(/[:.]/gu, '-').toLowerCase()}-${randomUUID().slice(0, 8)}`,
+      )
+      await rename(root, archive)
+      await writeJsonFile(join(archive, 'recovery-manifest.json'), {
+        apiVersion: 'harness-rsi/v1alpha1',
+        kind: 'CoworkCandidateRecoveryArchive',
+        metadata: { candidateId: id, archivedAt: new Date().toISOString() },
+        spec: { reason: 'incomplete-candidate-before-updater-retry' },
+      })
+    }
+  }
   await mkdir(root, { recursive: true })
   await copyRegularTree(parent.workspace, workspace)
   const before = await snapshotTree(workspace, {
@@ -2227,8 +2252,15 @@ async function runGrhsRound({
       const existingRoot = join(runRoot, 'candidates', candidateId)
       const existingManifest = await readJsonFile(join(existingRoot, 'manifest.json')).catch(() => null)
       const existingReport = await readJsonFile(join(existingRoot, 'mutation-report.json')).catch(() => null)
-      if (existingManifest && existingReport) {
-        const existingWorkspace = join(existingRoot, 'workspace')
+      const existingWorkspace = join(existingRoot, 'workspace')
+      const existingWorkspacePresent = await existingControllerDirectory(
+        existingWorkspace,
+        `复用 Candidate ${candidateId} workspace`,
+      ).catch((error) => {
+        if (error.code === 'ENOENT') return false
+        throw error
+      })
+      if (existingManifest && existingReport && existingWorkspacePresent) {
         await assertCandidateIntegrity({
           candidateId,
           workspace: existingWorkspace,
@@ -2252,6 +2284,9 @@ async function runGrhsRound({
           policyReport: (await readJsonFile(join(existingRoot, 'mutation-diff.json'))).spec,
         }
       } else {
+        // A metadata-only directory is a failed previous attempt, not a
+        // reusable Candidate. runUpdaterGeneration archives it before copying
+        // the parent workspace.
         proposal = await runUpdaterGeneration({
           context,
           runRoot,

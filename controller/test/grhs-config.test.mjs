@@ -7,7 +7,7 @@ import test from 'node:test'
 import { loadExperimentBundle, validateExperiment } from '../src/adapters.mjs'
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
-const experimentPath = join(repositoryRoot, 'experiments/cowork-msa-grhs-smoke-codex.json')
+const experimentPath = join(repositoryRoot, 'experiments/cowork-grhs-smoke.json')
 
 test('GRHS OfficeVal smoke 固定 MSA Solver、Codex Updater 与 Terra High', async () => {
   const bundle = await loadExperimentBundle(experimentPath, repositoryRoot)

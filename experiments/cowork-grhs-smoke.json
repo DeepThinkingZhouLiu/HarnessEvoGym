@@ -1,7 +1,7 @@
 {
   "apiVersion": "harness-rsi/v1alpha1",
   "kind": "EvolutionExperiment",
-  "metadata": { "id": "cowork-msa-grhs-smoke-codex" },
+  "metadata": { "id": "cowork-grhs-smoke" },
   "spec": {
     "adapters": {
       "target": "adapters/targets/msa-minimal-cowork-rsi.yml",

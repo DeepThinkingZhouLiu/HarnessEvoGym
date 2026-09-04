@@ -89,7 +89,7 @@ test('DSH Driver 同时接受旧协议名和带版本协议名', async () => {
 
 test('Codex Updater 固定官方 distribution、版本与内容摘要', async () => {
   const bundle = await loadExperimentBundle(
-    resolve(repositoryRoot, 'experiments/cowork-msa-rsi-linear-single-l2-one-generation-codex.json'),
+    resolve(repositoryRoot, 'experiments/cowork-grhs-one-round.json'),
     repositoryRoot,
   )
   assert.equal(bundle.updater.protocol, 'codex-exec-v1')

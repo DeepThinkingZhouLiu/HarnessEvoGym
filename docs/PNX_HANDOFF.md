@@ -1,6 +1,6 @@
 # pnx-dev GRHS 交接
 
-## liuzhou-dev 之后增加的内容
+## lz-dev 之后增加的内容
 
 本分支从 `lz-dev@918d8ef` 分出。本次交付直接相关的新增内容只有：
 
@@ -12,7 +12,7 @@
 
 主要代码是 `controller/src/grhs.mjs` 和
 `controller/src/cowork-orchestrator.mjs`。可直接复现的一轮配置是
-`experiments/cowork-msa-grhs-one-round-codex.json`。
+`experiments/cowork-grhs-one-round.json`。
 
 ## 实验：12 → 9 → 5
 
@@ -166,7 +166,7 @@ export RSI_PROVIDER_BASE_URL=https://api.zcloudapi.com/v1
 read -rsp "Provider API key: " RSI_PROVIDER_API_KEY && echo
 export RSI_PROVIDER_API_KEY
 
-GRHS_CONFIG=experiments/cowork-msa-grhs-one-round-codex.json
+GRHS_CONFIG=experiments/cowork-grhs-one-round.json
 GRHS_RUN_ID=grhs-one-round-$(date -u +%Y%m%d-%H%M%S)
 
 npm run check

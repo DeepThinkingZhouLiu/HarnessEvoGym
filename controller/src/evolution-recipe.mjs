@@ -5,6 +5,7 @@ const API_VERSION = 'harness-rsi/v1alpha1'
 const AUTHORITIES = Object.freeze(['updater-directed', 'strategy-directed'])
 const RISK_LEVELS = Object.freeze(['l1', 'l2', 'l3'])
 const LAYER_SELECTIONS = Object.freeze(['controller-sequential', 'updater-soft'])
+const REGION_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
 
 export const MODULE_SEARCH_AUTHORITIES = AUTHORITIES
 
@@ -36,9 +37,27 @@ function strategyReference(value, { defaultValue = null } = {}) {
   throw new ProtocolError('EvolutionRecipe moduleSearch.strategy 必须是 Strategy ID、Adapter 路径或已解析 Adapter')
 }
 
+function regionIds(value, label, { optional = false } = {}) {
+  if (optional && value === undefined) return null
+  const input = value ?? []
+  if (!Array.isArray(input)) throw new ProtocolError(`${label} 必须是数组`)
+  const output = input.map((id, index) => {
+    if (typeof id !== 'string' || !REGION_ID.test(id)) {
+      throw new ProtocolError(`${label}[${index}] 必须是 kebab-case Region ID`)
+    }
+    return id
+  })
+  if (new Set(output).size !== output.length) throw new ProtocolError(`${label} 不能重复`)
+  return Object.freeze(output)
+}
+
 function normalizeModuleSearch(input) {
   const search = object(input, 'EvolutionRecipe.spec.moduleSearch')
-  rejectUnknown(search, new Set(['authority', 'riskCeiling', 'strategy']), 'EvolutionRecipe.spec.moduleSearch')
+  rejectUnknown(
+    search,
+    new Set(['authority', 'riskCeiling', 'strategy', 'includeRegions', 'excludeRegions']),
+    'EvolutionRecipe.spec.moduleSearch',
+  )
   if (!AUTHORITIES.includes(search.authority)) {
     throw new ProtocolError(`EvolutionRecipe moduleSearch.authority 必须是 ${AUTHORITIES.join(' | ')}`)
   }
@@ -52,7 +71,106 @@ function normalizeModuleSearch(input) {
   if (search.authority === 'strategy-directed' && strategy === null) {
     throw new ProtocolError('strategy-directed 必须指定 Search Strategy')
   }
-  return Object.freeze({ authority: search.authority, riskCeiling: search.riskCeiling, strategy })
+  const includeRegions = regionIds(
+    search.includeRegions,
+    'EvolutionRecipe moduleSearch.includeRegions',
+    { optional: true },
+  )
+  const excludeRegions = regionIds(
+    search.excludeRegions,
+    'EvolutionRecipe moduleSearch.excludeRegions',
+  )
+  if (includeRegions !== null) {
+    const excluded = new Set(excludeRegions)
+    const overlap = includeRegions.filter((id) => excluded.has(id))
+    if (overlap.length > 0) {
+      throw new ProtocolError('EvolutionRecipe Region 不能同时出现在 includeRegions 与 excludeRegions', overlap)
+    }
+  }
+  return Object.freeze({
+    authority: search.authority,
+    riskCeiling: search.riskCeiling,
+    strategy,
+    includeRegions,
+    excludeRegions,
+  })
+}
+
+function normalizeCheckpointing(input, totalBudget) {
+  if (input === undefined) return null
+  const checkpointing = object(input, 'EvolutionRecipe.spec.checkpointing')
+  rejectUnknown(
+    checkpointing,
+    new Set(['budgetMilestones', 'branchGenerationMilestones', 'capture']),
+    'EvolutionRecipe.spec.checkpointing',
+  )
+  if (!Array.isArray(checkpointing.budgetMilestones)
+      || checkpointing.budgetMilestones.length === 0) {
+    throw new ProtocolError('EvolutionRecipe checkpointing.budgetMilestones 必须是非空数组')
+  }
+  const budgetMilestones = checkpointing.budgetMilestones.map((value, index) => {
+    if (!Number.isSafeInteger(value) || value < 0 || value > totalBudget) {
+      throw new ProtocolError(
+        `EvolutionRecipe checkpointing.budgetMilestones[${index}] 必须是 0..${totalBudget} 的整数`,
+      )
+    }
+    return value
+  })
+  if (new Set(budgetMilestones).size !== budgetMilestones.length) {
+    throw new ProtocolError('EvolutionRecipe checkpointing.budgetMilestones 不能重复')
+  }
+  if (budgetMilestones.some((value, index) => index > 0 && value <= budgetMilestones[index - 1])) {
+    throw new ProtocolError('EvolutionRecipe checkpointing.budgetMilestones 必须严格递增')
+  }
+
+  if (checkpointing.branchGenerationMilestones !== undefined
+      && !Array.isArray(checkpointing.branchGenerationMilestones)) {
+    throw new ProtocolError('EvolutionRecipe checkpointing.branchGenerationMilestones 必须是数组')
+  }
+  const branchGenerationMilestones = (checkpointing.branchGenerationMilestones ?? [])
+    .map((value, index) => {
+        if (!Number.isSafeInteger(value) || value < 1 || value > totalBudget) {
+          throw new ProtocolError(
+            `EvolutionRecipe checkpointing.branchGenerationMilestones[${index}] 必须是 1..${totalBudget} 的整数`,
+          )
+        }
+        return value
+      })
+  if (new Set(branchGenerationMilestones).size !== branchGenerationMilestones.length) {
+    throw new ProtocolError('EvolutionRecipe checkpointing.branchGenerationMilestones 不能重复')
+  }
+  if (branchGenerationMilestones.some((value, index) => (
+    index > 0 && value <= branchGenerationMilestones[index - 1]
+  ))) {
+    throw new ProtocolError('EvolutionRecipe checkpointing.branchGenerationMilestones 必须严格递增')
+  }
+
+  const rawCapture = checkpointing.capture === undefined
+    ? {}
+    : object(checkpointing.capture, 'EvolutionRecipe.spec.checkpointing.capture')
+  rejectUnknown(
+    rawCapture,
+    new Set(['populationBest', 'branchIncumbents', 'latestAttempts']),
+    'EvolutionRecipe.spec.checkpointing.capture',
+  )
+  const capture = {
+    populationBest: rawCapture.populationBest ?? true,
+    branchIncumbents: rawCapture.branchIncumbents ?? true,
+    latestAttempts: rawCapture.latestAttempts ?? true,
+  }
+  for (const [name, value] of Object.entries(capture)) {
+    if (typeof value !== 'boolean') {
+      throw new ProtocolError(`EvolutionRecipe checkpointing.capture.${name} 必须是 boolean`)
+    }
+  }
+  if (!Object.values(capture).some(Boolean)) {
+    throw new ProtocolError('EvolutionRecipe checkpointing.capture 至少必须启用一项')
+  }
+  return Object.freeze({
+    budgetMilestones: Object.freeze(budgetMilestones),
+    branchGenerationMilestones: Object.freeze(branchGenerationMilestones),
+    capture: Object.freeze(capture),
+  })
 }
 
 function freezePopulation(input) {
@@ -73,13 +191,17 @@ export function normalizeEvolutionRecipe(input) {
     throw new ProtocolError('EvolutionRecipe 协议无效')
   }
   const spec = object(recipe.spec, 'EvolutionRecipe.spec')
-  rejectUnknown(spec, new Set(['population', 'moduleSearch']), 'EvolutionRecipe.spec')
+  rejectUnknown(spec, new Set(['population', 'moduleSearch', 'checkpointing']), 'EvolutionRecipe.spec')
   const population = freezePopulation(normalizeControllerConfig(spec.population))
   const moduleSearch = normalizeModuleSearch(spec.moduleSearch)
+  const checkpointing = normalizeCheckpointing(
+    spec.checkpointing,
+    population.budget.total_budget,
+  )
   return Object.freeze({
     apiVersion: API_VERSION,
     kind: 'EvolutionRecipe',
-    spec: Object.freeze({ population, moduleSearch }),
+    spec: Object.freeze({ population, moduleSearch, checkpointing }),
   })
 }
 

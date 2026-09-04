@@ -209,6 +209,75 @@ export function mutationCatalogFor(target) {
   }
 }
 
+/**
+ * 把 Recipe 的模块掩码落实成 Controller 认可的 Catalog。Strategy 和 Updater
+ * 后续只能看到这个投影，因此 include/exclude 不是提示词约束，而是硬权限边界。
+ */
+export function mutationCatalogForModuleSearch(target, moduleSearch) {
+  const catalog = mutationCatalogFor(target)
+  if (!moduleSearch || !MUTATION_RISK_LEVELS.includes(moduleSearch.riskCeiling)) {
+    throw new ProtocolError('Module Search 缺少合法风险上限')
+  }
+  const allRegions = new Map(catalog.spec.regions.map((region) => [region.id, region]))
+  const include = moduleSearch.includeRegions === null || moduleSearch.includeRegions === undefined
+    ? null
+    : new Set(moduleSearch.includeRegions)
+  const exclude = new Set(moduleSearch.excludeRegions ?? [])
+  for (const id of [...(include ?? []), ...exclude]) {
+    if (!allRegions.has(id)) throw new ProtocolError(`EvolutionRecipe 引用了 Target 未定义的 Region：${id}`)
+  }
+  const ceiling = riskIndex(moduleSearch.riskCeiling)
+  const selected = catalog.spec.regions.filter((region) => (
+    riskIndex(region.riskLevel) <= ceiling
+      && (include === null || include.has(region.id))
+      && !exclude.has(region.id)
+  ))
+  if (selected.length === 0) {
+    throw new ProtocolError('EvolutionRecipe Region 掩码没有留下任何可进化模块')
+  }
+  const selectedIds = new Set(selected.map((region) => region.id))
+  for (const region of selected) {
+    const missing = region.requires.filter((id) => !selectedIds.has(id))
+    if (missing.length > 0) {
+      throw new ProtocolError(`EvolutionRecipe Region 掩码移除了 ${region.id} 的依赖`, missing)
+    }
+  }
+  return {
+    ...catalog,
+    spec: {
+      ...catalog.spec,
+      // 保留 Target 在风险上限内声明的层级，即使某一层被完整消融；
+      // riskCeiling 仍是合法边界，真正可选内容以 regions 为准。
+      riskLevels: catalog.spec.riskLevels.filter((level) => riskIndex(level) <= ceiling),
+      maximumRegionsPerPlan: Math.min(catalog.spec.maximumRegionsPerPlan, selected.length),
+      regions: selected,
+    },
+  }
+}
+
+export function mutationPolicyForCatalog(target, catalog, riskCeiling) {
+  if (!catalog?.spec?.riskLevels?.includes(riskCeiling)) {
+    throw new ProtocolError(`Mutation Catalog 不包含风险上限 ${riskCeiling}`)
+  }
+  const regions = catalog.spec.regions
+  return {
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'MutationPolicy',
+    metadata: {
+      target: target.id,
+      level: riskCeiling,
+      regions: regions.map((region) => region.id),
+    },
+    spec: {
+      description: regions.map((region) => `${region.id}: ${region.description}`).join('\n'),
+      writable: [...new Set(regions.flatMap((region) => region.writable))],
+      readOnly: [...target.mutation.alwaysReadOnly],
+      extensions: [...new Set(regions.flatMap((region) => region.extensions))],
+      limits: { ...target.mutation.limits },
+    },
+  }
+}
+
 function requirePlanObject(value) {
   const plan = expectObject(value, 'MutationPlan')
   rejectUnknownFields(plan, new Set(['apiVersion', 'kind', 'metadata', 'spec']), 'MutationPlan')

@@ -68,6 +68,22 @@ async function trialFixture(prefix) {
   return { root, candidateWorkspace, taskWorkspace, environmentAssets, sessionRoot }
 }
 
+test('MSA Bash Tool 将非 UTF-8 的 Office 原始字节安全替换，不让 Solver 崩溃', async () => {
+  const toolRoot = resolve(repositoryRoot, 'sources/msa-minimal-harness')
+  const script = [
+    'import sys',
+    `sys.path.insert(0, ${JSON.stringify(toolRoot)})`,
+    'from tools import run_bash',
+    'print(run_bash(\'python3 -c "import sys;sys.stdout.buffer.write(bytes([255,111,107]))"\', \'/tmp\', 10, 1024))',
+  ].join('\n')
+  const { stdout } = await executeFile('python3', ['-c', script], {
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+  })
+  const result = JSON.parse(stdout)
+  assert.equal(result.returncode, 0)
+  assert.equal(result.output, '\ufffdok')
+})
+
 test('MSA Cowork Runtime 派生镜像绑定 Task Image、Source 与定义摘要', async () => {
   let buildOptions
   const docker = {

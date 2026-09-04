@@ -17,7 +17,8 @@ const DEFAULT_MAX_ERROR_BYTES = 1024 * 1024
 const MAX_SECRET_BYTES = 64 * 1024
 const MAX_SSE_LINE_BYTES = 256 * 1024
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u
-const REASONING_EFFORTS = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max'])
+const REASONING_EFFORTS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+const WIRE_PROTOCOLS = new Set(['openai-responses', 'anthropic-messages'])
 
 /** Classify only terminal provider/credential failures, never local Candidate policy errors. */
 export function isProviderInfrastructureAudit(record) {
@@ -56,7 +57,7 @@ function requirePositiveInteger(value, name) {
   return value
 }
 
-function normalizeUpstreamEndpoint(value) {
+function normalizeUpstreamEndpoint(value, wireProtocol) {
   let base
   try {
     base = new URL(value)
@@ -68,7 +69,9 @@ function normalizeUpstreamEndpoint(value) {
   }
   base.hash = ''
   base.search = ''
-  base.pathname = `${base.pathname.replace(/\/+$/u, '')}/responses`
+  base.pathname = `${base.pathname.replace(/\/+$/u, '')}/${
+    wireProtocol === 'anthropic-messages' ? 'messages' : 'responses'
+  }`
   return base
 }
 
@@ -233,8 +236,26 @@ function forceTrustedRequestFields(
   maxOutputTokens,
   trustedModel,
   trustedReasoningEffort,
+  wireProtocol,
 ) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new RequestFailure(400)
+  if (wireProtocol === 'anthropic-messages') {
+    const trusted = {
+      ...body,
+      model: trustedModel,
+      stream: true,
+      // Claude Code 2.1.259 在 Sonnet/Opus 4.6+ 上使用 adaptive thinking。
+      // 该字段与 effort 是两个独立控制面，不能信任沙箱请求传入的值。
+      thinking: { type: 'adaptive' },
+      output_config: {
+        effort: trustedReasoningEffort === 'minimal' ? 'low' : trustedReasoningEffort,
+      },
+    }
+    delete trusted.max_output_tokens
+    delete trusted.reasoning
+    if (maxOutputTokens !== null) trusted.max_tokens = maxOutputTokens
+    return trusted
+  }
   const trusted = {
     ...body,
     model: trustedModel,
@@ -278,7 +299,20 @@ function numericUsage(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : undefined
 }
 
-function extractSafeUsage(event) {
+function extractSafeUsage(event, wireProtocol) {
+  if (wireProtocol === 'anthropic-messages') {
+    const input = event?.type === 'message_start'
+      ? event?.message?.usage
+      : event?.usage
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined
+    const usage = {
+      inputTokens: numericUsage(input.input_tokens),
+      outputTokens: numericUsage(input.output_tokens),
+      cachedInputTokens: numericUsage(input.cache_read_input_tokens),
+    }
+    const filtered = Object.fromEntries(Object.entries(usage).filter(([, value]) => value !== undefined))
+    return Object.keys(filtered).length > 0 ? filtered : undefined
+  }
   const input = event?.response?.usage ?? event?.usage
   if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined
   const usage = {
@@ -293,7 +327,8 @@ function extractSafeUsage(event) {
 }
 
 class SseUsageCollector {
-  constructor(maximumLineBytes = MAX_SSE_LINE_BYTES) {
+  constructor(wireProtocol, maximumLineBytes = MAX_SSE_LINE_BYTES) {
+    this.wireProtocol = wireProtocol
     this.maximumLineBytes = maximumLineBytes
     this.decoder = new StringDecoder('utf8')
     this.buffer = ''
@@ -338,8 +373,14 @@ class SseUsageCollector {
     const data = line.slice(5).trimStart()
     if (!data || data === '[DONE]' || Buffer.byteLength(data) > this.maximumLineBytes) return
     try {
-      const usage = extractSafeUsage(JSON.parse(data))
-      if (usage) this.usage = usage
+      const usage = extractSafeUsage(JSON.parse(data), this.wireProtocol)
+      if (usage) {
+        this.usage = { ...(this.usage ?? {}), ...usage }
+        if (Number.isSafeInteger(this.usage.inputTokens)
+            && Number.isSafeInteger(this.usage.outputTokens)) {
+          this.usage.totalTokens = this.usage.inputTokens + this.usage.outputTokens
+        }
+      }
     } catch {
       // Usage is optional. Never expose or retain malformed SSE payloads in audit errors.
     }
@@ -390,6 +431,17 @@ function safeUpstreamFailureType(body) {
   }
 }
 
+function anthropicBetaHeader(headers, wireProtocol) {
+  if (wireProtocol !== 'anthropic-messages') return null
+  const raw = headers['anthropic-beta']
+  const value = Array.isArray(raw) ? raw.join(',') : raw
+  if (value === undefined) return null
+  if (typeof value !== 'string' || value.length > 8192 || /[\r\n\0]/u.test(value)) {
+    throw new RequestFailure(400)
+  }
+  return value
+}
+
 function proxyToUpstream({
   endpoint,
   payload,
@@ -399,6 +451,8 @@ function proxyToUpstream({
   downstreamResponse,
   requestTimeoutMs,
   maxErrorBytes,
+  wireProtocol,
+  anthropicBeta,
 }) {
   return new Promise((resolve) => {
     const transport = endpoint.protocol === 'https:' ? https : http
@@ -440,10 +494,17 @@ function proxyToUpstream({
     downstreamResponse.once('close', onClientGone)
     downstreamResponse.on('drain', onDrain)
 
+    const authenticationHeaders = wireProtocol === 'anthropic-messages'
+      ? {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          ...(anthropicBeta === null ? {} : { 'anthropic-beta': anthropicBeta }),
+        }
+      : { authorization: `Bearer ${apiKey}` }
     upstreamRequest = transport.request(endpoint, {
       method: 'POST',
       headers: {
-        authorization: `Bearer ${apiKey}`,
+        ...authenticationHeaders,
         accept: 'text/event-stream',
         'accept-encoding': 'identity',
         'content-type': 'application/json',
@@ -486,7 +547,7 @@ function proxyToUpstream({
         downstreamResponse.writeHead(status, headers)
         downstreamResponse.flushHeaders()
       }
-      const collector = new SseUsageCollector()
+      const collector = new SseUsageCollector(wireProtocol)
       response.on('data', (chunk) => {
         if (finished) return
         collector.push(chunk)
@@ -515,7 +576,11 @@ function proxyToUpstream({
 }
 
 function normalizeOptions(options) {
-  const endpoint = normalizeUpstreamEndpoint(options.upstreamBaseUrl)
+  const wireProtocol = options.wireProtocol ?? 'openai-responses'
+  if (!WIRE_PROTOCOLS.has(wireProtocol)) {
+    throw new TypeError('wireProtocol must be openai-responses or anthropic-messages')
+  }
+  const endpoint = normalizeUpstreamEndpoint(options.upstreamBaseUrl, wireProtocol)
   const trustedModel = options.trustedModel ?? 'gpt-5.6-sol'
   if (typeof trustedModel !== 'string' || !MODEL_ID_PATTERN.test(trustedModel)) {
     throw new TypeError('trustedModel must be a valid model identifier')
@@ -554,6 +619,8 @@ function normalizeOptions(options) {
   }
   return {
     endpoint,
+    wireProtocol,
+    requestPath: wireProtocol === 'anthropic-messages' ? '/v1/messages' : '/v1/responses',
     trustedModel,
     trustedReasoningEffort,
     maxBodyBytes,
@@ -569,7 +636,7 @@ function normalizeOptions(options) {
 }
 
 /**
- * Create a loopback-only Responses API credential gateway.
+ * Create a loopback-only OpenAI Responses or Anthropic Messages credential gateway.
  *
  * SECURITY BOUNDARY: this process hides the upstream credential and fixes trusted
  * model settings. It does NOT replace a container/network namespace egress policy.
@@ -621,7 +688,7 @@ export function createModelGateway(options) {
         await audit(403)
         return
       }
-      if (request.url !== '/v1/responses') {
+      if (request.url !== config.requestPath) {
         rejectRequest(request, response, 404)
         await audit(404)
         return
@@ -631,10 +698,14 @@ export function createModelGateway(options) {
         await audit(405)
         return
       }
-      const authorization = Array.isArray(request.headers.authorization)
-        ? request.headers.authorization[0]
+      const rawCredential = config.wireProtocol === 'anthropic-messages'
+        ? request.headers['x-api-key']
         : request.headers.authorization
-      if (!constantTimeTextEqual(authorization ?? '', `Bearer ${config.candidateApiKey}`)) {
+      const credential = Array.isArray(rawCredential) ? rawCredential[0] : rawCredential
+      const expectedCredential = config.wireProtocol === 'anthropic-messages'
+        ? config.candidateApiKey
+        : `Bearer ${config.candidateApiKey}`
+      if (!constantTimeTextEqual(credential ?? '', expectedCredential)) {
         rejectRequest(request, response, 401)
         await audit(401)
         return
@@ -670,6 +741,7 @@ export function createModelGateway(options) {
             config.maxOutputTokens,
             config.trustedModel,
             config.trustedReasoningEffort,
+            config.wireProtocol,
           )
         } catch {
           rejectRequest(request, response, 400)
@@ -690,6 +762,16 @@ export function createModelGateway(options) {
           return
         }
 
+        let anthropicBeta
+        try {
+          anthropicBeta = anthropicBetaHeader(request.headers, config.wireProtocol)
+        } catch (error) {
+          const status = error instanceof RequestFailure ? error.status : 400
+          rejectRequest(request, response, status)
+          await audit(status)
+          return
+        }
+
         const outcome = await proxyToUpstream({
           endpoint: config.endpoint,
           payload: Buffer.from(JSON.stringify(trustedBody)),
@@ -699,6 +781,8 @@ export function createModelGateway(options) {
           downstreamResponse: response,
           requestTimeoutMs: config.requestTimeoutMs,
           maxErrorBytes: config.maxErrorBytes,
+          wireProtocol: config.wireProtocol,
+          anthropicBeta,
         })
         await audit(outcome.status, outcome.usage, 'upstream', outcome.failureType)
       } finally {

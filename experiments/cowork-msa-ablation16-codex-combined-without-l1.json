@@ -1,0 +1,22 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "EvolutionExperiment",
+  "metadata": { "id": "cowork-msa-ablation16-codex-combined-without-l1" },
+  "spec": {
+    "recipe": "recipes/population-layer-ablation-linear-16/combined-without-l1.yml",
+    "adapters": {
+      "target": "adapters/targets/msa-minimal-cowork-rsi.yml",
+      "updater": "adapters/updaters/codex-cli.yml",
+      "environment": "environments/omegause-officeval-formal.yml",
+      "provider": "adapters/providers/zcloud-openai.yml",
+      "strategy": "adapters/strategies/linear-hill-climb.yml"
+    },
+    "benchmark": "benchmarks/cowork-omegause-officeval-main-v1/benchmark.json",
+    "policy": "evaluation/policies/cowork-officeval-rsi.json",
+    "models": {
+      "solver": { "provider": "zcloud-openai", "model": "gpt-5.6-terra", "maxTokens": 8192, "reasoningEffort": "high" },
+      "updater": { "provider": "zcloud-openai", "model": "gpt-5.6-terra", "maxTokens": 8192, "reasoningEffort": "high" }
+    },
+    "evolution": { "mutationLevel": "l3", "generations": 16, "trialsPerInstance": 1, "seeds": [20260827] }
+  }
+}

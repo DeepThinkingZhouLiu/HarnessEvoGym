@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { dirname, resolve } from 'node:path'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { dirname, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import {
@@ -25,6 +26,8 @@ test('Cowork Experiment 分别固定 Target/Updater Source 和模型上限', asy
   assert.equal(bundle.experiment.models.solver.maxTokens, 8192)
   assert.equal(bundle.experiment.models.updater.maxTokens, 8192)
   assert.equal(bundle.provider.id, 'zcloud-openai')
+  assert.equal(bundle.providers.solver, bundle.provider)
+  assert.equal(bundle.providers.updater, bundle.provider)
   assert.equal(bundle.experiment.models.solver.model, 'gpt-5.6-terra')
   assert.equal(bundle.experiment.models.updater.model, 'gpt-5.6-terra')
   assert.equal(bundle.environment.modelGateway.upstreamApiKeyEnvironment, 'RSI_PROVIDER_API_KEY')
@@ -59,6 +62,22 @@ test('Evolution Experiment 只接受可审计的模型思考深度', async () =>
   assert.throws(() => validateExperiment(config), /reasoningEffort 无效/u)
 })
 
+test('Evolution Experiment 可固定可复用 BaselinePack，旧配置保持为空', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'experiments/cowork-msa-rsi-linear-single.json'))
+  assert.equal(validateExperiment(config).baselinePack, null)
+  config.spec.baselinePack = {
+    mode: 'reuse',
+    path: '.rsi/baseline-packs/common-h0.json',
+    sha256: 'a'.repeat(64),
+  }
+  assert.deepEqual(validateExperiment(config).baselinePack, config.spec.baselinePack)
+  config.spec.baselinePack.mode = 'prepare'
+  assert.throws(() => validateExperiment(config), /只能是 reuse/u)
+  config.spec.baselinePack.mode = 'reuse'
+  config.spec.baselinePack.extra = true
+  assert.throws(() => validateExperiment(config), /未知字段/u)
+})
+
 test('DSH Driver 同时接受旧协议名和带版本协议名', async () => {
   const target = await readConfigFile(resolve(repositoryRoot, 'adapters/targets/deepseek-harness.yml'))
   assert.equal(validateTargetAdapter(target).solver.protocol, 'dsh-headless-docker')
@@ -86,6 +105,59 @@ test('Codex Updater 固定官方 distribution、版本与内容摘要', async ()
   const config = await readConfigFile(resolve(repositoryRoot, 'adapters/updaters/codex-cli.yml'))
   config.spec.runtime.executable = 'codex'
   assert.throws(() => validateUpdaterAdapter(config), /必须是绝对路径/u)
+})
+
+test('Claude Code Updater 与 Solver 可以绑定不同 Provider', async () => {
+  const bundle = await loadExperimentBundle(
+    resolve(repositoryRoot, 'experiments/cowork-msa-mvp-claude-single.json'),
+    repositoryRoot,
+  )
+  assert.equal(bundle.target.id, 'msa-minimal')
+  assert.equal(bundle.updater.protocol, 'claude-code-exec-v1')
+  assert.equal(bundle.updater.runtime.package, '@anthropic-ai/claude-code')
+  assert.equal(bundle.updater.runtime.version, '2.1.259')
+  assert.equal(bundle.providers.solver.id, 'zcloud-openai')
+  assert.equal(bundle.providers.solver.protocol, 'openai-chat-completions')
+  assert.equal(bundle.providers.updater.id, 'zcloud-anthropic')
+  assert.equal(bundle.providers.updater.protocol, 'anthropic-messages')
+  assert.equal(bundle.experiment.models.updater.model, 'claude-sonnet-4-6')
+})
+
+test('Experiment 拒绝 provider/providers 同时声明与 Updater Provider 协议错配', async () => {
+  const config = await readConfigFile(resolve(
+    repositoryRoot,
+    'experiments/cowork-msa-mvp-claude-single.json',
+  ))
+  config.spec.adapters.provider = 'adapters/providers/zcloud-openai.yml'
+  assert.throws(() => validateExperiment(config), /必须且只能声明 provider 或 providers/u)
+  delete config.spec.adapters.provider
+  config.spec.adapters.providers.updater = 'adapters/providers/zcloud-openai.yml'
+  config.spec.models.updater.provider = 'zcloud-openai'
+
+  const directory = await mkdtemp(resolve(repositoryRoot, '.adapter-role-test-'))
+  const experimentPath = resolve(directory, 'experiment.json')
+  const updaterPath = resolve(directory, 'updater.json')
+  try {
+    const updater = await readConfigFile(resolve(
+      repositoryRoot,
+      'adapters/updaters/claude-code-cli.yml',
+    ))
+    updater.spec.runtime.secretEnvironment = [
+      'RSI_PROVIDER_API_KEY',
+      'RSI_PROVIDER_BASE_URL',
+    ]
+    config.spec.adapters.updater = relative(repositoryRoot, updaterPath).replaceAll('\\', '/')
+    await Promise.all([
+      writeFile(experimentPath, `${JSON.stringify(config, null, 2)}\n`),
+      writeFile(updaterPath, `${JSON.stringify(updater, null, 2)}\n`),
+    ])
+    await assert.rejects(
+      () => loadExperimentBundle(experimentPath, repositoryRoot),
+      /Updater 与 Provider Protocol 不兼容/u,
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })
 
 test('OmegaUse Environment Adapter 拒绝给 Verifier 增加宿主环境继承入口', async () => {

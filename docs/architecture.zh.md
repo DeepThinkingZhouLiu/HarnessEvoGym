@@ -22,7 +22,10 @@ Environment 定义题目与评分，EvolutionRecipe 组合五种 Population Mode
 
 Experiment 的 Chat Completions 网关生命周期在 `cowork-model-gateway.mjs`；HZY 生产 Reasoning 的 Responses/Unix-socket
 网关仍在 `model-gateway.mjs`。这两个文件分别对应 OpenAI Chat Completions Docker 隔离和
-OpenAI Responses 宿主隔离，不是同一协议的重复实现。
+OpenAI Responses/Anthropic Messages 宿主隔离，不是同一协议的重复实现。
+新 Experiment 可以用 `adapters.providers.solver/updater` 为两个角色独立选 Provider，
+旧 `adapters.provider` 仍兼容为两者共用。详见
+[《Updater Provider 与消融 Checkpoint》](updater-providers-and-checkpoints.zh.md)。
 
 ## 核心对象
 
@@ -31,7 +34,7 @@ OpenAI Responses 宿主隔离，不是同一协议的重复实现。
 | Source           | 保存可信、固定的上游源码 Revision                              | 否                             |
 | Target           | 声明 Source、CandidateSeed、Materializer、Driver、Validator 和 Catalog | 否                             |
 | Environment      | 声明题目、任务工作区、Verifier 和评分指标                           | 否                             |
-| EvolutionRecipe  | 组合 Population Mode、Module Search、Budget 和经验共享               | 否                             |
+| EvolutionRecipe  | 组合 Population Mode、Module Search、Budget、Checkpoint 和经验共享    | 否                             |
 | SearchStrategy   | 从 Catalog 选父 Candidate 和 Region ID                             | 否；它也不能直接写 Candidate       |
 | Solver           | 用 Candidate Harness 在任务环境中真正解题                         | 只通过 Candidate 间接改变行为         |
 | Updater          | 读取反馈和源码，在一个 Session 内分析、提假设并改 Candidate     | 只能改本轮 Lease 允许的 Candidate 路径 |

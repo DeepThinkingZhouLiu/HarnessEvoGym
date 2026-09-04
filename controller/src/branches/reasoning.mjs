@@ -54,6 +54,8 @@ function projection(branchId, state, stepId = null) {
           stepId: stepId ?? `reasoning-step-${completedSteps}`,
           stepNumber: completedSteps,
           candidateId: candidate.candidateId ?? null,
+          candidateRevision: candidate.commit ?? null,
+          candidateDigest: candidate.digest ?? null,
           decision,
           ranking: { eligible: decision === 'promoted', evaluation },
         }

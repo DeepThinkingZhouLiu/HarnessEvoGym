@@ -12,8 +12,11 @@ import {
   readConfigFile,
   resolveInside,
 } from './config.mjs'
-import { isAbsolute, posix } from 'node:path'
-import { normalizeMutationCatalogConfiguration } from './mutation-catalog.mjs'
+import { isAbsolute, posix, relative, resolve } from 'node:path'
+import {
+  mutationCatalogForModuleSearch,
+  normalizeMutationCatalogConfiguration,
+} from './mutation-catalog.mjs'
 import { normalizeRelativePath } from './path-policy.mjs'
 import { ProtocolError, readJsonFile, validateBenchmark, validateEvaluationPolicy } from './protocol.mjs'
 import { normalizeCoworkEvolutionRecipe, normalizeEvolutionRecipe } from './evolution-recipe.mjs'
@@ -89,6 +92,34 @@ function validateCodexUpdaterRuntime(raw, label) {
     version,
     distributionDigest: sha256Digest(runtime.distributionDigest, `${label}.distributionDigest`),
     providerId,
+    maximumModelRequests: expectNumber(
+      runtime.maximumModelRequests ?? 64,
+      `${label}.maximumModelRequests`,
+      { integer: true, min: 1, max: 128 },
+    ),
+    secretEnvironment,
+  }
+}
+
+function validateClaudeCodeUpdaterRuntime(raw, label) {
+  const runtime = expectObject(raw, label)
+  const secretEnvironment = expectStringArray(runtime.secretEnvironment, `${label}.secretEnvironment`)
+  for (const name of secretEnvironment) {
+    if (!ENVIRONMENT_NAME.test(name)) throw new ProtocolError(`${label}.secretEnvironment 包含非法名称：${name}`)
+  }
+  const version = expectText(runtime.version, `${label}.version`)
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version)) {
+    throw new ProtocolError(`${label}.version 必须是固定语义版本`)
+  }
+  return {
+    executable: absoluteRuntimePath(runtime.executable, `${label}.executable`),
+    distributionRoot: absoluteRuntimePath(runtime.distributionRoot, `${label}.distributionRoot`),
+    nodeBinary: absoluteRuntimePath(runtime.nodeBinary, `${label}.nodeBinary`),
+    bwrapPath: absoluteRuntimePath(runtime.bwrapPath, `${label}.bwrapPath`),
+    setprivPath: absoluteRuntimePath(runtime.setprivPath, `${label}.setprivPath`),
+    package: expectText(runtime.package, `${label}.package`),
+    version,
+    distributionDigest: sha256Digest(runtime.distributionDigest, `${label}.distributionDigest`),
     maximumModelRequests: expectNumber(
       runtime.maximumModelRequests ?? 64,
       `${label}.maximumModelRequests`,
@@ -444,7 +475,12 @@ export function validateUpdaterAdapter(input) {
   const id = metadataId(input, 'UpdaterAdapter')
   const spec = expectObject(input.spec, 'UpdaterAdapter.spec')
   const protocol = expectText(spec.protocol, 'UpdaterAdapter.spec.protocol')
-  if (!['dsh-headless-docker', 'dsh-headless-docker-v1', 'codex-exec-v1'].includes(protocol)) {
+  if (![
+    'dsh-headless-docker',
+    'dsh-headless-docker-v1',
+    'codex-exec-v1',
+    'claude-code-exec-v1',
+  ].includes(protocol)) {
     throw new ProtocolError(`当前未实现 Updater Protocol：${protocol}`)
   }
   const prompt = expectObject(spec.prompt, 'UpdaterAdapter.spec.prompt')
@@ -454,15 +490,19 @@ export function validateUpdaterAdapter(input) {
     'UpdaterAdapter.spec.output.mutationReport.name',
   )
   if (mutationReportName.includes('/')) throw new ProtocolError('Mutation Report name 必须是单个文件名')
-  if (protocol === 'codex-exec-v1') {
-    if (spec.source !== undefined) throw new ProtocolError('Codex Updater 不接受 Source；运行时由固定 distribution 提供')
+  if (['codex-exec-v1', 'claude-code-exec-v1'].includes(protocol)) {
+    if (spec.source !== undefined) {
+      throw new ProtocolError(`${protocol === 'codex-exec-v1' ? 'Codex' : 'Claude Code'} Updater 不接受 Source；运行时由固定 distribution 提供`)
+    }
     return {
       apiVersion: API_VERSION,
       kind: 'UpdaterAdapter',
       id,
       protocol,
       source: null,
-      runtime: validateCodexUpdaterRuntime(spec.runtime, 'UpdaterAdapter.spec.runtime'),
+      runtime: protocol === 'codex-exec-v1'
+        ? validateCodexUpdaterRuntime(spec.runtime, 'UpdaterAdapter.spec.runtime')
+        : validateClaudeCodeUpdaterRuntime(spec.runtime, 'UpdaterAdapter.spec.runtime'),
       promptPath: relativePath(prompt.path, 'UpdaterAdapter.spec.prompt.path'),
       mutationReportName,
     }
@@ -495,7 +535,7 @@ export function validateModelProviderAdapter(input) {
   const metadata = expectObject(input.metadata, 'ModelProviderAdapter.metadata')
   const spec = expectObject(input.spec, 'ModelProviderAdapter.spec')
   const protocol = expectText(spec.protocol, 'ModelProviderAdapter.spec.protocol')
-  if (protocol !== 'openai-chat-completions') {
+  if (!['openai-chat-completions', 'anthropic-messages'].includes(protocol)) {
     throw new ProtocolError(`当前未实现 Model Provider Protocol：${protocol}`)
   }
   const credentials = expectObject(spec.credentials, 'ModelProviderAdapter.spec.credentials')
@@ -518,6 +558,9 @@ export function validateModelProviderAdapter(input) {
   )
   if (!['max_tokens', 'max_completion_tokens'].includes(maxTokensField)) {
     throw new ProtocolError('ModelProviderAdapter.spec.compatibility.maxTokensField 只支持 max_tokens 或 max_completion_tokens')
+  }
+  if (protocol === 'anthropic-messages' && maxTokensField !== 'max_tokens') {
+    throw new ProtocolError('Anthropic Messages Provider 必须使用 max_tokens')
   }
 
   if (!Array.isArray(spec.models) || spec.models.length === 0) {
@@ -1128,6 +1171,23 @@ function validateModel(value, label) {
   }
 }
 
+function validateBaselinePackReference(value) {
+  const reference = expectObject(value, 'EvolutionExperiment.spec.baselinePack')
+  const unknown = Object.keys(reference).filter((key) => !['mode', 'path', 'sha256'].includes(key))
+  if (unknown.length > 0) {
+    throw new ProtocolError('EvolutionExperiment.spec.baselinePack 含有未知字段', unknown)
+  }
+  const mode = expectText(reference.mode, 'EvolutionExperiment.spec.baselinePack.mode')
+  if (mode !== 'reuse') {
+    throw new ProtocolError('EvolutionExperiment.spec.baselinePack.mode 当前只能是 reuse')
+  }
+  return {
+    mode,
+    path: relativePath(reference.path, 'EvolutionExperiment.spec.baselinePack.path'),
+    sha256: sha256Digest(reference.sha256, 'EvolutionExperiment.spec.baselinePack.sha256'),
+  }
+}
+
 export function validateExperiment(input) {
   assertApiObject(input, 'EvolutionExperiment')
   const id = metadataId(input, 'EvolutionExperiment')
@@ -1147,6 +1207,26 @@ export function validateExperiment(input) {
     { integer: true, min: 1, max: 20 },
   )
   if (seeds.length < trialsPerInstance) throw new ProtocolError('seeds 数量不能少于 trialsPerInstance')
+  const hasLegacyProvider = adapters.provider !== undefined
+  const hasRoleProviders = adapters.providers !== undefined
+  if (hasLegacyProvider === hasRoleProviders) {
+    throw new ProtocolError('EvolutionExperiment.spec.adapters 必须且只能声明 provider 或 providers')
+  }
+  let providers
+  if (hasLegacyProvider) {
+    const path = relativePath(adapters.provider, 'EvolutionExperiment.spec.adapters.provider')
+    providers = { solver: path, updater: path }
+  } else {
+    const rawProviders = expectObject(adapters.providers, 'EvolutionExperiment.spec.adapters.providers')
+    const unknownProviderRoles = Object.keys(rawProviders).filter((key) => !['solver', 'updater'].includes(key))
+    if (unknownProviderRoles.length > 0) {
+      throw new ProtocolError('EvolutionExperiment.spec.adapters.providers 含有未知角色', unknownProviderRoles)
+    }
+    providers = {
+      solver: relativePath(rawProviders.solver, 'EvolutionExperiment.spec.adapters.providers.solver'),
+      updater: relativePath(rawProviders.updater, 'EvolutionExperiment.spec.adapters.providers.updater'),
+    }
+  }
   return {
     apiVersion: API_VERSION,
     kind: 'EvolutionExperiment',
@@ -1155,7 +1235,8 @@ export function validateExperiment(input) {
       target: relativePath(adapters.target, 'EvolutionExperiment.spec.adapters.target'),
       updater: relativePath(adapters.updater, 'EvolutionExperiment.spec.adapters.updater'),
       environment: relativePath(adapters.environment, 'EvolutionExperiment.spec.adapters.environment'),
-      provider: relativePath(adapters.provider, 'EvolutionExperiment.spec.adapters.provider'),
+      provider: hasLegacyProvider ? providers.solver : null,
+      providers,
       strategy: adapters.strategy === undefined
         ? null
         : relativePath(adapters.strategy, 'EvolutionExperiment.spec.adapters.strategy'),
@@ -1165,6 +1246,9 @@ export function validateExperiment(input) {
     recipePath: spec.recipe === undefined
       ? null
       : relativePath(spec.recipe, 'EvolutionExperiment.spec.recipe'),
+    baselinePack: spec.baselinePack === undefined
+      ? null
+      : validateBaselinePackReference(spec.baselinePack),
     models: {
       solver: validateModel(models.solver, 'EvolutionExperiment.spec.models.solver'),
       updater: validateModel(models.updater, 'EvolutionExperiment.spec.models.updater'),
@@ -1182,16 +1266,25 @@ export function validateExperiment(input) {
 }
 
 export async function loadExperimentBundle(experimentPath, repositoryRoot) {
-  const experiment = validateExperiment(await readConfigFile(experimentPath))
+  const absoluteExperimentPath = resolve(experimentPath)
+  const relativeExperimentPath = normalizeRelativePath(
+    relative(resolve(repositoryRoot), absoluteExperimentPath).replaceAll('\\', '/'),
+    'EvolutionExperiment 路径',
+  )
+  const experiment = validateExperiment(await readConfigFile(absoluteExperimentPath))
   const benchmarkPath = resolveInside(repositoryRoot, experiment.benchmarkPath, 'Benchmark 路径')
   const policyPath = resolveInside(repositoryRoot, experiment.policyPath, 'Evaluation Policy 路径')
   const recipePath = experiment.recipePath === null
     ? null
     : resolveInside(repositoryRoot, experiment.recipePath, 'Evolution Recipe 路径')
+  const baselinePackPath = experiment.baselinePack === null
+    ? null
+    : resolveInside(repositoryRoot, experiment.baselinePack.path, 'BaselinePack 路径')
   await Promise.all([
     assertPathKind(benchmarkPath, 'Benchmark 配置', 'file'),
     assertPathKind(policyPath, 'Evaluation Policy 配置', 'file'),
     ...(recipePath ? [assertPathKind(recipePath, 'Evolution Recipe 配置', 'file')] : []),
+    ...(baselinePackPath ? [assertPathKind(baselinePackPath, 'BaselinePack', 'file')] : []),
   ])
   const target = validateTargetAdapter(
     await readConfigFile(resolveInside(repositoryRoot, experiment.adapters.target, 'Target Adapter 路径')),
@@ -1202,9 +1295,16 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
   const environment = validateEnvironmentAdapter(
     await readConfigFile(resolveInside(repositoryRoot, experiment.adapters.environment, 'Environment Adapter 路径')),
   )
-  const provider = validateModelProviderAdapter(
-    await readConfigFile(resolveInside(repositoryRoot, experiment.adapters.provider, 'Model Provider Adapter 路径')),
+  const providerPaths = experiment.adapters.providers
+  const solverProvider = validateModelProviderAdapter(
+    await readConfigFile(resolveInside(repositoryRoot, providerPaths.solver, 'Solver Model Provider Adapter 路径')),
   )
+  const updaterProvider = providerPaths.updater === providerPaths.solver
+    ? solverProvider
+    : validateModelProviderAdapter(
+        await readConfigFile(resolveInside(repositoryRoot, providerPaths.updater, 'Updater Model Provider Adapter 路径')),
+      )
+  const providers = Object.freeze({ solver: solverProvider, updater: updaterProvider })
   const strategy = experiment.adapters.strategy === null
     ? defaultSearchStrategyAdapter()
     : validateSearchStrategyAdapter(
@@ -1223,6 +1323,9 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
         strategy,
         mutationLevel: experiment.evolution.mutationLevel,
       })
+  if (experiment.baselinePack !== null && recipePath === null) {
+    throw new ProtocolError('BaselinePack 只支持显式 EvolutionRecipe 的通用 Population 实验')
+  }
   if (recipe.spec.moduleSearch.riskCeiling !== experiment.evolution.mutationLevel) {
     throw new ProtocolError('Evolution Recipe 风险上限与旧 mutationLevel 不一致')
   }
@@ -1245,17 +1348,23 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
       `Environment=${environment.id}`,
     ])
   }
+  if (benchmark.partitions[policy.decisionPartition].instanceIds.length === 0) {
+    throw new ProtocolError(
+      `Evaluation Policy 的 decisionPartition=${policy.decisionPartition} 在 Benchmark 中不能为空`,
+    )
+  }
   if (!target.mutation.levels[experiment.evolution.mutationLevel]) {
     throw new ProtocolError(`Target Adapter 没有定义 ${experiment.evolution.mutationLevel}`)
   }
-  const gatewayEnvironment = new Set([
-    provider.credentials.apiKeyEnvironment,
-    provider.credentials.baseUrlEnvironment,
-  ])
-  for (const [label, names] of [
-    ['Target Solver', target.solver.runtime.secretEnvironment],
-    ['Updater', updater.runtime.secretEnvironment],
+  mutationCatalogForModuleSearch(target, recipe.spec.moduleSearch)
+  for (const [label, names, roleProvider] of [
+    ['Target Solver', target.solver.runtime.secretEnvironment, solverProvider],
+    ['Updater', updater.runtime.secretEnvironment, updaterProvider],
   ]) {
+    const gatewayEnvironment = new Set([
+      roleProvider.credentials.apiKeyEnvironment,
+      roleProvider.credentials.baseUrlEnvironment,
+    ])
     if (names.length !== gatewayEnvironment.size || names.some((name) => !gatewayEnvironment.has(name))) {
       throw new ProtocolError(`${label} 的凭据环境变量必须由 Model Gateway 完整代理`, [
         `runtime=${names.join(',')}`,
@@ -1263,17 +1372,33 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
       ])
     }
   }
-  for (const [label, model] of [
-    ['Solver', experiment.models.solver],
-    ['Updater', experiment.models.updater],
+  if (solverProvider.protocol !== 'openai-chat-completions') {
+    throw new ProtocolError('当前 Solver Driver 只支持 OpenAI Chat Completions Provider')
+  }
+  const updaterProviderProtocols = updater.protocol === 'claude-code-exec-v1'
+    ? ['anthropic-messages']
+    : ['openai-chat-completions']
+  if (!updaterProviderProtocols.includes(updaterProvider.protocol)) {
+    throw new ProtocolError(`${updater.id} Updater 与 Provider Protocol 不兼容`, [
+      `updater=${updater.protocol}`,
+      `provider=${updaterProvider.protocol}`,
+    ])
+  }
+  if (updater.protocol === 'claude-code-exec-v1'
+      && experiment.models.updater.reasoningEffort === 'minimal') {
+    throw new ProtocolError('Claude Code Updater reasoningEffort 不支持 minimal')
+  }
+  for (const [label, model, roleProvider] of [
+    ['Solver', experiment.models.solver, solverProvider],
+    ['Updater', experiment.models.updater, updaterProvider],
   ]) {
-    if (model.provider !== provider.id) {
+    if (model.provider !== roleProvider.id) {
       throw new ProtocolError(`${label} Model 引用了未加载的 Provider`, [
         `model.provider=${model.provider}`,
-        `adapter=${provider.id}`,
+        `adapter=${roleProvider.id}`,
       ])
     }
-    if (!provider.models.some((item) => item.id === model.model)) {
+    if (!roleProvider.models.some((item) => item.id === model.model)) {
       throw new ProtocolError(`${label} Model 不在 Provider 固定目录中：${model.model}`)
     }
   }
@@ -1281,11 +1406,23 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
     ...environment,
     modelGateway: {
       ...environment.modelGateway,
-      upstreamApiKeyEnvironment: provider.credentials.apiKeyEnvironment,
-      upstreamBaseUrlEnvironment: provider.credentials.baseUrlEnvironment,
+      upstreamApiKeyEnvironment: solverProvider.credentials.apiKeyEnvironment,
+      upstreamBaseUrlEnvironment: solverProvider.credentials.baseUrlEnvironment,
     },
   }
-  return { experiment, recipe, target, updater, environment: resolvedEnvironment, provider, strategy, benchmark, policy }
+  return {
+    experimentPath: relativeExperimentPath,
+    experiment,
+    recipe,
+    target,
+    updater,
+    environment: resolvedEnvironment,
+    provider: solverProvider,
+    providers,
+    strategy,
+    benchmark,
+    policy,
+  }
 }
 
 export async function validateAnyAdapter(input) {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -30,7 +30,7 @@ function population(mode) {
   }
 }
 
-function loaded(mode) {
+function loaded(mode, checkpointing = null) {
   return {
     fingerprint: FINGERPRINT,
     config: {
@@ -48,6 +48,7 @@ function loaded(mode) {
           riskCeiling: 'l1',
           strategy: null,
         },
+        ...(checkpointing === null ? {} : { checkpointing }),
       },
     }),
   }
@@ -76,6 +77,7 @@ async function runMode(mode, {
   initialValues = {},
   candidateValues = {},
   pairedBaselineValues = {},
+  checkpointing = null,
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'population-generic-'))
   const campaignsRoot = join(root, 'campaigns')
@@ -84,7 +86,7 @@ async function runMode(mode, {
   const calls = new Map()
 
   const orchestrator = new PopulationOrchestrator({
-    loadedCampaign: loaded(mode),
+    loadedCampaign: loaded(mode, checkpointing),
     campaignsRoot,
     campaignId: `generic-${mode}`,
     createBranch({ branchId, branchesRoot }) {
@@ -137,6 +139,8 @@ async function runMode(mode, {
             stepId,
             stepNumber: next,
             candidateId,
+            candidateRevision: state.revision,
+            candidateDigest: state.digest,
             decision: 'promoted',
             ranking: {
               eligible: true,
@@ -186,7 +190,7 @@ async function runMode(mode, {
 
   await orchestrator.initialize()
   const state = await orchestrator.run()
-  return { state, contexts, calls }
+  return { state, contexts, calls, campaignsRoot }
 }
 
 test('SearchStrategy 耗尽后 Branch 可提前停止并保留未用 Population 预算', async () => {
@@ -232,6 +236,271 @@ test('Population 使用 Branch 同期配对基线计算增量与 Competition 预
       { branchId: 'branch-002', validationScore: 11, deltaScore: 0.5 },
     ],
   )
+})
+
+test('Population 跨过 Budget 里程碑时保留 Champion、Branch Incumbent 和当轮 Candidate 身份', async () => {
+  const result = await runMode('independent', {
+    checkpointing: {
+      budgetMilestones: [0, 1, 2, 3, 4],
+      capture: {
+        populationBest: true,
+        branchIncumbents: true,
+        latestAttempts: true,
+      },
+    },
+  })
+  assert.deepEqual(
+    result.state.checkpoints.map(({ requestedBudget, actualConsumedBudget }) => ({
+      requestedBudget,
+      actualConsumedBudget,
+    })),
+    [
+      { requestedBudget: 0, actualConsumedBudget: 0 },
+      { requestedBudget: 1, actualConsumedBudget: 2 },
+      { requestedBudget: 2, actualConsumedBudget: 2 },
+      { requestedBudget: 3, actualConsumedBudget: 4 },
+      { requestedBudget: 4, actualConsumedBudget: 4 },
+    ],
+  )
+
+  const checkpointPath = join(
+    result.campaignsRoot,
+    'generic-independent',
+    'public',
+    'checkpoints',
+    'budget-0001.json',
+  )
+  const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf8'))
+  assert.equal((await stat(checkpointPath)).mode & 0o777, 0o400)
+  assert.equal(checkpoint.kind, 'PopulationBudgetCheckpoint')
+  assert.equal(checkpoint.requestedBudget, 1)
+  assert.equal(checkpoint.actualConsumedBudget, 2)
+  assert.equal(
+    checkpoint.capturedAt,
+    result.state.events.find((entry) => (
+      entry.type === 'POPULATION_WAVE_COMPLETED' && entry.epoch === 1
+    )).at,
+  )
+  assert.equal(checkpoint.populationBest.candidateId, 'branch-002-c1')
+  assert.deepEqual(
+    checkpoint.branchIncumbents.map((entry) => entry.incumbent.candidateId),
+    ['branch-001-c1', 'branch-002-c1'],
+  )
+  assert.deepEqual(
+    checkpoint.latestAttempts.map((entry) => ({
+      candidateId: entry.step.candidateId,
+      candidateRevision: entry.step.candidateRevision,
+      candidateDigest: entry.step.candidateDigest,
+    })),
+    ['branch-001', 'branch-002'].map((branchId) => ({
+      candidateId: `${branchId}-c1`,
+      candidateRevision: digest(`${branchId}-c1-revision`),
+      candidateDigest: digest(`${branchId}-c1`),
+    })),
+  )
+})
+
+test('Population 按每个 Branch 的实际代数保存独立 Checkpoint', async () => {
+  const result = await runMode('independent', {
+    checkpointing: {
+      budgetMilestones: [0, 4],
+      branchGenerationMilestones: [1, 2],
+      capture: {
+        populationBest: true,
+        branchIncumbents: true,
+        latestAttempts: true,
+      },
+    },
+  })
+  assert.deepEqual(
+    result.state.branchCheckpoints.map((entry) => [
+      entry.branchId,
+      entry.requestedGeneration,
+      entry.actualCompletedSteps,
+    ]),
+    [
+      ['branch-001', 1, 1],
+      ['branch-002', 1, 1],
+      ['branch-001', 2, 2],
+      ['branch-002', 2, 2],
+    ],
+  )
+  const checkpointPath = join(
+    result.campaignsRoot,
+    'generic-independent',
+    'public',
+    'checkpoints',
+    'branches',
+    'branch-001',
+    'generation-0002.json',
+  )
+  const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf8'))
+  assert.equal((await stat(checkpointPath)).mode & 0o777, 0o400)
+  assert.equal(checkpoint.kind, 'BranchGenerationCheckpoint')
+  assert.equal(checkpoint.requestedGeneration, 2)
+  assert.equal(checkpoint.actualCompletedSteps, 2)
+  assert.equal(checkpoint.actualConsumedBudget, 2)
+  assert.equal(checkpoint.latestAttempt.stepNumber, 2)
+})
+
+test('Checkpoint 文件落盘后进程中断，可从稳定 Population 状态幂等补全总账', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'population-checkpoint-crash-'))
+  const campaignsRoot = join(root, 'campaigns')
+  const campaignId = 'generic-checkpoint-crash'
+  await mkdir(campaignsRoot)
+  let branchState = null
+  let restored = 0
+
+  function createBranch({ branchId, branchesRoot }) {
+    return {
+      async initialize() {
+        const candidateId = `${branchId}-h0`
+        branchState = {
+          status: 'active',
+          steps: 0,
+          candidateId,
+          revision: digest(`${candidateId}-revision`),
+          digest: digest(candidateId),
+          evaluation: createEvaluationSummary({
+            candidateId,
+            metric: 'mean-reward',
+            value: 0,
+          }),
+          lastStep: null,
+        }
+        return projection(branchId, branchState)
+      },
+      async restore() {
+        restored += 1
+        return projection(branchId, branchState, branchState.lastStep)
+      },
+      async inspect() {
+        return projection(branchId, branchState, branchState.lastStep)
+      },
+      async advanceOne({ stepId }) {
+        const candidateId = `${branchId}-c1`
+        const evaluation = createEvaluationSummary({
+          candidateId,
+          metric: 'mean-reward',
+          value: 1,
+        })
+        const lastStep = {
+          stepId,
+          stepNumber: 1,
+          candidateId,
+          candidateRevision: digest(`${candidateId}-revision`),
+          candidateDigest: digest(candidateId),
+          decision: 'promoted',
+          ranking: { eligible: true, evaluation },
+        }
+        branchState = {
+          status: 'active',
+          steps: 1,
+          candidateId,
+          revision: lastStep.candidateRevision,
+          digest: lastStep.candidateDigest,
+          evaluation,
+          lastStep,
+        }
+        return {
+          apiVersion: 'harness-rsi/v1alpha1',
+          kind: 'BranchStepResult',
+          stepId,
+          budgetConsumed: 1,
+          projection: projection(branchId, branchState, lastStep),
+        }
+      },
+      async exportPeerEvidence() {
+        return {
+          sourcePath: join(branchesRoot, branchId, 'public', 'evolution-log.jsonl'),
+          entries: [],
+        }
+      },
+      async exportBest() {
+        return {
+          candidateId: branchState.candidateId,
+          revision: branchState.revision,
+          digest: branchState.digest,
+          evaluation: branchState.evaluation,
+          changedFiles: ['profiles/cowork.md'],
+          diffStat: 'profiles/cowork.md | 1 +',
+          patch: '+checkpoint recovery\n',
+          workspace: join(branchesRoot, branchId, 'workspace'),
+          implementationRoot: join(branchesRoot, branchId),
+        }
+      },
+    }
+  }
+
+  const checkpointing = {
+    budgetMilestones: [1],
+    capture: {
+      populationBest: true,
+      branchIncumbents: true,
+      latestAttempts: true,
+    },
+  }
+  const first = new PopulationOrchestrator({
+    loadedCampaign: loaded('single', checkpointing),
+    campaignsRoot,
+    campaignId,
+    createBranch,
+  })
+  await first.initialize()
+
+  let checkpointLinked = false
+  const writeBudgetCheckpoint = first.store.writeBudgetCheckpoint.bind(first.store)
+  first.store.writeBudgetCheckpoint = async (...args) => {
+    const result = await writeBudgetCheckpoint(...args)
+    checkpointLinked = true
+    return result
+  }
+  const saveState = first.store.saveState.bind(first.store)
+  first.store.saveState = async (...args) => {
+    if (checkpointLinked) throw new Error('fixture hard crash after checkpoint link')
+    return await saveState(...args)
+  }
+
+  await assert.rejects(
+    () => first.run(),
+    /fixture hard crash after checkpoint link/u,
+  )
+  const interrupted = await first.store.readState()
+  assert.equal(interrupted.status, 'EVOLVING')
+  assert.equal(interrupted.inFlightWave, undefined)
+  assert.equal(interrupted.budget.consumed, 1)
+  assert.deepEqual(interrupted.checkpoints, [])
+
+  const checkpointPath = join(
+    campaignsRoot,
+    campaignId,
+    'public',
+    'checkpoints',
+    'budget-0001.json',
+  )
+  const checkpointBeforeResume = await readFile(checkpointPath, 'utf8')
+
+  const second = new PopulationOrchestrator({
+    loadedCampaign: loaded('single', checkpointing),
+    campaignsRoot,
+    campaignId,
+    createBranch,
+  })
+  const completed = await second.resume()
+  assert.equal(restored, 1)
+  assert.equal(completed.status, 'CLOSED')
+  assert.deepEqual(
+    completed.checkpoints.map(({ requestedBudget, actualConsumedBudget }) => ({
+      requestedBudget,
+      actualConsumedBudget,
+    })),
+    [{ requestedBudget: 1, actualConsumedBudget: 1 }],
+  )
+  assert.equal(await readFile(checkpointPath, 'utf8'), checkpointBeforeResume)
+  assert.equal(completed.events.some((entry) => (
+    entry.type === 'POPULATION_STABLE_STATE_RECOVERED'
+      && entry.phase === 'checkpoint-commit-boundary'
+  )), true)
 })
 
 test('Population 跨进程恢复会先重载 Branch，再幂等继续 in-flight wave', async () => {
@@ -345,6 +614,118 @@ test('Population 跨进程恢复会先重载 Branch，再幂等继续 in-flight 
   assert.equal(completed.events.filter((event) => (
     event.type === 'POPULATION_INFRASTRUCTURE_RESUMED'
   )).length, 1)
+})
+
+test('Population 可从 Baseline 阶段暂停恢复，再固化 Branch Incumbent 并进入首轮进化', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'population-baseline-resume-'))
+  const campaignsRoot = join(root, 'campaigns')
+  await mkdir(campaignsRoot)
+  const candidateId = 'branch-001-h0'
+  let failBaseline = true
+  let restored = 0
+  let branchState = {
+    status: 'active',
+    steps: 0,
+    candidateId,
+    revision: digest(`${candidateId}-revision`),
+    digest: digest(candidateId),
+    evaluation: createEvaluationSummary({
+      candidateId,
+      metric: 'mean-reward',
+      value: 0.25,
+    }),
+  }
+
+  function createBranch({ branchId, branchesRoot }) {
+    return {
+      async initialize() {
+        if (failBaseline) throw new Error('fixture baseline provider unavailable')
+        return projection(branchId, branchState)
+      },
+      async restore() {
+        restored += 1
+        return projection(branchId, branchState)
+      },
+      async inspect() {
+        return projection(branchId, branchState)
+      },
+      async advanceOne({ stepId }) {
+        const nextId = `${branchId}-c1`
+        const evaluation = createEvaluationSummary({
+          candidateId: nextId,
+          metric: 'mean-reward',
+          value: 0.5,
+        })
+        const lastStep = {
+          stepId,
+          stepNumber: 1,
+          candidateId: nextId,
+          decision: 'promoted',
+          ranking: { eligible: true, evaluation },
+        }
+        branchState = {
+          status: 'active',
+          steps: 1,
+          candidateId: nextId,
+          revision: digest(`${nextId}-revision`),
+          digest: digest(nextId),
+          evaluation,
+        }
+        return {
+          apiVersion: 'harness-rsi/v1alpha1',
+          kind: 'BranchStepResult',
+          stepId,
+          budgetConsumed: 1,
+          projection: projection(branchId, branchState, lastStep),
+        }
+      },
+      async exportPeerEvidence() {
+        return {
+          sourcePath: join(branchesRoot, branchId, 'public', 'evolution-log.jsonl'),
+          entries: [],
+        }
+      },
+      async exportBest() {
+        return {
+          candidateId: branchState.candidateId,
+          revision: branchState.revision,
+          digest: branchState.digest,
+          evaluation: branchState.evaluation,
+          changedFiles: ['profiles/cowork.md'],
+          diffStat: 'profiles/cowork.md | 1 +',
+          patch: '+baseline resume\n',
+          workspace: join(branchesRoot, branchId, 'workspace'),
+          implementationRoot: join(branchesRoot, branchId),
+        }
+      },
+    }
+  }
+
+  const first = new PopulationOrchestrator({
+    loadedCampaign: loaded('single'),
+    campaignsRoot,
+    campaignId: 'generic-baseline-resume',
+    createBranch,
+  })
+  const paused = await first.initialize()
+  assert.equal(paused.status, 'PAUSED_INFRASTRUCTURE')
+  assert.equal(paused.events.at(-1).phase, 'baseline')
+  assert.equal(paused.branches[0].incumbent, null)
+
+  failBaseline = false
+  const second = new PopulationOrchestrator({
+    loadedCampaign: loaded('single'),
+    campaignsRoot,
+    campaignId: 'generic-baseline-resume',
+    createBranch,
+  })
+  const completed = await second.resume()
+  assert.equal(restored, 1)
+  assert.equal(completed.status, 'CLOSED')
+  assert.equal(completed.budget.consumed, 1)
+  assert.equal(completed.events.some((event) => (
+    event.type === 'POPULATION_BASELINE_EVALUATED' && event.recovered === true
+  )), true)
 })
 
 for (const mode of ['single', 'independent', 'mutualism', 'competition', 'combined']) {

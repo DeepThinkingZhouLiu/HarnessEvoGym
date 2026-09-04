@@ -7,7 +7,7 @@
 - 在原有 Candidate、MutationLease、Updater、OfficeVal Evaluator、晋升/回滚和日志之上增加 GRHS Group Controller。
 - 每轮从同一个 Champion 生成两个 sibling Candidate，共用同一份 Feedback 和 Selection 划分，分别运行完整 Updater Session。
 - 用 Selection `deltaMeanReward` 作为 utility，在组内标准化为 relative advantage，并更新 Region proposal prior。
-- 保持 liuzhou 原晋升语义：`evaluation.decision.eligible` 是唯一 Gate；Group Controller 只在 eligible sibling 中选择 utility 最大者。
+- 保持 lz-dev 原晋升语义：`evaluation.decision.eligible` 是唯一 Gate；Group Controller 只在 eligible sibling 中选择 utility 最大者。
 - 增加按题 checkpoint、失败恢复，以及 Local Docker 和 AgentBay 两种 OfficeVal 执行 backend。
 
 主要代码是 `controller/src/grhs.mjs` 和

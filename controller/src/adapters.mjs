@@ -583,11 +583,15 @@ function validateDockerTransport(docker, label) {
   const agentBay = expectObject(docker.agentBay, `${label}.agentBay`)
   rejectUnknownConfiguration(
     agentBay,
-    new Set(['pythonExecutable', 'bridgePath', 'imageIdEnvironment', 'policyIdEnvironment', 'registryMirror']),
+    new Set([
+      'pythonExecutableEnvironment',
+      'bridgePath',
+      'imageIdEnvironment',
+      'policyIdEnvironment',
+      'registryMirror',
+    ]),
     `${label}.agentBay`,
   )
-  const pythonExecutable = expectText(agentBay.pythonExecutable, `${label}.agentBay.pythonExecutable`)
-  if (!isAbsolute(pythonExecutable)) throw new ProtocolError(`${label}.agentBay.pythonExecutable 必须是绝对路径`)
   const registryMirror = expectText(agentBay.registryMirror ?? 'https://docker.1panel.live', `${label}.agentBay.registryMirror`)
   if (registryMirror && !/^https:\/\/[A-Za-z0-9._:-]+\/?$/u.test(registryMirror)) {
     throw new ProtocolError(`${label}.agentBay.registryMirror 必须是无凭据 HTTPS Origin`)
@@ -595,7 +599,10 @@ function validateDockerTransport(docker, label) {
   return {
     backend,
     agentBay: {
-      pythonExecutable,
+      pythonExecutableEnvironment: environmentName(
+        agentBay.pythonExecutableEnvironment,
+        `${label}.agentBay.pythonExecutableEnvironment`,
+      ),
       bridgePath: relativePath(agentBay.bridgePath, `${label}.agentBay.bridgePath`),
       imageIdEnvironment: environmentName(agentBay.imageIdEnvironment, `${label}.agentBay.imageIdEnvironment`),
       policyIdEnvironment: environmentName(agentBay.policyIdEnvironment, `${label}.agentBay.policyIdEnvironment`),

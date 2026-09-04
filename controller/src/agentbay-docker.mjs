@@ -155,9 +155,13 @@ export class AgentBayDockerClient {
       if (!process.env[source]) throw new ProtocolError(`缺少 AgentBay 运行时配置：${source}`)
       environment[target] = process.env[source]
     }
+    const pythonExecutable = process.env[agentBay.pythonExecutableEnvironment]
+    if (!pythonExecutable || !isAbsolute(pythonExecutable) || /[\r\n\0]/u.test(pythonExecutable)) {
+      throw new ProtocolError(`缺少或非法的 AgentBay Python 绝对路径：${agentBay.pythonExecutableEnvironment}`)
+    }
     environment.HARNESS_RSI_AGENTBAY_REGISTRY_MIRROR = agentBay.registryMirror
     this.bridge = new AgentBayBridge({
-      pythonExecutable: agentBay.pythonExecutable,
+      pythonExecutable,
       bridgePath: resolve(this.repositoryRoot, agentBay.bridgePath),
       environment,
     })

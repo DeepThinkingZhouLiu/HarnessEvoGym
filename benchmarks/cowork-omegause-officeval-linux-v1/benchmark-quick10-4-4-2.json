@@ -1,0 +1,51 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "Benchmark",
+  "metadata": {
+    "id": "cowork-omegause-officeval-linux-v1-quick10-4-4-2",
+    "name": "OmegaUse-OfficeVal 10-task GRHS Docker flow validation"
+  },
+  "spec": {
+    "source": {
+      "adapter": "omegause-officeval",
+      "dataset": "baidu-frontier-research/OmegaUse-OfficeVal",
+      "split": "quick10-4-feedback-4-selection-2-final-from-formal-seed-20260827",
+      "revision": "8bf749b53988822a90520eba4761c6c311e17dd0e13bd78658b261a921128291"
+    },
+    "evaluator": {
+      "adapter": "omegause-officeval",
+      "resultFormat": "harness-rsi/solver-result-jsonl-v2"
+    },
+    "partitions": {
+      "feedback": {
+        "visibility": "detailed",
+        "expectedCount": 4,
+        "instanceIds": [
+          "officeval_003",
+          "officeval_004",
+          "officeval_005",
+          "officeval_006"
+        ]
+      },
+      "selection": {
+        "visibility": "aggregate-only",
+        "expectedCount": 4,
+        "instanceIds": [
+          "officeval_002",
+          "officeval_034",
+          "officeval_036",
+          "officeval_040"
+        ]
+      },
+      "final": {
+        "visibility": "sealed",
+        "expectedCount": 2,
+        "instanceIds": [
+          "officeval_011",
+          "officeval_015"
+        ]
+      }
+    },
+    "expectedTotal": 10
+  }
+}

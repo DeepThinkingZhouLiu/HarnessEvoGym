@@ -115,7 +115,18 @@ test('AgentBay Docker backend 固定 bridge 路径并拒绝内联凭据', async 
   const environment = validateEnvironmentAdapter(config)
   assert.equal(environment.docker.backend, 'agentbay')
   assert.equal(environment.docker.agentBay.bridgePath, 'scripts/agentbay-docker-bridge.py')
+  assert.equal(
+    environment.docker.agentBay.pythonExecutableEnvironment,
+    'HARNESS_RSI_AGENTBAY_PYTHON',
+  )
   config.spec.docker.agentBay.apiKey = 'must-not-be-configured-here'
+  assert.throws(() => validateEnvironmentAdapter(config), /未知字段/u)
+})
+
+test('AgentBay Docker backend 拒绝写死机器专属 Python 路径', async () => {
+  const config = await readConfigFile(resolve(repositoryRoot, 'environments/omegause-officeval-agentbay.yml'))
+  delete config.spec.docker.agentBay.pythonExecutableEnvironment
+  config.spec.docker.agentBay.pythonExecutable = '/machine-specific/python'
   assert.throws(() => validateEnvironmentAdapter(config), /未知字段/u)
 })
 

@@ -1,0 +1,3134 @@
+{
+  "apiVersion": "harness-rsi/omegause-officeval-manifest-v1",
+  "dataset": {
+    "id": "panningxin/Officeval",
+    "revision": "5ccc8764aa4db53f8bfb95373a7c313eb4da7e56"
+  },
+  "evaluator": {
+    "repository": "panningxin/Officeval",
+    "revision": "5ccc8764aa4db53f8bfb95373a7c313eb4da7e56",
+    "sharedFiles": [
+      {
+        "path": "verifiers/pdf_backend.py",
+        "bytes": 25576,
+        "sha256": "94886900540e40da86e0507ab54629871ac4b0b5f56a13566b3d205245274bfc"
+      }
+    ]
+  },
+  "platform": {
+    "linuxStaticVerifierCount": 91,
+    "excludedComRequired": [
+      "officeval_001",
+      "officeval_008",
+      "officeval_019",
+      "officeval_022",
+      "officeval_023",
+      "officeval_030",
+      "officeval_039",
+      "officeval_074",
+      "officeval_081"
+    ]
+  },
+  "instances": {
+    "officeval_001": {
+      "comRequired": true,
+      "task": {
+        "path": "task-en/officeval_001.json",
+        "bytes": 3319,
+        "sha256": "54c8c5b8f04fa9978c900d5ef084a57a23ee387c884bddc6cded1525d82aa25b"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_001.json",
+        "bytes": 4348,
+        "sha256": "92c57250e79ab3a795423dae0f69ad09e1921001b1d27d511a789ea37eb4a66f"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_001/01_课时学习方案_观察一位校园志愿者_第一课时.docx",
+          "bytes": 42468,
+          "sha256": "3045dde46b76ca81048def8dd51b4d0b864c564266f72ca3e2178c926c613a30"
+        },
+        {
+          "path": "task_files/officeval_001/02_课时学习方案_方法交流与片段尝试_第一课时.docx",
+          "bytes": 35508,
+          "sha256": "b1dd75df60dad26052042852bb24fb88e7b37ae221efd9c094357da4bc722d29"
+        },
+        {
+          "path": "task_files/officeval_001/03_课时学习方案_身边人物初识.docx",
+          "bytes": 30380,
+          "sha256": "dce55d1825b64daa478b764635374b3b8761ba7d70a29c5c689a51a4cddb4fd2"
+        },
+        {
+          "path": "task_files/officeval_001/04_课时学习方案_人物细节描写_第二课时.docx",
+          "bytes": 32263,
+          "sha256": "6407f29a5c29a42479292daabc1f4ac8228aeb347dba1ea8cadcb8580d81c12a"
+        },
+        {
+          "path": "task_files/officeval_001/05_课时学习方案_匠心故事研读.docx",
+          "bytes": 26711,
+          "sha256": "dc617b2aa2f75146e03910ad09cb58ff56a3207d069cd201bca3fa1ca6e6b548"
+        },
+        {
+          "path": "task_files/officeval_001/06_课时学习方案_家乡风物介绍_第二课时.docx",
+          "bytes": 52624,
+          "sha256": "a2e7af0e435f2fe2ada06a06d004450598730b7a496e0421e2f465068a8715cb"
+        },
+        {
+          "path": "task_files/officeval_001/07_课时学习方案_写一个让人记住的人_第一课时.docx",
+          "bytes": 93438,
+          "sha256": "12972b9d47be2ad39c277c2611831bf9737a8feba8fe9bad03a3e0256e8d7922"
+        },
+        {
+          "path": "task_files/officeval_001/08_课时学习方案_习作讲评与修改_第二课时.docx",
+          "bytes": 43301,
+          "sha256": "db4d366a32d631a09bd8d28ffe13d7d4505463ad6f8767254ea3eb77dbc29e18"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_001_verifier.py",
+        "bytes": 25272,
+        "sha256": "3e4628edd9684968158f9176b803fc58c626221b21336218d92781d5acbca96a"
+      }
+    },
+    "officeval_002": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_002.json",
+        "bytes": 984,
+        "sha256": "10fc03409e86cc277337a6677cf93161834f7494ed70e1a5661ba0afbd0f113f"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_002.json",
+        "bytes": 2138,
+        "sha256": "e86045f68369200db53d9f46bafd7b71559042db3048acfb691d5a95aa467e84"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_002/城市更新中社区公共艺术参与机制研究.pdf",
+          "bytes": 164021,
+          "sha256": "ece87047eaf6e6f1b58a8ecd987c35fc3fd17adc5be7caaad579e65a7d8a02b8"
+        },
+        {
+          "path": "task_files/officeval_002/城市社区微气候韧性评价与公共空间更新研究_.docx",
+          "bytes": 7339272,
+          "sha256": "823ef91281f39b17fc5f85bf728d1d3d5b2a6bd648c4463c2cc04f4e84cce35d"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_002_verifier.py",
+        "bytes": 127659,
+        "sha256": "e7f79c6a72b443734e9c967bf8316dcfe0e285950aab30775cd8e45cd89c06be"
+      }
+    },
+    "officeval_003": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_003.json",
+        "bytes": 923,
+        "sha256": "f6c03276539e440e07cd76f69da924eb22e02b66abb7acaac734fc4be081fd07"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_003.json",
+        "bytes": 1649,
+        "sha256": "56d1f63d4730d1e6a39e5ba5a1fe7f14cb0105c1aac564aa4712ae73619e4d8d"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_003/image.png",
+          "bytes": 451593,
+          "sha256": "9da1468839b89dba955a1f50917281e8bd6af5f2863eca2b60fd192a25ba4dc7"
+        },
+        {
+          "path": "task_files/officeval_003/部门协调会记录 (1).docx",
+          "bytes": 353660,
+          "sha256": "3c0d0060f17a8b4177c5ed18c6a54502c7a03d3ac6cfdf96b8dadffaaa597344"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_003_verifier.py",
+        "bytes": 48550,
+        "sha256": "b870ac1d57b71133e808b44beedc15b8cca516504f9d27361b7a35b87032eb19"
+      }
+    },
+    "officeval_004": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_004.json",
+        "bytes": 1288,
+        "sha256": "80003cddcff05d9c79e2ae8075ddb4b5698fe18b22a39556252b03e8bc5625e0"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_004.json",
+        "bytes": 4217,
+        "sha256": "2d5e8fdc437280efc7840f0a4dadc60587208da9a9d4fe2e57239f1cf9e83e1e"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_004/image_001.png",
+          "bytes": 891344,
+          "sha256": "e6055584ba47ecc919d3d4485626b5ddb3f9ee9502c2cd031ffe92d2543cb923"
+        },
+        {
+          "path": "task_files/officeval_004/image_002.png",
+          "bytes": 1413979,
+          "sha256": "dd790edc9feac1ff6580be5fdf7d4d7020224221bd0697f94a83ebbfacbf6e54"
+        },
+        {
+          "path": "task_files/officeval_004/毕业实习报告.docx",
+          "bytes": 76554,
+          "sha256": "e6bf8883f401b153764596f367e36cd4d316ade72a66c742da0c58d67b4278e3"
+        },
+        {
+          "path": "task_files/officeval_004/毕业实习鉴定表.docx",
+          "bytes": 13055,
+          "sha256": "537e1cf28140ae1d55f6998c13125c4a3ea625cc339d87b658d6a619407b10cd"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_004_verifier.py",
+        "bytes": 64271,
+        "sha256": "d7c174c11d2ed0e0fe46e33c92b6e8850dc14e182f43c62edac7e0958d22fec0"
+      }
+    },
+    "officeval_005": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_005.json",
+        "bytes": 728,
+        "sha256": "6b86b8125e3785e31a96b1d9a6883306980122c3ff2d85e881e21198c8ae9c1a"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_005.json",
+        "bytes": 12034,
+        "sha256": "904ac014def7744cf951fcbc5044215fa2a4e0c979bf0af0450207fb3ec66b93"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_005/综合设计指导书.docx",
+          "bytes": 144292,
+          "sha256": "2a21c59728427517d519a4f26a034baa16e2c8a1a1e641185d0b95a3613fbf45"
+        },
+        {
+          "path": "task_files/officeval_005/综合设计指导书.pdf",
+          "bytes": 247556,
+          "sha256": "7bf125b755a9b07a67d4ed898181e20478bba628d13c929ac72b36a29675a190"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_005_verifier.py",
+        "bytes": 174519,
+        "sha256": "091c3f48d4a6fa18efcbb46d821bdcb02d72ffb34b2025d5fbcd845a6e9ad554"
+      }
+    },
+    "officeval_006": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_006.json",
+        "bytes": 864,
+        "sha256": "2f98e926bb660f44e52264b28fcb29c7961e68aaab3cecfc2314b51edf9f683c"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_006.json",
+        "bytes": 2674,
+        "sha256": "f3702591dc3dee06f2d9509803aec5b8aa0682b2dbaec49deea3d49be0d296b5"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_006/2026年3月17日高中数学作业.pdf",
+          "bytes": 143748,
+          "sha256": "dbde97840bfe52e14fb7946cdd4b74b2554f84292b2f61dd7f4f5dcd1e1b3f8e"
+        },
+        {
+          "path": "task_files/officeval_006/高一年级第一次数学周练111 (2).docx",
+          "bytes": 16253,
+          "sha256": "3c6d2355f3a4a05b125dabb036443756d84c9194509edb11d71b379405c6254e"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_006_verifier.py",
+        "bytes": 43595,
+        "sha256": "d50f18e574572a2c0afaff3333b40e26cd817d877d6443ab938f119e5e5fd878"
+      }
+    },
+    "officeval_007": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_007.json",
+        "bytes": 948,
+        "sha256": "4cba44334b2a1135b49493be2e7cf5fbdde019afec13db0ff77cf48039db3c44"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_007.json",
+        "bytes": 7504,
+        "sha256": "d91a1f22758a11865742f7fecec15d7218b823bbc80279739badd76e2930ffba"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_007/幼儿园自然探究活动课程设计.docx",
+          "bytes": 518876,
+          "sha256": "6f7bedc208dd2be9db0464d1b23efb756d3655783a41bdd084d8691fdaffdc01"
+        },
+        {
+          "path": "task_files/officeval_007/齐鲁启明继续教育学院论文模板.docx",
+          "bytes": 121356,
+          "sha256": "dcf100e9ddf168495a0a109336c1c679f147069d6a6523e8d4e8765f87417a60"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_007_verifier.py",
+        "bytes": 206976,
+        "sha256": "dac0cbe7e446c88385cd7f5df5b98d52e400c0a379cd54b202c7c42ce3755ff7"
+      }
+    },
+    "officeval_008": {
+      "comRequired": true,
+      "task": {
+        "path": "task-en/officeval_008.json",
+        "bytes": 807,
+        "sha256": "ac72e09110c938fc0bdf4920fda3705133b1a7231610a7923750affab3ad4d78"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_008.json",
+        "bytes": 6105,
+        "sha256": "3a5cc991ed20774cb3591ae6d537c90b65a69155b7db237fa9534a315aa1841b"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_008/reed_fiber_biosorbent.pdf",
+          "bytes": 1648696,
+          "sha256": "26751704deed4e9fb9211163a18027af7b51d872fcca55f0c72eac8f1ecd8456"
+        },
+        {
+          "path": "task_files/officeval_008/文献翻译译文.docx",
+          "bytes": 3048141,
+          "sha256": "737b53b5e57e4b52481959eb69d14522d4a059c4f303360b4a551b00e2b198ed"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_008_verifier.py",
+        "bytes": 123111,
+        "sha256": "409449bf0a1f878c69519d4374200c0c32168d562ce1a1bfd3790ee148903a1c"
+      }
+    },
+    "officeval_009": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_009.json",
+        "bytes": 922,
+        "sha256": "f23ef1c55bb8825000d32294e9a8180763e91606c9449f7466a26f5f21a646a7"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_009.json",
+        "bytes": 1968,
+        "sha256": "6a1a3a5c1d0adc63ecc07ac23bbb722c9d976d7e471091a1d60d7b73777e1edb"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_009/image (1).png",
+          "bytes": 76091,
+          "sha256": "81c4103d1ddc9d2475b1d700a5f2666f4fca7eee7adf908aa1f716608bcb60cf"
+        },
+        {
+          "path": "task_files/officeval_009/第三章研究结果.docx",
+          "bytes": 73318,
+          "sha256": "e87f7f88b9fc1568d4b100e778e4fecbd2e971de32a605db3e8fa2920f52ef87"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_009_verifier.py",
+        "bytes": 122832,
+        "sha256": "e7325a4305ab3c3fe7c162bfb35fc675dcfbbb3148625081ef26f154774c873a"
+      }
+    },
+    "officeval_010": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_010.json",
+        "bytes": 559,
+        "sha256": "ae341940a4f0d4fb2ea7db358c9f5890098335c9c29b85829f84256632186024"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_010.json",
+        "bytes": 9457,
+        "sha256": "1aad8f1ec7421145f30aea6cbf8478db69e83a2f45dc29901be74dd73b858233"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_010/技术路线图.docx",
+          "bytes": 1181627,
+          "sha256": "e48285e337a48ca41ad7918b786a373360df043967f65dcfe58a38ed97f61817"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_010_verifier.py",
+        "bytes": 110663,
+        "sha256": "b60e3b0dda7e849b59ff3b74932d6910f1416cd0655d0c571524b49389e6d299"
+      }
+    },
+    "officeval_011": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_011.json",
+        "bytes": 703,
+        "sha256": "867773c3007508cfc23cead8b806446dddf015806a4149427bc7afc2c1d2ebb5"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_011.json",
+        "bytes": 5257,
+        "sha256": "f3c65d573faeaf77c695ffb132c1732ae068c6d9d20a4b1ecaec6ba628256896"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_011/image_001.png",
+          "bytes": 382554,
+          "sha256": "43124784a2e9e8618e0a3a5ec685f56ae3a5eedac95bcc5ad039239641760ef3"
+        },
+        {
+          "path": "task_files/officeval_011/课程资料.docx",
+          "bytes": 4558141,
+          "sha256": "026bdbd20c2d58cb498fa5d6b48e0e986bdeabc6e3231f5844094cda4ab5ec7c"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_011_verifier.py",
+        "bytes": 154363,
+        "sha256": "e7e231e4191db1908fddf479ea34ec5ac58b1b8590d78b9187554f9cf1cd6b53"
+      }
+    },
+    "officeval_012": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_012.json",
+        "bytes": 1202,
+        "sha256": "3464fe94bb168366bd97556f6632818913e8f6e7a2b646ab2e35a365e800a18f"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_012.json",
+        "bytes": 7575,
+        "sha256": "d12380eefe2c0b4e16f7b6bc1bedc490561861753404f78780f15723a16c45c1"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_012/东岳技术学院高等教育自学考试毕业论文格式.docx",
+          "bytes": 6963360,
+          "sha256": "3b839679a3d68d824f211cbe7b409699d8cf29b408a299513ac8b5b3957ef1cf"
+        },
+        {
+          "path": "task_files/officeval_012/城市社区雨水花园参与式维护机制研究.docx",
+          "bytes": 62662,
+          "sha256": "9dadf5a93283b251ab8d12fc52518273a282cf5ec5e95d2c1e634941576828b3"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_012_verifier.py",
+        "bytes": 155671,
+        "sha256": "f8166ab72a0b8ca9196192d0d396b340b63f85ee89924eb4b1a87047a8c17b08"
+      }
+    },
+    "officeval_013": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_013.json",
+        "bytes": 1038,
+        "sha256": "a0cba9628981ec044a9179caa91fd8f6bc9e4751e620b84be5ee37cb8b919545"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_013.json",
+        "bytes": 5281,
+        "sha256": "90042bbb4d5a7df5e8dc8b2d7119cc89f9e740b2e8a72cc59557679dbe9951bf"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_013/基于Spark的园区能耗分析与可视化系统论文.docx",
+          "bytes": 10490390,
+          "sha256": "01edba71fdbaf5ffadfd717c7082544d24c1530266e8774b6695e9d69da891d5"
+        },
+        {
+          "path": "task_files/officeval_013/本科毕业论文内容与格式核验承诺书.xlsx",
+          "bytes": 11865,
+          "sha256": "5917b6289fd8c9a36b63a6886a720a352bf4379f2631f4c81ebe27ec252fd7de"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_013_verifier.py",
+        "bytes": 168514,
+        "sha256": "b8295e0c07bc3f48abb9b99672045cb4b5f4e8b1fe52ce7df9ac43a065fea957"
+      }
+    },
+    "officeval_014": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_014.json",
+        "bytes": 1473,
+        "sha256": "3f855de4af1ef45496c9612d250c40f2754d77a7827105436d91d91865586dfd"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_014.json",
+        "bytes": 8602,
+        "sha256": "be02f013b09f7ae579db9fa891c7e5f7ed8197ecc7b185832313fc5c3a1eea4b"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_014/image_001.jpg",
+          "bytes": 45772,
+          "sha256": "e31dd09ba36a17067a8a2d4be11e4e3e04069ed2efc42a864c1c12166d71ca38"
+        },
+        {
+          "path": "task_files/officeval_014/image_002.jpg",
+          "bytes": 14825,
+          "sha256": "871cebc3b163fcd241fc16c6b64727a194d28d9bc972af4bdbca0c2e690f850a"
+        },
+        {
+          "path": "task_files/officeval_014/image_003.jpg",
+          "bytes": 99694,
+          "sha256": "69f21e619a88ee45cdf8164f1647ab0a3fa6a4d59c66ae431f307f21663a51a4"
+        },
+        {
+          "path": "task_files/officeval_014/冻结肩多模态康复研究.docx",
+          "bytes": 1161583,
+          "sha256": "b639d3827db31c46c972f960e4092b909b7037822f1303fa8689c3f22fb42cd5"
+        },
+        {
+          "path": "task_files/officeval_014/毕业论文要求_星途理工大学.docx",
+          "bytes": 23317,
+          "sha256": "d2075c5cb8aa206a1c80c84ccdf42b1348f82b97f95d7b9251f587a8b90cfc0e"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_014_verifier.py",
+        "bytes": 316599,
+        "sha256": "ba7719bf78f30d4020c26ffe0bff223814c85e839e4a25e47ea121a9f6c1ea6d"
+      }
+    },
+    "officeval_015": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_015.json",
+        "bytes": 884,
+        "sha256": "090ea30974935394b66da423bcda63db26a2c9f0383e786ce7a2b77f798417d7"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_015.json",
+        "bytes": 11336,
+        "sha256": "6980ffd7f53546a3e12e3e3579f914aac5136fa8755d2e3fea4abd16419424e2"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_015/九年级答题卡 (1) (3).docx",
+          "bytes": 33100,
+          "sha256": "293664cdb1b598fa8c2b233f32b247d3d9c3d1ef6f78d391ac3c0e7dab788fa3"
+        },
+        {
+          "path": "task_files/officeval_015/初中语文跨年级综合质量检测.docx",
+          "bytes": 47848,
+          "sha256": "dbce61a9b9f9577f9061655127bc1b179a1e9da786965a53e1747133f7c5402a"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_015_verifier.py",
+        "bytes": 184191,
+        "sha256": "7930e00012a60376333d8b0491ca137efd577d72fd1d21f89d1bbf1509f24aec"
+      }
+    },
+    "officeval_016": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_016.json",
+        "bytes": 1492,
+        "sha256": "adf3b61140cb181456bc3a1190589a1a9ac4680b8458ccea5f965be97f56d64e"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_016.json",
+        "bytes": 6456,
+        "sha256": "8f0628f5b2dbfdf0d437ffec4f29ff14c2a3902b41bcf6fb952ca173849bc7ec"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_016/image_001.jpg",
+          "bytes": 47968,
+          "sha256": "85d1462354a789d372547c1bd9eab9d11b0e9a0fb4d8e61a82ff2854ad2c4b95"
+        },
+        {
+          "path": "task_files/officeval_016/image_002.jpg",
+          "bytes": 107532,
+          "sha256": "cc0091830eee403b2dd5b7c8cdc5ecc430560f87a7755ba0f9bf58bc9b8e36e3"
+        },
+        {
+          "path": "task_files/officeval_016/小微企业财务数据管理规范化问题及改进路径研究.docx",
+          "bytes": 17832,
+          "sha256": "869b9ef07116f9a9ef16fc6fc0f9b266b2bc308dbd7dc9b254adc4b6094f17b2"
+        },
+        {
+          "path": "task_files/officeval_016/澄禾社区生鲜服务满意度研究.docx",
+          "bytes": 8451939,
+          "sha256": "dac34734b715266d2c1df02e64c721ff7715d57c4a734447720feadc99927a91"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_016_verifier.py",
+        "bytes": 128014,
+        "sha256": "0729e513a6a155fee6512cd8a20363653632fd130369f1db156c330a9487e264"
+      }
+    },
+    "officeval_017": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_017.json",
+        "bytes": 726,
+        "sha256": "6d359982eac5effadd11806cef60888cec8583223356d8feaad603ffe987adbc"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_017.json",
+        "bytes": 7902,
+        "sha256": "e18da3862d8c219da8a76ee0358b50ded0c7e1438d2cb525f45af169715627a7"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_017/image_001.png",
+          "bytes": 1193626,
+          "sha256": "422e350dba95df18c78ea5965aa208de23da426bf24df6f83958ec50b02f07f9"
+        },
+        {
+          "path": "task_files/officeval_017/七年级地理导学案.pdf",
+          "bytes": 778358,
+          "sha256": "fa1b6b7e1093c7b5b64994dbd5b1b6f94808562cdf0066d64eaee5256ad46914"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_017_verifier.py",
+        "bytes": 104010,
+        "sha256": "720dc55c79d3239cb3f8ee10b56b1f93e589af4708850748c7c1dde765ea02a8"
+      }
+    },
+    "officeval_018": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_018.json",
+        "bytes": 988,
+        "sha256": "29442e0cc93ffce3a3f7e4915bf3d89744492eafacb85dfc584c4f63091d8803"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_018.json",
+        "bytes": 3866,
+        "sha256": "bbb1734da7e5e1d335a24dcfb5b78f4b9ca46a17da8e0b1edf6e3763eea43d27"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_018/公共书房运营规划书.docx",
+          "bytes": 719050,
+          "sha256": "baa21791da557def206a3fa9b5eb05ecbeba364b911cdadbe82b668712d4f049"
+        },
+        {
+          "path": "task_files/officeval_018/报告排版格式要求.docx",
+          "bytes": 13443,
+          "sha256": "4cbd024f03551b945357756a31468b36a817e3d0cd224bda5ffd9ae97b8ef6a0"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_018_verifier.py",
+        "bytes": 108569,
+        "sha256": "915faf2ccfacaa902762b34a64509c83b0943bea24c2e48c73a8ea6673156372"
+      }
+    },
+    "officeval_019": {
+      "comRequired": true,
+      "task": {
+        "path": "task-en/officeval_019.json",
+        "bytes": 1483,
+        "sha256": "852cce1d05814ff5ee395bab0025398035710c2b3e4c93670cf6cdc910713b84"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_019.json",
+        "bytes": 3683,
+        "sha256": "6420ae3a945f68369868b88b01eb0c0facf272cfb8e7734feab45c2f1921f7c9"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_019/image_001.png",
+          "bytes": 786467,
+          "sha256": "68755d7d799058ca91839c691b1802f56ad095b801b87f5a5de347d90c8787bd"
+        },
+        {
+          "path": "task_files/officeval_019/image_002.png",
+          "bytes": 668568,
+          "sha256": "87613fd0b1bdf6f929346506598fe817affeeb5ffd3047e0c2b58934a194234d"
+        },
+        {
+          "path": "task_files/officeval_019/初中化学模拟试题.docx",
+          "bytes": 954794,
+          "sha256": "87bdeee1650c6ead694440b542e526dcd9499f27e217d02c0214f77b9ca9ca0c"
+        },
+        {
+          "path": "task_files/officeval_019/模板.docx",
+          "bytes": 18834588,
+          "sha256": "0086797690c792f8889388d9b977dfe9e40a92e4aada30358cd59d69a61372e5"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_019_verifier.py",
+        "bytes": 55135,
+        "sha256": "f72bdf076729ea57a535eb7e6709d0da2b2573abfa2c42d738d23c0806e8e43d"
+      }
+    },
+    "officeval_020": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_020.json",
+        "bytes": 765,
+        "sha256": "ae8096e5cb47a13002c7e3f8883ebad36171e2b8c103cfeb1130932db17706f5"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_020.json",
+        "bytes": 3963,
+        "sha256": "2172bf4ca693f897b34b56e442f105fd8191c7c40739babdac2613acb91099b9"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_020/image_001.png",
+          "bytes": 917964,
+          "sha256": "f8baa2b52400de5a45d300a625a57ce61962d85c6f0b1e5af1e9d505f5063c96"
+        },
+        {
+          "path": "task_files/officeval_020/《浅赏叙事古文，读懂处世道理》.docx",
+          "bytes": 383420,
+          "sha256": "5e4f0f9f31577a867dced631e89e887b576234c3119868d5559930f7eb42624f"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_020_verifier.py",
+        "bytes": 54616,
+        "sha256": "81c4b7885030f6e97d71e182d57343dfb5e7d96e20b69bff498442fb619fb67b"
+      }
+    },
+    "officeval_021": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_021.json",
+        "bytes": 866,
+        "sha256": "b967697ac28264af58791530dac0e28e296a56af965b2f1f46d507f83f85c1de"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_021.json",
+        "bytes": 6321,
+        "sha256": "0784d0df9966e627bdfc653f6d3fbf0248321efba877550edf11ad2141734d0a"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_021/毕业设计论文.docx",
+          "bytes": 1661489,
+          "sha256": "06e90d5f601d97b7cd034e35ad2dac058cef99addf56028974392fb56912d942"
+        },
+        {
+          "path": "task_files/officeval_021/毕业设计论文开题报告 (模版).docx",
+          "bytes": 2444817,
+          "sha256": "b3bd5f10b626c7af571c36a5989f6dd1befc6ac06568a9966bcd607cc53c6336"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_021_verifier.py",
+        "bytes": 111652,
+        "sha256": "4ae847ed21552c9ea676f0cea3add6a2212f3e6e7db15fe0fe78a87c9a43707a"
+      }
+    },
+    "officeval_022": {
+      "comRequired": true,
+      "task": {
+        "path": "task-en/officeval_022.json",
+        "bytes": 1941,
+        "sha256": "2fd8e04aee34b6224117962c4d3aa2dbf1cfbe7c9ea9d009336cd538746c4dc8"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_022.json",
+        "bytes": 11618,
+        "sha256": "435a250b7f040d892933046540230d598e28f41a9cb6bc1b2e8d2aaf3d58ef52"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_022/企业经营异常核查呈报材料.docx",
+          "bytes": 133541,
+          "sha256": "d36239cb45f9de351e0f8ed7b52b36879aa130842bf9180d0eed3d035735130b"
+        },
+        {
+          "path": "task_files/officeval_022/企业经营情况说明书.docx",
+          "bytes": 2097116,
+          "sha256": "36819308757e023be3df195fbe9f92adb81d82c9dcc827e4afa387f8fd8ed09a"
+        },
+        {
+          "path": "task_files/officeval_022/华中区域零售项目经营异常核查封面.docx",
+          "bytes": 10095,
+          "sha256": "42575a6eadf9f3578c995d6036aba8b854774e793b4b17524bcb19e84803b93f"
+        },
+        {
+          "path": "task_files/officeval_022/华中区域零售项目经营资金异常及现金流风险.docx",
+          "bytes": 23126,
+          "sha256": "89628dc29ee119abf1ef7af0ecd645ed39009b223bfa584b98727eb8ae8150cc"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_022_verifier.py",
+        "bytes": 138103,
+        "sha256": "8067baa35caf056ee517c9c78e51dc667baeca0a2f5e43ea7dba3bf95f17fde6"
+      }
+    },
+    "officeval_023": {
+      "comRequired": true,
+      "task": {
+        "path": "task-en/officeval_023.json",
+        "bytes": 1182,
+        "sha256": "d1bf41f495a5443f079f33de089858d6bcb0a1246342d29f40190557ab863b7b"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_023.json",
+        "bytes": 6287,
+        "sha256": "142507c1816a4b4d077916b46440ceaa573c0cfab695c571d634d8bd95be0394"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_023/董事會數位素養對企業低碳轉型績效的影響.docx",
+          "bytes": 1517111,
+          "sha256": "bfec48a7258322c66d046f998f08e502b209340459ef9a85c1998875c5e1de93"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_023_verifier.py",
+        "bytes": 133374,
+        "sha256": "b8633d2a8605691008a424df30f2dc8df7d2e6b3dd8ad09b3f209ff4b4115c72"
+      }
+    },
+    "officeval_024": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_024.json",
+        "bytes": 1223,
+        "sha256": "fb61ed9be9c5595b5a3b5d933bfd402ec45c05b246f798cdd83c09d0ed44224d"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_024.json",
+        "bytes": 8595,
+        "sha256": "20189dfe255bf33019478f67206c73c3c1b008254201995bec9c514d9aad1c08"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_024/城市社区绿地可达性与居民步行行为研究.docx",
+          "bytes": 1972543,
+          "sha256": "9d8b4522889449bff809b9362fa75f4e1fb5efc217ab2dc1e7381b7f8bfe7737"
+        },
+        {
+          "path": "task_files/officeval_024/论文模版.docx",
+          "bytes": 436559,
+          "sha256": "096900a4777e9b4ea2cb04377525372692773f3698f0440b1587d8362563926e"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_024_verifier.py",
+        "bytes": 164594,
+        "sha256": "7d3dd11c3d4b3040d984b692b2952a30f9a0240ea10d76be2cd02b4491a6ed9a"
+      }
+    },
+    "officeval_025": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_025.json",
+        "bytes": 1037,
+        "sha256": "40674cf5ccc715f179078610730c0fefe857290c5080ff4afb791ec58157cbe3"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_025.json",
+        "bytes": 2299,
+        "sha256": "b946733d69126677661c81af235ed2575e9e1501633e32c97dd0bafed51f79e7"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_025/image_001.jpg",
+          "bytes": 35617,
+          "sha256": "fa3825c0aa2b8b43265c93f2427a9a53cb71a60606e9eeec17bf8b8a087e5a6f"
+        },
+        {
+          "path": "task_files/officeval_025/青岭山居旅居营造计划.docx",
+          "bytes": 1192983,
+          "sha256": "dea25bb218936f8dc03fb83c5873e78c57b64de55c06a93bb229e6a880f787ec"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_025_verifier.py",
+        "bytes": 85453,
+        "sha256": "35f1f02ec6b428fbf1490be6e95dccf41252ff4f3c8b57c060e19da46faa9dc1"
+      }
+    },
+    "officeval_026": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_026.json",
+        "bytes": 618,
+        "sha256": "2e9be697b0eb1c4328f212f6f9e3b5dfe99f827e4ad3b1645b244fc94e0e364a"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_026.json",
+        "bytes": 2443,
+        "sha256": "31b8eb17a735f04c5800678809e6fd423a9fba076f94c1b6de5c20f5d32a7fde"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_026/项目式协作学习统计表.docx",
+          "bytes": 17283,
+          "sha256": "37d00ec22d234c0ba73762aa12c60c2f7f810a2b3451d48e8c0f0f029a68e878"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_026_verifier.py",
+        "bytes": 49154,
+        "sha256": "f614c0e4ca79171b1566954a40fed1f744a6a6d9f41c1d233e4a78cd6d9bb611"
+      }
+    },
+    "officeval_027": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_027.json",
+        "bytes": 708,
+        "sha256": "b150343780b9019ffa888947c2bb863f7d9c8457ba4b4d07574191cef4e654ba"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_027.json",
+        "bytes": 1446,
+        "sha256": "3bc78b441441d1d841b4487de9cbcdfe222b2b7e863ee8e6d9b001f5c96a9fc2"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_027/1200题题本错题集.pdf",
+          "bytes": 1225004,
+          "sha256": "4f9fda45ce601f9859a10f1d39d63e7cf50d5af2e4865dfb71911fda66e8028e"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_027_verifier.py",
+        "bytes": 38782,
+        "sha256": "1610b8717e3dd94d9724607649e574869606eb06f42189d0b7ed2b80752bfe45"
+      }
+    },
+    "officeval_028": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_028.json",
+        "bytes": 1153,
+        "sha256": "df790b297f374a3a58918cc1d061f5d9795d8772917afd045136315b33b66732"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_028.json",
+        "bytes": 2356,
+        "sha256": "0eccfea478c3875ad53b30816758bdfdaa42e6e35a05e5777afa5732efcd1203"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_028/image_001.jpg",
+          "bytes": 134366,
+          "sha256": "fd5ff3090126bcdd8d57b000bfd317d2681d80d2d88896c5f84417545283baef"
+        },
+        {
+          "path": "task_files/officeval_028/职称评审表.docx",
+          "bytes": 149017,
+          "sha256": "e273ff481ad4f312f663bd19d4f0242ffd357f876611413b3d43580b2c845a81"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_028_verifier.py",
+        "bytes": 35168,
+        "sha256": "4055802830a84acc3c80b50cd3cfe418f9ee264d322b9ad6552cb043edce2d78"
+      }
+    },
+    "officeval_029": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_029.json",
+        "bytes": 969,
+        "sha256": "387659b4c8a20f97092c58959a7b59d9c71ad0fb432ee3264fcd46afd5626f1c"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_029.json",
+        "bytes": 3542,
+        "sha256": "269c4b30effc4f944bce6da5d8bbbdb47bf9373b050b92568c60b18ca9b9c8fa"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_029/image_001.jpg",
+          "bytes": 75929,
+          "sha256": "65693cbebf7380c963b8445e9d33feb0cb5d08dd590cea1c360d9d77c75af35f"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_029_verifier.py",
+        "bytes": 39536,
+        "sha256": "91ecc34e239be5383fdf87c77a3b4a2e0fb7f6a4c64b86a2a81f51473874164c"
+      }
+    },
+    "officeval_030": {
+      "comRequired": true,
+      "task": {
+        "path": "task-en/officeval_030.json",
+        "bytes": 1123,
+        "sha256": "c147c494c5989b86a9f639f2d12b4f5a64aa852e8d132ee6150c2ec83cee10bc"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_030.json",
+        "bytes": 8385,
+        "sha256": "6d819a3f260cbf200445703c185273e6e18e2939f26847cf55d6d75a30985bad"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_030/V2成果说明书_A.docx",
+          "bytes": 226389,
+          "sha256": "04e9da95ac5f6ff3eba6ff62a6b0e850656a211980538e6124abdb8a8344c9e8"
+        },
+        {
+          "path": "task_files/officeval_030/V2毕业设计论文格式要求.docx",
+          "bytes": 106475,
+          "sha256": "e208a4bc13ebe1d160ffde0c5fa9325ca0a803493e64ed22e2ffa769148e5aee"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_030_verifier.py",
+        "bytes": 101809,
+        "sha256": "9287c21dab6b26e9299299976ca4fe8952abeeca741862e45dd3a015eca66374"
+      }
+    },
+    "officeval_031": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_031.json",
+        "bytes": 845,
+        "sha256": "5818a4f56aac645c6b98370ada164c23edb7107bb439be0ee09f284ab768f046"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_031.json",
+        "bytes": 4764,
+        "sha256": "fdef62eeaeb24ffe90eeb67294e980bad4c981180aa290bba3587a40592f6c32"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_031/三年级（下）语文_第四单元达标测试卷.pdf",
+          "bytes": 954058,
+          "sha256": "cfcd9d2135d8ab21ff7364b51f646cfaa182919548cbd9a629d3254415e10344"
+        },
+        {
+          "path": "task_files/officeval_031/拼音乐园闯关测.docx",
+          "bytes": 41569,
+          "sha256": "7610c5b0888df5454d33d11e59961af8a5ba35aacfad2df5181dd266433cd13c"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_031_verifier.py",
+        "bytes": 80703,
+        "sha256": "29fe05a94447d520a0167dd86df89626cd00df6a95d6044dd7475ffbc81c4287"
+      }
+    },
+    "officeval_032": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_032.json",
+        "bytes": 1319,
+        "sha256": "e2f0873e0358b85d85df9e673b39e9677e27aa9eaec53bbc005401b7aad6bb91"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_032.json",
+        "bytes": 4587,
+        "sha256": "04739d5f4e5e05e8fdc05ce55481874de90194abcd3cd4de09833395119e76ee"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_032/image_001.png",
+          "bytes": 460035,
+          "sha256": "943bcdd4eb4f3fa7d54ec7c0b1b4896b4c70018c9a4dbd4b383c29ac0ef9b475"
+        },
+        {
+          "path": "task_files/officeval_032/求学申请材料_林绯绯.pdf",
+          "bytes": 3681124,
+          "sha256": "1b2b74156e17013f0b49f034d449ae05b9a9f6745390af53af925068d288d670"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_032_verifier.py",
+        "bytes": 47429,
+        "sha256": "661d265174996718baf05f548e30528391ba525ef1c572c61aeb72a7e52d20f1"
+      }
+    },
+    "officeval_033": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_033.json",
+        "bytes": 648,
+        "sha256": "4bebf253c2ce5c124c81f061196a2574776468b9c8b4c9f7d68d4c359505ea0c"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_033.json",
+        "bytes": 5558,
+        "sha256": "4efa733a7663655e3b51666916ad5983f548b8012660262fc9873b8baab99687"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_033/家居零售价目册.docx",
+          "bytes": 709702,
+          "sha256": "8511f025397f248ef8345b22e79390df010921f13e757838a34f936b8e37d035"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_033_verifier.py",
+        "bytes": 28674,
+        "sha256": "378a4e751b8f03efeabc2a25350fb18cb7b19402b5d3c28a7fd69aacbc77f5d9"
+      }
+    },
+    "officeval_034": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_034.json",
+        "bytes": 1309,
+        "sha256": "2ec0dbee029d8797adb7e0c039ab9eccdd7077ba83cfc74ed107646bc44bc4f1"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_034.json",
+        "bytes": 6371,
+        "sha256": "4683e53d9761fde66aad52a3033ddad002de9c649a4cd29a28e00171d733a5e4"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_034/bilingual_service_contract_title_no_period.pdf",
+          "bytes": 15748,
+          "sha256": "f5bb7c61a7c8aa69749c3a426604b1050109b97733f03f242a19aa369a72a6fe"
+        },
+        {
+          "path": "task_files/officeval_034/image_001.png",
+          "bytes": 1246600,
+          "sha256": "b58eac2723bef088d7d93e86594d8f37cf4d1faa3ad03d55ae8cef16aa25e19c"
+        },
+        {
+          "path": "task_files/officeval_034/image_002.png",
+          "bytes": 873310,
+          "sha256": "ca8d72e6568f0f2edf230e3a3df652c5a951ac9529b8789eee245b37be529014"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_034_verifier.py",
+        "bytes": 68919,
+        "sha256": "d989b43e03e014f9b853d8f1aaf2e277cc5d96330c78804707d73fc69d3f3642"
+      }
+    },
+    "officeval_035": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_035.json",
+        "bytes": 1129,
+        "sha256": "c5ca83caa4efae8275c3d530091c0cf86fc2ab830ede4daf69b521ffcce47891"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_035.json",
+        "bytes": 10110,
+        "sha256": "31cc7530b10904a783e479da04f24d65c7193e4483802af0dab14f142dae9ebc"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_035/002 毕业设计外文翻译封面及格式要求（普通班）.docx",
+          "bytes": 889588,
+          "sha256": "4adb169fa97f1363454cd432dea0846c8e80c8cfb2cb670871a7159fc9ff958c"
+        },
+        {
+          "path": "task_files/officeval_035/neighborhood_reading_garden_article.pdf",
+          "bytes": 294487,
+          "sha256": "0e6c19b841e370a019607e6959fd4abe5053b9458444918e028130178474aefc"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_035_verifier.py",
+        "bytes": 89862,
+        "sha256": "33f238bf44342b4120529d367312f15fa9356f778826ba46d44a4ef31d3db663"
+      }
+    },
+    "officeval_036": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_036.json",
+        "bytes": 810,
+        "sha256": "cef8d00931be6ed57b819ab7ebf1a686bcd4fdeb5dfebb58de0b368d0d35018c"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_036.json",
+        "bytes": 3120,
+        "sha256": "82851690fd259e7e5f79ccd36d253d7b31956822044d1d59ba728d4282977d8a"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_036/Cedarline_Statement_2025DEC_reordered.pdf",
+          "bytes": 6382,
+          "sha256": "34e4e7818a08dfe4adb6a57b3214c3ea62498d6ce09b3e22d27ce41fae70ed0b"
+        },
+        {
+          "path": "task_files/officeval_036/public_ready_statement.docx",
+          "bytes": 4302872,
+          "sha256": "5293b5f65ef9d8ae4f9e86e9dd1b22da210be638fdd033fbba7a2dce71abdf24"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_036_verifier.py",
+        "bytes": 37251,
+        "sha256": "0d336fa72e17a3187ee5300bb812858845fe66d10d616e6534694a1634be283d"
+      }
+    },
+    "officeval_037": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_037.json",
+        "bytes": 887,
+        "sha256": "f1972044566ede514c49a6b8e56ca34cc61436931016171d69b609418bbe8b3c"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_037.json",
+        "bytes": 5764,
+        "sha256": "f74d86170e835ebb81eb730fd461cc4e2e26401748e6b0e57a05f58d06f39526"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_037/周测二_高三英语试题.docx",
+          "bytes": 39121,
+          "sha256": "5c2bbca712330a0ac2e15ba0719e53cbb0a4cf706d313165e88de3202df57197"
+        },
+        {
+          "path": "task_files/officeval_037/澜桥市高三英语试题.pdf",
+          "bytes": 20510702,
+          "sha256": "5cc4e3a487f5b32900c93ac389d89f4da2b05e45efecae7a9bd5f7727c479b4d"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_037_verifier.py",
+        "bytes": 164829,
+        "sha256": "7892f432d8a5f2b56a364acd2b129d86d9758422cc2daa9b65ecaaad7577a02d"
+      }
+    },
+    "officeval_038": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_038.json",
+        "bytes": 736,
+        "sha256": "cb969e4d6818ee356b15d10ec83927a8446a7c0a7fa355a478abca15796a6b45"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_038.json",
+        "bytes": 5080,
+        "sha256": "aafd1013cfe339d091627c52a394f744d8719eedd88280b5a419f1d99ec54c00"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_038/多岗位从业人员综合复习题_菟思学院.pdf",
+          "bytes": 390722,
+          "sha256": "b8c4ecf2983f497590b786b748703488061a9814a26ffabadc5d7c32f3ddd6b3"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_038_verifier.py",
+        "bytes": 107040,
+        "sha256": "25ec69fe666fd1691fe054f17e59b0afa7d9b4f12c3ad58e983206188df2d0a6"
+      }
+    },
+    "officeval_039": {
+      "comRequired": true,
+      "task": {
+        "path": "task-en/officeval_039.json",
+        "bytes": 815,
+        "sha256": "ef18a6f6cf04d87605a707feadc66881e190a6cd47a3e39e4637ce5f5b748944"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_039.json",
+        "bytes": 3359,
+        "sha256": "552a365f7c3b839970645d6b3b6e28d09de4e6a1cb1092a55b1dbc69c8a217bb"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_039/image_001.jpg",
+          "bytes": 140239,
+          "sha256": "60862f2da6ff08cca287b0c8527e78f10ba81de815a04f93954c480b58370da1"
+        },
+        {
+          "path": "task_files/officeval_039/办公设备维护与巡检服务合同.docx",
+          "bytes": 42957,
+          "sha256": "848b7a114d66795929b48f9f30f90b0ef81ae77554cde9d04857674a5bb20e67"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_039_verifier.py",
+        "bytes": 44827,
+        "sha256": "45167386d44c345b405be43cad0d5045590ea59bde1ce5dad52ec3316b50aa04"
+      }
+    },
+    "officeval_040": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_040.json",
+        "bytes": 1444,
+        "sha256": "2b347b133b91abf3590cd2813f26d799caf39c3474df884eb46887c2e3257056"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_040.json",
+        "bytes": 4177,
+        "sha256": "ec1247c5b732231087583be449ed9f1ae004cddbf20ce32efcfe6a0031d8e265"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_040/Image.png",
+          "bytes": 2142908,
+          "sha256": "d2f28e14e1b83b69d77339941cb28b5217fc6d407d26b1270331ac5227e7081f"
+        },
+        {
+          "path": "task_files/officeval_040/简介素材.docx",
+          "bytes": 3401,
+          "sha256": "c498fd663bbbb1873ef436da8ebeb1d6a0fcffa6f3a98dd41e12839a3cc7acb9"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_040_verifier.py",
+        "bytes": 76882,
+        "sha256": "0e0d0eebf0dd0bde8974bc8916e1b40e0c8fa259670df50de8ad5c7c4f25e5f4"
+      }
+    },
+    "officeval_041": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_041.json",
+        "bytes": 1474,
+        "sha256": "b8cccc4c10a14f0531a094d224779eec3a37f8783c721f845f4006285fc81ff9"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_041.json",
+        "bytes": 15470,
+        "sha256": "e2739a9ac21485bf84c3a3662a0da977115c5cc2dd8e59c7dd30ca66098dd538"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_041/image_001.png",
+          "bytes": 2586291,
+          "sha256": "cfdaf30c5c63be8d72d2e3a67e155bbdd3c46913a5784ca5b3bf61852c150150"
+        },
+        {
+          "path": "task_files/officeval_041/image_002.png",
+          "bytes": 1966612,
+          "sha256": "57de004c312ce1a7dd6eaee93bcdf876a8f1d9ee0aecf875dcf16571463546a8"
+        },
+        {
+          "path": "task_files/officeval_041/image_003.png",
+          "bytes": 2994883,
+          "sha256": "88573eede478416ac4226dedc802d804fc29a5592e022f214464bf8915638b51"
+        },
+        {
+          "path": "task_files/officeval_041/对比分析表.xlsx",
+          "bytes": 6175,
+          "sha256": "fb76919c552ed81af7abbda44a740c47001e35386e35f9a6d7fa3056e41f5eff"
+        },
+        {
+          "path": "task_files/officeval_041/高速成型线碎屑分离与状态监测装置.pptx",
+          "bytes": 21409485,
+          "sha256": "c71a4b61fdc11ae33e77838be01fb7e034791d744678157f19069037e8df7d70"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_041_verifier.py",
+        "bytes": 120489,
+        "sha256": "8514745a3d9d3203eee29bbcc811ca2d2b2decfcdb6a5958a04067c7f18dcf3e"
+      }
+    },
+    "officeval_042": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_042.json",
+        "bytes": 2252,
+        "sha256": "8f57a26fbff5b5f5dfb93faa1af56a866ab21fa2d238ff5cf7dc8c01793b5c75"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_042.json",
+        "bytes": 7618,
+        "sha256": "c304dbc287c51a58242fb98498c7596a524e4c2957b2566f0d20c0181be15415"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_042/image_001.png",
+          "bytes": 559754,
+          "sha256": "8f1ee93430b5725c7891e1638d0a91e0571e6d69d2fb7542682abd6f377b0393"
+        },
+        {
+          "path": "task_files/officeval_042/image_002.png",
+          "bytes": 532367,
+          "sha256": "3492298ca088b46d08a6d1cefec9ffaad88ff6774d5817d488959ad3f3f7eb5c"
+        },
+        {
+          "path": "task_files/officeval_042/image_003.png",
+          "bytes": 22144,
+          "sha256": "5aa53f1a009344f0a139a8ea260160acd859b5c4cfd5cc80e5dc3a5a1619b46c"
+        },
+        {
+          "path": "task_files/officeval_042/幼儿游戏活动课程设计与实施.pptx",
+          "bytes": 2051987,
+          "sha256": "3556379ba992e447c43276d3e6c6f931dab3aa0819e4d30be58faada2bd1e85f"
+        },
+        {
+          "path": "task_files/officeval_042/钢琴曲.wav",
+          "bytes": 10356548,
+          "sha256": "64cd6b800a604e69f04cf0b311ae41c4bfb96914e6a886d572b80f5a20d4fce4"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_042_verifier.py",
+        "bytes": 41366,
+        "sha256": "edf6f836ac2005de5551f68caf1e10f969cdbd8f575dc128fac7ac8f208c6a11"
+      }
+    },
+    "officeval_043": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_043.json",
+        "bytes": 679,
+        "sha256": "17975d4047c8893bbc19bfb718a62128d5216183eb7530937e23a279cb5a55e7"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_043.json",
+        "bytes": 10086,
+        "sha256": "6bf08cc42fa210ff28e4dd7dd47673cdf71dcb7bf66590a6f9f085b25f2fc901"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_043/image_001.png",
+          "bytes": 2001585,
+          "sha256": "8a504c07410fd9c6d092fd43dc8943391c92c34e9368cd9918e09d745b338124"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_043_verifier.py",
+        "bytes": 180174,
+        "sha256": "4e52a8f616ebd78a19739df408432f40d3493658da8fc57a0a02b1a47eb5412c"
+      }
+    },
+    "officeval_044": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_044.json",
+        "bytes": 1678,
+        "sha256": "137ba47fb22f7af5b3932b2a6f7b268702d87aab0cfeca82f96e40e992d951dc"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_044.json",
+        "bytes": 6422,
+        "sha256": "7c36e3f6903fbdf41367590226507b972d6c5352b243ed7c03e5cd0a2b7542da"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_044/early_modern_europe_voyage_preparation_departure_720x960.mp4",
+          "bytes": 4278365,
+          "sha256": "bb275c1d584357891db4747aafba4b62afb279c0c1ed78918def00e1bc933408"
+        },
+        {
+          "path": "task_files/officeval_044/image_001.png",
+          "bytes": 360700,
+          "sha256": "9bc1944fbb7db24fde5c07cfaa2ac3acc0a00375e439f0a25d2b55595b7ab1c0"
+        },
+        {
+          "path": "task_files/officeval_044/新航路开辟说课PPT.pptx",
+          "bytes": 12382321,
+          "sha256": "2435efe9852f69d579f60374af3147cadcd460f0401d58d85ddca6cf52821e47"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_044_verifier.py",
+        "bytes": 42806,
+        "sha256": "6c234920ac35a9f526e5701e7720dc881a86bc0a3b781e2b4dc3c6761777438e"
+      }
+    },
+    "officeval_045": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_045.json",
+        "bytes": 1982,
+        "sha256": "fb60a57d2ce59a81632a15928b8edb9e03336d9c2404dda132efa07d50972fbc"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_045.json",
+        "bytes": 6324,
+        "sha256": "786324f50751fa59a45b96234b8cf2cab64f6d3aea7c6a65a24959430633969b"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_045/electric_toothbrush_vertical_01_clean_360x720.mp4",
+          "bytes": 528884,
+          "sha256": "5c65f953a54474e0b01422370ec8614e23acf887aeb1de483454feb9ac9d9c1c"
+        },
+        {
+          "path": "task_files/officeval_045/electric_toothbrush_vertical_02_timer_360x720.mp4",
+          "bytes": 240792,
+          "sha256": "70ce0f8b87b283b092a937d3b936f7f1b5bf40f0b17cdfed71c4748c2f875556"
+        },
+        {
+          "path": "task_files/officeval_045/electric_toothbrush_vertical_03_gumcare_360x720.mp4",
+          "bytes": 262362,
+          "sha256": "b5efac09ee3dcaa74f183e98ca2a4157c3e7a3f69f9768219698a5d08f59937e"
+        },
+        {
+          "path": "task_files/officeval_045/image_001.png",
+          "bytes": 1948700,
+          "sha256": "44111594657b23dadb854b7127f310edb0c74368eb5addbabcb3ccaa2117bbb4"
+        },
+        {
+          "path": "task_files/officeval_045/海岚清齿声波护理品牌汇报.pptx",
+          "bytes": 8298088,
+          "sha256": "d17b880aa2f95114a63d634f88bfd0e962c1719a03538c8cbbabcc85f5cce4e5"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_045_verifier.py",
+        "bytes": 59484,
+        "sha256": "87c537db2e2313d8a48342bfe81451842ad35a4ecd1ec467edaf264a176d6121"
+      }
+    },
+    "officeval_046": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_046.json",
+        "bytes": 892,
+        "sha256": "a983b7044a95fd78848db09c99a8aedabf63e5118975cdd008b9fba332306878"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_046.json",
+        "bytes": 27099,
+        "sha256": "2ae96f4c8f4a5679a1d42f524e1b0da832f99b256ea5a6a924eba2d375ba6425"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_046/image_001.png",
+          "bytes": 1379452,
+          "sha256": "b09980a366b1de100a43518a4b9cafe7543950af09921b055c64a645d8cd4149"
+        },
+        {
+          "path": "task_files/officeval_046/image_002.png",
+          "bytes": 1393689,
+          "sha256": "6b5bf5dacaf7e53c03103df37050e0e25027e21eedc1d06ccdb8965e1b3d7d50"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_046_verifier.py",
+        "bytes": 305941,
+        "sha256": "1120ab1c754dfb20e99de2bc836050344fea176663c1e64268c1d07a54beda82"
+      }
+    },
+    "officeval_047": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_047.json",
+        "bytes": 1188,
+        "sha256": "880c789efadb08fc54afa5fd3c6d866dcbf38d95698e7dee3b9e79e0d80f8459"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_047.json",
+        "bytes": 15616,
+        "sha256": "bbcea5e56c4d25800f7f2fb5618de861b27a344dc0153c56c9d457b8a4095f7c"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_047/image_001.png",
+          "bytes": 911236,
+          "sha256": "2bfffec3d8e2ea9f1be8570165a44e9046d8920e62707d0af48b1478bfe44b6d"
+        },
+        {
+          "path": "task_files/officeval_047/设备状态监测研究汇报 .pptx",
+          "bytes": 8106651,
+          "sha256": "f8990e568fa66f738e7c49b570d7dd0b5a120758dfb893385da1236041bd98f3"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_047_verifier.py",
+        "bytes": 88140,
+        "sha256": "5550e0b5d4a87c7c4dfb33e2f099cf50c7358a866b85b093ae9fd3483adcf292"
+      }
+    },
+    "officeval_048": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_048.json",
+        "bytes": 625,
+        "sha256": "2eb7a452e1687dcb164d891242c4fc292ad11101dfa470f89c6b52b2300125d2"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_048.json",
+        "bytes": 3279,
+        "sha256": "eff3f09a7febb95c919927ee77b3e9753c2eaa2a9fa7a25c1f84b8f58457fcea"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_048/演示文稿1.pptx",
+          "bytes": 26861915,
+          "sha256": "955a7485fa4356e6594f1f871a2bd26337f2e40a7d5c64400afb31111fae9ec4"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_048_verifier.py",
+        "bytes": 31683,
+        "sha256": "929314396d0da57a831161eab31cd6ec0b4dd83b19c742633347aaa0b0531976"
+      }
+    },
+    "officeval_049": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_049.json",
+        "bytes": 525,
+        "sha256": "aa7a9db3b7820f7f0fecd6070dd8561a4f7b9bd6ccc86f198647b5d5e0134abf"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_049.json",
+        "bytes": 13462,
+        "sha256": "2d318714dc54fc286adb08b6f3a3cb4c95f4ccb2407386a59d5c0683b9e2c232"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_049/Image 1.png",
+          "bytes": 1877924,
+          "sha256": "6b68e7004b34272a7c2417bdf01918dbb7fad79426fb1bd9284b4fba9fac875a"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_049_verifier.py",
+        "bytes": 113767,
+        "sha256": "1df555e094c5f32cf6fb4d5cc2a5391993925e2dc7c7ec19da2889f50ab0616a"
+      }
+    },
+    "officeval_050": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_050.json",
+        "bytes": 551,
+        "sha256": "cbb837701ad0e276520d29396413797ea9220e7e59a8546088dd76cc66207412"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_050.json",
+        "bytes": 20938,
+        "sha256": "258b13be64ec8922be018a9fa2c21103cce4b86f7345ab989f7ff574dbf15931"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_050/111.pptx",
+          "bytes": 2615217,
+          "sha256": "f918061be4852abfbcad766c3b6c5b693e5520675535110389bcf0c9121653df"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_050_verifier.py",
+        "bytes": 177442,
+        "sha256": "a8d177e64d2cba1204891fb32b4b2b059b310963a5f982fc0a38dcedd7b11506"
+      }
+    },
+    "officeval_051": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_051.json",
+        "bytes": 508,
+        "sha256": "a72de7624026dad03b0a34d01e9c8126a41b097bce306a660665bc1a1029c7b7"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_051.json",
+        "bytes": 17053,
+        "sha256": "e71182cbb2c67b1efcb82203191061d6bcd8966a3e3f0ec97eca26ca2b651b23"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_051/Image 2.png",
+          "bytes": 1130673,
+          "sha256": "ef53bc48e47d05feab61746067ff5d98582653a4c9ec53ce111def01e5200eba"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_051_verifier.py",
+        "bytes": 222406,
+        "sha256": "027c62ce163b59c1dd64f049549a4173fe4b1772a23f1554c89d2d0b5b386205"
+      }
+    },
+    "officeval_052": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_052.json",
+        "bytes": 628,
+        "sha256": "b5665f2dd961518cc932945a67f39fb9859066faa78cffa41a3e76855844fc98"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_052.json",
+        "bytes": 19728,
+        "sha256": "7c88a2b86fea422fbba6f329138fc3ed420acf00960ed108bf95ce69da7e23d3"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_052/模型图.png",
+          "bytes": 1268934,
+          "sha256": "4220108a4cb2b170f9c7aea18552a01c1ad7ac0e04e80a2251b9c5e108c32b8f"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_052_verifier.py",
+        "bytes": 195561,
+        "sha256": "30d72a414abcbe9ac3bb028ce61ffc73f0b9e7b90ffb945d803e587f52a7cdc9"
+      }
+    },
+    "officeval_053": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_053.json",
+        "bytes": 538,
+        "sha256": "e580999a74272b223fb622ecdb392f2c328c6c483cc73bf52ee6751b77bc809f"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_053.json",
+        "bytes": 16100,
+        "sha256": "26ace6cbc1bf66249c6c40f9482f9f4332a4111ce4727b2659cf445567d122cc"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_053/111.png",
+          "bytes": 1103423,
+          "sha256": "697f6287bf240bb845908be1c5ef8ca40c20c48c0b8168df76c0020c2cf5201e"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_053_verifier.py",
+        "bytes": 122188,
+        "sha256": "b73492ded42e7d157d2bd522f5374521169f25026aeaa953d3981b230b35472d"
+      }
+    },
+    "officeval_054": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_054.json",
+        "bytes": 665,
+        "sha256": "c529e9563a041cb10a5fece08d0f0d1ad1f7d6481cdb6bccf58bec29bd92130e"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_054.json",
+        "bytes": 8688,
+        "sha256": "8a831d6f21bc28ac2245a1a77edeb6543d55c82e615410816df893f6083456ac"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_054/路径图.png",
+          "bytes": 1361893,
+          "sha256": "94408780b4c2d64f393a40ea0a222255e87c6c5bcc0e3cdb486bfb059f041ce8"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_054_verifier.py",
+        "bytes": 86437,
+        "sha256": "2313058b3332b92af515ba09c9b12c3167b796ec3e8853846322c2d287f93502"
+      }
+    },
+    "officeval_055": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_055.json",
+        "bytes": 862,
+        "sha256": "ba4ee55d2d877812cf8a2fba9dad07480addb872a51c072713960a0f7ab27471"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_055.json",
+        "bytes": 7350,
+        "sha256": "d46599d053369b0c1d14d6b9450ab35fcf436a1480e34f9392267a16d0929fd7"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_055/website_outage_editable_flow .png",
+          "bytes": 1152360,
+          "sha256": "80bca602124e0cd54203937d2d46817062e7c61849cc05c911e64345be1c6add"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_055_verifier.py",
+        "bytes": 81894,
+        "sha256": "1f979805b1a60af8fbc48ed78bd4b83dfc5719742ed9a7adfb82629730ef633c"
+      }
+    },
+    "officeval_056": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_056.json",
+        "bytes": 643,
+        "sha256": "53716efbc58c90e3f0831147dc5c01e8faa2abb2d29fc40552935aa4089d5a13"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_056.json",
+        "bytes": 10858,
+        "sha256": "6598412bc6e6f8d70f06b95debe563be3886fbbdb0ef7884d0ecb34d3579edb2"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_056/客户投诉闭环处理流程 (2).png",
+          "bytes": 1382091,
+          "sha256": "a053ad51fac4a0e4a15aa030b3ed3347bbb0a85539e9a6d33d98a9d6c6604217"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_056_verifier.py",
+        "bytes": 95589,
+        "sha256": "3a5d1a5cb480668723f500335b820a4d79e04f5cf723b74889ce6586b4815cc3"
+      }
+    },
+    "officeval_057": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_057.json",
+        "bytes": 758,
+        "sha256": "f2c849b2baeb193e791753d99b5c90cb5296c963fbb3915c9587835dc4b10017"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_057.json",
+        "bytes": 10340,
+        "sha256": "df57671704019c8da0e200b7b1b39cb0f862d4c14bea7f611b1c8d7d66496622"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_057/image.png",
+          "bytes": 181927,
+          "sha256": "36617cc4e74b2619a3f05fd4e9e1e501da365a07795ba376315e09d171a7e838"
+        },
+        {
+          "path": "task_files/officeval_057/化学式.png",
+          "bytes": 867856,
+          "sha256": "977aa6748a89349aeb863e9bf025c5260aa9f0047d63c76da112d807452f710d"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_057_verifier.py",
+        "bytes": 131850,
+        "sha256": "25b291e3d167e59d82dcf765bde1fabaae5978fe8696b099fda0cc165d91dcd9"
+      }
+    },
+    "officeval_058": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_058.json",
+        "bytes": 1350,
+        "sha256": "e99d1147bb1a12fa0e53699c92f0f153c9a84dc9270cc7095708645039bafcb7"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_058.json",
+        "bytes": 4387,
+        "sha256": "dab41153baee165ac1e06b8df3d8931ce19b4e0f832f3fda6ba71e55724a838f"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_058/image (1).png",
+          "bytes": 11962,
+          "sha256": "dfb4bc6f0eeade187a4f2906e772ba1917f23269088e09f261e9625f382dd5fb"
+        },
+        {
+          "path": "task_files/officeval_058/中国电影业面临的挑战.pptx",
+          "bytes": 14237294,
+          "sha256": "a3a61a0b127f5abecd3fc24d837d997ec627b81493c04a664505d88920d45382"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_058_verifier.py",
+        "bytes": 31780,
+        "sha256": "a4f673ee399a264d1fc9bbc9ba12029192901fdcc689aa24f239b756a70a76cf"
+      }
+    },
+    "officeval_059": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_059.json",
+        "bytes": 867,
+        "sha256": "47b42280373254dc25a81a0109fd4278bc61e666b3f45d01634461ecb0c8c058"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_059.json",
+        "bytes": 4244,
+        "sha256": "b1b60ac9b42f1ad63b8c3603c7fb07c3144c1e80cf7a03c442b70a7af98865e5"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_059/青梧谷灵MR共创计划.pptx",
+          "bytes": 12182755,
+          "sha256": "6c0bffcfa7b1cd6d0e4d5f776218aa82880d310f7b55171d3f0cc04029770fa5"
+        },
+        {
+          "path": "task_files/officeval_059/青梧谷灵MR共创计划_项目申报书.docx",
+          "bytes": 34401,
+          "sha256": "57424ad5fd58bda00674e69fc1643d22df125aaade34fbc6a4cced2e92ebc785"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_059_verifier.py",
+        "bytes": 42972,
+        "sha256": "6e6ecc2873c56e2a231af69dd5fb4ac7c9bdbae2ab395b04bd3e6e89b14a591c"
+      }
+    },
+    "officeval_060": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_060.json",
+        "bytes": 549,
+        "sha256": "710442c7d8f1881408918099e6b6db925c23780a64d29836f709e22aa72131a1"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_060.json",
+        "bytes": 2589,
+        "sha256": "f25584ee13ee14f09d6aa1b2dec9ed77882a07e6b3525af143cca232abe36d40"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_060/PPT.pptx",
+          "bytes": 2371957,
+          "sha256": "83d6462ef25e2682a6a46055bcc6a002c2c36d7aacaa98ea99ca449faf46a51b"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_060_verifier.py",
+        "bytes": 14217,
+        "sha256": "e9b24c667672c9af97d1b0fdcef29a6f5c62e33726bb416b82d287a19377574e"
+      }
+    },
+    "officeval_061": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_061.json",
+        "bytes": 1326,
+        "sha256": "956181081d557d58497602e0db2b68e24f4b740d15cb5de355dec81bf5ed8a8a"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_061.json",
+        "bytes": 6292,
+        "sha256": "9217010d8c4a991eb81e7ed7bcd67c6573d523c2ec03def5d95420f96571a99e"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_061/product_video.mp4",
+          "bytes": 1207345,
+          "sha256": "e9e9fc28913b4a4a6910b16533cf8b10c9932d36965d140937c538986e87d583"
+        },
+        {
+          "path": "task_files/officeval_061/星市静默回声教育科技有限公司简介.pptx",
+          "bytes": 9861791,
+          "sha256": "19d1228f355e7db9f9565296b289e31ec1c4e6b6e82de912c77503b181d9156a"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_061_verifier.py",
+        "bytes": 80423,
+        "sha256": "47b934dd3129c200a48bafdbef861ba1de60456eab1a7c1c1e722d488b339550"
+      }
+    },
+    "officeval_062": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_062.json",
+        "bytes": 1439,
+        "sha256": "53afade66bdb248fd7ca75b26dbce3e9dba8c44dc7b2eb5174a0fb1036930f96"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_062.json",
+        "bytes": 4942,
+        "sha256": "bfe0ecb81e329ddf39c261549d85e2260fc729dcc238f72bb37aef3949b50cd6"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_062/coffee_grind_to_latte_720x960.mp4",
+          "bytes": 657171,
+          "sha256": "2f4517de5ce638a64cd72040f44c0400c1a0b0aea59bf736333c9b5526456327"
+        },
+        {
+          "path": "task_files/officeval_062/基础形状.png",
+          "bytes": 823186,
+          "sha256": "476cdf83f8dc4582447cf19af48ac63bf97a2639823c56763ac23f061a171b4a"
+        },
+        {
+          "path": "task_files/officeval_062/晨岚咖啡品牌运营研究.pptx",
+          "bytes": 16959956,
+          "sha256": "37d21a7bc647f837975391f59f91e0e5f1021fb3664063629f4aa1c4b577ea35"
+        },
+        {
+          "path": "task_files/officeval_062/晨岚咖啡店环境介绍.mp4",
+          "bytes": 671928,
+          "sha256": "378707b8c8ff0b0687e56a8dd84994e9ef2c98b85b587a80606e506760e39db5"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_062_verifier.py",
+        "bytes": 73152,
+        "sha256": "47005c12d430bafd60ff5245d3a02affa4c085bb749b5027b07a28c6a04beddf"
+      }
+    },
+    "officeval_063": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_063.json",
+        "bytes": 1954,
+        "sha256": "7a5db5348b17cfdfa303d864a197cdae43af6b7998b7d3ab9b305ce1304eeb1f"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_063.json",
+        "bytes": 4349,
+        "sha256": "ec52f78a620e33a23ab73e14199be817cc4fad71e7dd6926b45c06aa61ae5495"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_063/6.JPG",
+          "bytes": 122265,
+          "sha256": "0dd1873f5875017d4bbcedf657c33e1b01e5d4d9c44f9b75619c9ddc66ddaa76"
+        },
+        {
+          "path": "task_files/officeval_063/7.JPG",
+          "bytes": 130870,
+          "sha256": "6f6edbe40e0eab698d8bf61484db50bdb7f53305c5225f191ea5b84e4d1bb18d"
+        },
+        {
+          "path": "task_files/officeval_063/8.JPG",
+          "bytes": 122164,
+          "sha256": "32273ae3dfdf03d1b11b0d215eb047b6997e3e5126b002fc6436b0e5e02a923d"
+        },
+        {
+          "path": "task_files/officeval_063/9.JPG",
+          "bytes": 180861,
+          "sha256": "0f8ace2187f64f9d0a57d3ae12352c7f5d8a0b101e353ce7b2798d6145b7b9f3"
+        },
+        {
+          "path": "task_files/officeval_063/直播运营阶段复盘.pptx",
+          "bytes": 1275285,
+          "sha256": "3b08740686580d71f4224885ab3ba5bbda39afa098f7ec13e1b587fdef870b63"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_063_verifier.py",
+        "bytes": 62865,
+        "sha256": "cbde0f58ddd20581d511ce3c4617625f2afe0b4e5ea08dd8136de2828e3c2981"
+      }
+    },
+    "officeval_064": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_064.json",
+        "bytes": 2916,
+        "sha256": "caeac456402f383a3f05fa1d0d34575be8f6c8b42a25888d8b9e1d93c65387d8"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_064.json",
+        "bytes": 3868,
+        "sha256": "52a77acfa069466b4e87ffdea60b6eba89233b2f55411cca24342c235bdfaeb8"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_064/1.png",
+          "bytes": 1152558,
+          "sha256": "47be0747dcfbe84c25c8be60ac3e6c04e41a5602d5a6447885ca4364326334ac"
+        },
+        {
+          "path": "task_files/officeval_064/10.png",
+          "bytes": 1450358,
+          "sha256": "676f25de3971bbcbeecf502deab53aaa08e3fcf13355bc991e13332244923369"
+        },
+        {
+          "path": "task_files/officeval_064/11.png",
+          "bytes": 2227826,
+          "sha256": "112fe10618b42fe21132e54fbd55a53a52d797a7ea23b982ea603fb9c998fe52"
+        },
+        {
+          "path": "task_files/officeval_064/12.png",
+          "bytes": 1617473,
+          "sha256": "4b9c9ab738dc8f80c05027c3443f057fdbc184d1fb1a2e19804b196de923c5a7"
+        },
+        {
+          "path": "task_files/officeval_064/2.png",
+          "bytes": 1411155,
+          "sha256": "e60558c81a32ef0682d3be174fd3b993e3b99e3ad7b338182e230f13fd1ac3d9"
+        },
+        {
+          "path": "task_files/officeval_064/3.png",
+          "bytes": 1624099,
+          "sha256": "824f4e1c2a77dd688792aab62b2a6994a8de6d14bd46231d0ba44ff90613d455"
+        },
+        {
+          "path": "task_files/officeval_064/4.png",
+          "bytes": 2288920,
+          "sha256": "e81e0e3be835dba2a67c4772bc3269d1aadb86d9363a4625002daeaa442f9ddc"
+        },
+        {
+          "path": "task_files/officeval_064/5.png",
+          "bytes": 2748425,
+          "sha256": "c77c69a28a36c34693ccf972af681a3e5fac005446fe73e8705993db06407b35"
+        },
+        {
+          "path": "task_files/officeval_064/6.png",
+          "bytes": 2338960,
+          "sha256": "15647ad385b157fa9bc8a07da2b56572a2d3ff4b59ee14a88193a0ca4a1be278"
+        },
+        {
+          "path": "task_files/officeval_064/7.png",
+          "bytes": 2397186,
+          "sha256": "1460d7cd21b790d5375d1dd4384288f93af8c410764c73ff7b825a80e71a33a5"
+        },
+        {
+          "path": "task_files/officeval_064/8.png",
+          "bytes": 2093252,
+          "sha256": "dfb9a12d611dc0aa8c0965da819b6c441f200cf5b7f2eeb7209da1c9e94e74d0"
+        },
+        {
+          "path": "task_files/officeval_064/9.png",
+          "bytes": 1548992,
+          "sha256": "8c7e5de752f292a279cb50b7604a43a776b566312b94ce3d79127290daf6738e"
+        },
+        {
+          "path": "task_files/officeval_064/核心技术.pptx",
+          "bytes": 20968,
+          "sha256": "6f239f691ba4825ee61cc5d59db9322fb89e53bf668b5e6de945b1378b4d181c"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_064_verifier.py",
+        "bytes": 38536,
+        "sha256": "cfbca6eec42b8d9a8e7084b946dbf43ce0a70b73f1bdf4b3218d10ea34236a5e"
+      }
+    },
+    "officeval_065": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_065.json",
+        "bytes": 937,
+        "sha256": "95aef041e1dde3f7a9c66ff6ba296adc7a317858a5dcdc79f700d30a9d643b86"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_065.json",
+        "bytes": 3275,
+        "sha256": "2e2b3f94ef60d064bc4fa78d23fbb4026732e43f967ac980579f0f115fcd7555"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_065/double_spinner_new.mp4",
+          "bytes": 2436164,
+          "sha256": "339f88f70098ae38f359da0209fa27807d8e0b94684b0c9126eaf69dbd9c94dc"
+        },
+        {
+          "path": "task_files/officeval_065/口算教学课件.pptx",
+          "bytes": 17455781,
+          "sha256": "82ddb52a92322708bbd1b8def653c3f598e154dbd28a8b070e00d36f704927f1"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_065_verifier.py",
+        "bytes": 99867,
+        "sha256": "0f5006ba436afe01d7a4f302c3c017445e455445f8da8abdda62e22a5cfba412"
+      }
+    },
+    "officeval_066": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_066.json",
+        "bytes": 905,
+        "sha256": "e3b7188ac77cb0e9744ea9089671cd1b6d0f41b696595961502f9c8c4ba6725d"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_066.json",
+        "bytes": 3760,
+        "sha256": "c7245bda57f855c90f2a919ad1e5d723dba2142ee3dba9406e49d4e35e4fbf48"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_066/PPT相关不同数据表.xlsx",
+          "bytes": 4340,
+          "sha256": "bf371544b6da7bf1979f20124e92505e0745a03047c94398a908336ed4977722"
+        },
+        {
+          "path": "task_files/officeval_066/表格图表关联数据.pptx",
+          "bytes": 60476,
+          "sha256": "9b446543abd5d8c4312c55a5d9da133f4ebec570c32deb17dc59ee4b85cf5bab"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_066_verifier.py",
+        "bytes": 57892,
+        "sha256": "a556a71dc328e9a9799605b5dc65d4c7634e173f8d03b305e6c0b8b273255ed6"
+      }
+    },
+    "officeval_067": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_067.json",
+        "bytes": 585,
+        "sha256": "73b5b9ec6b069a7cdc9684bbb54be47f1fbc9085e89778d0833a6ff91d15789c"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_067.json",
+        "bytes": 2328,
+        "sha256": "7d8643a9cc0882ebc5b0ea9b1980c36d1a01b0b68e65ed14e69b4a21a898c2f1"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_067/智慧园区再生水管网.pptx",
+          "bytes": 153939,
+          "sha256": "e15a394171fabfaa15429e9c5c7e5b56d3322e3886d443b8e9ad709bbcd72b4f"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_067_verifier.py",
+        "bytes": 31330,
+        "sha256": "44ff2db56b3bbf877749d3734263c939b639479de8f20fe1d7be758d854ef3f3"
+      }
+    },
+    "officeval_068": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_068.json",
+        "bytes": 1213,
+        "sha256": "a3055057208490794547263cd007bbbe9fc27f5af8dcd0fd3310d831a4a0f45d"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_068.json",
+        "bytes": 3467,
+        "sha256": "262aa825c6b4862fd2a07e6a479c9350ed529ca8f40a6eac519458d294883050"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_068/应急有线人工通信保障网专题汇报.pdf",
+          "bytes": 242464,
+          "sha256": "c8196f4843e448d77dd711ada29b5117c411ef97079cc99a47cd8759bc861bff"
+        },
+        {
+          "path": "task_files/officeval_068/综合调度坐席系统操作介绍.pptx",
+          "bytes": 182905,
+          "sha256": "2720796fd2687eb366ff5261a339bab9b3adc930ef9133ceec680869df74e4d8"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_068_verifier.py",
+        "bytes": 50844,
+        "sha256": "db46215fc6f4c38695183e90cc93466011160e8075f79ebcf7a28bb8c56894e7"
+      }
+    },
+    "officeval_069": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_069.json",
+        "bytes": 959,
+        "sha256": "cab23ddaee2a190631af76200f3dbc71fc1f8763aaf233a249cda7290a9a0d1f"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_069.json",
+        "bytes": 4211,
+        "sha256": "f788106cc777ba042dfb0be7f261fb8889a1ddb0d69f8d7b593a10cd0916041f"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_069/image (2).png",
+          "bytes": 227293,
+          "sha256": "097b870d2197d95dc4a0203156c4494cf3519d00703fba2cdf0d8bec510198a2"
+        },
+        {
+          "path": "task_files/officeval_069/工商层面_流程图.pptx",
+          "bytes": 19719,
+          "sha256": "2eee79777713766520578b96ed0577216cc2b323facb2d96f99b3f6b0a64caac"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_069_verifier.py",
+        "bytes": 20980,
+        "sha256": "b9cff0e238c23b87827e269014cf0af8da4e15026f3631dacf5d3cdce2c0148c"
+      }
+    },
+    "officeval_070": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_070.json",
+        "bytes": 717,
+        "sha256": "32d2f6d33061fee9a4103a2d280b958f868f5359c7fea80e8075754768c35d14"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_070.json",
+        "bytes": 3652,
+        "sha256": "874eb77270fb8f4355f288cc778dd1073b3c0c9a639797f91f6e2cf18ca07319"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_070/技术路线图.pptx",
+          "bytes": 41309,
+          "sha256": "07c278c83919f7e33d42b44324fef2fc8090b181be1b566b3b8c212002509875"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_070_verifier.py",
+        "bytes": 38135,
+        "sha256": "bf8ff00b56951f5d9eefa5bcdb8e4f097be7d399db4b061f2302ea57ba4d317b"
+      }
+    },
+    "officeval_071": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_071.json",
+        "bytes": 1045,
+        "sha256": "17a8d1aca6c48b25e2a0749ec40c405ab0412b0b0e381169052686b8578397a3"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_071.json",
+        "bytes": 1942,
+        "sha256": "bcd2c269972fc0c87e23d3ca301ea5315b1d1a1b4b3aa3d2f6a76abffb0852bd"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_071/image (2).png",
+          "bytes": 530188,
+          "sha256": "9d35aaf594ca6e9b4d5ea63e23bca86ca152bc6daa1288e75dbe5caa7553bbe4"
+        },
+        {
+          "path": "task_files/officeval_071/护鸟带.pptx",
+          "bytes": 1392040,
+          "sha256": "6f463c4ab56a8deb60dc34ce8157e650a65e7246acdc4862b69d271b12cf3aa3"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_071_verifier.py",
+        "bytes": 52041,
+        "sha256": "ee4fc92c94ad719ecc2c4c5682a2f810067b3254cb0079ee9e66eeb6365efa66"
+      }
+    },
+    "officeval_072": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_072.json",
+        "bytes": 560,
+        "sha256": "c341e44f1fb09d2fc4756209c92584bb7b63f132b7b38f6442887cd041ba785e"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_072.json",
+        "bytes": 5056,
+        "sha256": "af7634b8ced8f148d43d1c931d385da7a99eade87c314a0b28a6b89fb197e66b"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_072/Illuminating_the_Starry_Sky.pptx",
+          "bytes": 1935108,
+          "sha256": "8e963f7ed41186571d7ee943bc5b3a293c6d69ffb052f5be536f34278f5667b4"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_072_verifier.py",
+        "bytes": 110635,
+        "sha256": "e943368411e6cbe9a4189737b42619f2ce2e7eea85f00bfdfe5e2f507b4a9078"
+      }
+    },
+    "officeval_073": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_073.json",
+        "bytes": 763,
+        "sha256": "3188afbe116fcb14478b69c099764043e04ae8fc70544f69c29969be2731824d"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_073.json",
+        "bytes": 1861,
+        "sha256": "fb2825bb19bf3de9f45be01b5cb7dc84652496e72c8e08bbcd66c783e7fc1ed9"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_073/9d1a84f16251c3b86af41d3a6205354a.png",
+          "bytes": 69021,
+          "sha256": "21629ea75020f5578d05f93d70dd86fee385c88f0baf16980dfe970052058ad1"
+        },
+        {
+          "path": "task_files/officeval_073/流程图.pptx",
+          "bytes": 62540,
+          "sha256": "6c80194ca6284204331754058957bcfee3663e333fb6fa00fd58fa75826dac55"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_073_verifier.py",
+        "bytes": 25897,
+        "sha256": "3e9769b78e3e2a62f358e50aea6a5138b6e12d89e3b546a5ed01e8323495f92f"
+      }
+    },
+    "officeval_074": {
+      "comRequired": true,
+      "task": {
+        "path": "task-en/officeval_074.json",
+        "bytes": 583,
+        "sha256": "1fb47eb65eb9a7317aea034cd363bf03848a3c9ddeaf12be0a5eb1ebec8389c9"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_074.json",
+        "bytes": 1911,
+        "sha256": "f96eb7097fef6536485bab758fe4876dca05ce9276052fbe4b0dd4c628fee526"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_074/农业县低空经济发展方案.pptx",
+          "bytes": 2047524,
+          "sha256": "7cee3db336925cbad9e0866b3991277e20fc4ece40a59cc772ea18c93ead67fd"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_074_verifier.py",
+        "bytes": 54958,
+        "sha256": "9da80247af0187be83850ff9173caf6710097bdcfa167a02dcab1b6c14ba9f27"
+      }
+    },
+    "officeval_075": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_075.json",
+        "bytes": 886,
+        "sha256": "394943e23ce23fb38006eca3974408fcf92e921247a0497df1fcf98a54629356"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_075.json",
+        "bytes": 5229,
+        "sha256": "66b86506e09eb7c42350dc7ca5f68c439739e0cdb88979d8763354c66f34fe5e"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_075/医疗服务收费指引.pptx",
+          "bytes": 6299244,
+          "sha256": "99f5b76b0accd43d776b4efd0d903b6c1677d006bf119a2467e0bafa55031c4a"
+        },
+        {
+          "path": "task_files/officeval_075/呼吸项目课件.pptx",
+          "bytes": 3581478,
+          "sha256": "1a3f7ff4b02328286bbecaa6bafe912a36c5d01d05783c63cd4ad7dfcbaf2d74"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_075_verifier.py",
+        "bytes": 91961,
+        "sha256": "751dd1f79cc93fd9f43d4f4684380ceee8a44c9ff778627df3f50319188e2502"
+      }
+    },
+    "officeval_076": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_076.json",
+        "bytes": 10461,
+        "sha256": "462e15d4204535eca07a7d616409e32365425a8abe0f493e078113a243bbda1d"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_076.json",
+        "bytes": 15206,
+        "sha256": "b1fcaf64e2c387ec964f24c50df3f7fd6ca937e5b690d3bd3a4dc07fad1625a3"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_076/模版.pptx",
+          "bytes": 7234930,
+          "sha256": "fae5afedb2b42e6b0c4d729f0e99682fbc041b95cd0dfbcb04b3c6a3c0cd0a8b"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_076_verifier.py",
+        "bytes": 90924,
+        "sha256": "220fdd54133e65affbdf2108d700f2ce812b73e180e9d141e61c1bd0556e8e33"
+      }
+    },
+    "officeval_077": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_077.json",
+        "bytes": 2183,
+        "sha256": "9b2243ae6a70aee2b3a2abef37316e858f7f6b16675f97e58677b2316647cc2e"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_077.json",
+        "bytes": 5099,
+        "sha256": "556d3c89dc2eef8ad73ba23ba54e4ce683324c4f2d737ea50fac7a67518bd854"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_077/启蒙运动思想解放.pptx",
+          "bytes": 33239330,
+          "sha256": "ef06a7de1855612f55bbe471e44bcff7c208b2f9b0fd66e03d9e1dfb4747049a"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_077_verifier.py",
+        "bytes": 57074,
+        "sha256": "c7a41978b1cf38f7923faa63a494ad36cc77adb2094d2134b3d9ab8a42b00eb2"
+      }
+    },
+    "officeval_078": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_078.json",
+        "bytes": 832,
+        "sha256": "0d9a65d9845b0d60a825ee40b36dae3a83f7c683c40dc83e0a557f258b9c2bd9"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_078.json",
+        "bytes": 1410,
+        "sha256": "485fb3a4425b3fa230a47036771641a96e188af3c32d510e311ae124d83a430d"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_078/CRM_pipeline_restyled_reordered.xlsx",
+          "bytes": 137044,
+          "sha256": "e45c7f9aac5c65df4e28e67d503a9aac4712b31b59ff219b234fa85d388a1839"
+        },
+        {
+          "path": "task_files/officeval_078/区域协同汇报.pptx",
+          "bytes": 10232907,
+          "sha256": "3eddccca700d7c3f0c30f1cdb747cbf984a68757583a81aef524edc87a99c42b"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_078_verifier.py",
+        "bytes": 28047,
+        "sha256": "805b122915a236bcbdd5b6ecedbec24d84a6b27c5daf18e18bbb71a85a1d940e"
+      }
+    },
+    "officeval_079": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_079.json",
+        "bytes": 530,
+        "sha256": "b905c1234357f8efaee8a1ed59fe04b0259164ee6105f2a5ee286678c92fe02b"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_079.json",
+        "bytes": 10807,
+        "sha256": "175058a6bc82be3eb2ea309df6b48f0cbb66fb29d6c76614f78bd232a590083b"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_079/第二课时课件.pptx",
+          "bytes": 4241444,
+          "sha256": "dbc7b616b44eb03188568973183c7260abe34815e62462cb2502b8cf003472e2"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_079_verifier.py",
+        "bytes": 43489,
+        "sha256": "12875d5efb65f265d3d2a7bd2d7623204bd051f5677fa14da18b54720e5f5f83"
+      }
+    },
+    "officeval_080": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_080.json",
+        "bytes": 738,
+        "sha256": "7f1c8d2d604d7360587e2fd10367a7248b032bac9c8b05f5cb3ec9fa7ac38ab8"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_080.json",
+        "bytes": 3349,
+        "sha256": "8f8adbf1d3a2b72655e9232df175ec2e563fc03f25f8863380a7ee3d8b47d2f5"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_080/公开课课件.pptx",
+          "bytes": 26001937,
+          "sha256": "c741a707063dd8abe7a7e4d8af0bebaadfea8334b03c43fa9767203d86786697"
+        },
+        {
+          "path": "task_files/officeval_080/要求.docx",
+          "bytes": 4907197,
+          "sha256": "1e512f0a65f70bb5f415c098baa2800c938660375015e7d7c6e990c1fd7420ba"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_080_verifier.py",
+        "bytes": 53761,
+        "sha256": "049e62117f6e74f0944ad06ea155e413ab41d509aab3542e438b8747d6a645b0"
+      }
+    },
+    "officeval_081": {
+      "comRequired": true,
+      "task": {
+        "path": "task-en/officeval_081.json",
+        "bytes": 1000,
+        "sha256": "f97415684197876dc6242288fa146c37e61b29b9ac5a441d4deb3e285dd15742"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_081.json",
+        "bytes": 2917,
+        "sha256": "6d030a3e831ba5a773c38763ce04bd64bb66bec8203ca4b71987bbed3caa639e"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_081/VID_20260525_102540.mp4",
+          "bytes": 44104777,
+          "sha256": "6d6f6545544068752123ff4336e4fea7239ed63f3481c538e851b11f8d65b652"
+        },
+        {
+          "path": "task_files/officeval_081/image (3).png",
+          "bytes": 126146,
+          "sha256": "d63c7d7f8aaee666af108720d8409c2f08516105d48a587ec0f07209f77a0987"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_081_verifier.py",
+        "bytes": 46531,
+        "sha256": "7432cc82cf916b87c266cd165b24b766cf4b3682d4ae7b784cf0a7041b2cb475"
+      }
+    },
+    "officeval_082": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_082.json",
+        "bytes": 770,
+        "sha256": "f8998d8a5a99591181ff50c1277c3ca4d0e4da3829ef34028bd81de0f82d6b8c"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_082.json",
+        "bytes": 3745,
+        "sha256": "6f57ac3ef41c02709ed9c5f9db2f40c4acc290b1a19a651916e6e93142361afb"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_082/1111.xlsx",
+          "bytes": 11034,
+          "sha256": "37ce4050dcaaf7ddc9dadaa988cf22aacc84a7a3037aa6006866d293bbe8487b"
+        },
+        {
+          "path": "task_files/officeval_082/image (4).png",
+          "bytes": 232894,
+          "sha256": "ae2ef1f6614116e2a1cbdd0db472658bac3497269f9d27c0d81ef5ebde6042c4"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_082_verifier.py",
+        "bytes": 76736,
+        "sha256": "8c1aee9c012886dd6bddf211b792ad5b89f54a78d90270e76cf7c2ce9530e686"
+      }
+    },
+    "officeval_083": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_083.json",
+        "bytes": 740,
+        "sha256": "8f84b92fbac573632751be767afb40a16a1a07ae75db259a9a313d380921b9f9"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_083.json",
+        "bytes": 7842,
+        "sha256": "dd18116e5e7804f2ccdcb1f30231411c4a06f6089e3376eefde4dcb87bda761a"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_083/image (5).png",
+          "bytes": 501957,
+          "sha256": "6dd3ea5a5d0633db24fd20e695f69cf90f802e5e832cae4597f278a01a91d42f"
+        },
+        {
+          "path": "task_files/officeval_083/出货量对比.xlsx",
+          "bytes": 10384,
+          "sha256": "0b605f7cacc2a5484a78fa0d0a06f165b9f7f235e2700a23f14c610a0b9687ed"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_083_verifier.py",
+        "bytes": 79586,
+        "sha256": "7887fff0ad4407d5b6b7959c16fc0ec43593dc99e1f1218c02c8cd63a84d35c8"
+      }
+    },
+    "officeval_084": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_084.json",
+        "bytes": 1116,
+        "sha256": "26cf0bf4b63a1800c07c1dc11e0832a6ac0f24360fd64253614232c35dbee443"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_084.json",
+        "bytes": 3326,
+        "sha256": "67c517fb95d99a767e24ebdf980a7f88e85739742266ead6cc0290712c368be3"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_084/image (5).png",
+          "bytes": 450336,
+          "sha256": "133caa7bff95f82f416b661c33dad2f036b38909ba198716bb442d640176d6c8"
+        },
+        {
+          "path": "task_files/officeval_084/image (6).png",
+          "bytes": 103452,
+          "sha256": "6401a619eef07f7c5d9ed7ef53b4f1b63e1efd3de5cd9797a0f87234eb581493"
+        },
+        {
+          "path": "task_files/officeval_084/进账单打印.xlsx",
+          "bytes": 120390,
+          "sha256": "17ecf0141e33f3b5ec5288e133e07da12f1ac73d2f8e22c7de8031ee67244c6e"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_084_verifier.py",
+        "bytes": 69751,
+        "sha256": "3993d1be5be1ccb89879610f9f6df8ac456471d76d2da97ce7237a23e9229703"
+      }
+    },
+    "officeval_085": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_085.json",
+        "bytes": 1115,
+        "sha256": "07a38b8b350bdbcd3ca912024afba8468d700c9869160db58d2513b1eebc57f3"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_085.json",
+        "bytes": 6966,
+        "sha256": "836e6b470421dc0a66059efaff1d2230010f7f3cadc439e774dfac2e18b12bc9"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_085/image.png",
+          "bytes": 395054,
+          "sha256": "45dbc8a7f61b9806da82c785c118e0ee4902500f9072018eb9983ead19ddd19a"
+        },
+        {
+          "path": "task_files/officeval_085/表1.xlsx",
+          "bytes": 5786,
+          "sha256": "93b949ac4de96a6efb43d0a9b0d8872cbcbb1c3204bcf3b2cbb4d549e82bfdd7"
+        },
+        {
+          "path": "task_files/officeval_085/表2.xlsx",
+          "bytes": 5849,
+          "sha256": "70a4be84b1d84850fff89bdca979b1556351111d0640c04daf441c9ab89638dd"
+        },
+        {
+          "path": "task_files/officeval_085/表3.xlsx",
+          "bytes": 5887,
+          "sha256": "a422d82b8f0b3c7157c7b239dab4514ebecba95cfeca48f0f703b682f76ebe5d"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_085_verifier.py",
+        "bytes": 103483,
+        "sha256": "19261a63805762270bc5c1bcf23a9e68360cda7c559c8d087c1e997a68f57082"
+      }
+    },
+    "officeval_086": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_086.json",
+        "bytes": 979,
+        "sha256": "49e2dc7ebd151d25aeb00f84ad9573ab42dd4d951654d9ae6c9e0e86bf5424e2"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_086.json",
+        "bytes": 5044,
+        "sha256": "3a3f449c77fd65dfadb8e6c401c63ceec905386c45d9e19a326b0ab25fbdeeaa"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_086/image.png",
+          "bytes": 343355,
+          "sha256": "72786b96b5ccb28c265bb5d6dc355dd719e35add623fb596848c662eea01b62c"
+        },
+        {
+          "path": "task_files/officeval_086/数据1.xlsx",
+          "bytes": 9287,
+          "sha256": "20613e39c87d8dd68e27c3368b7014ac09dcec3a77d94e56d8548880aa246743"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_086_verifier.py",
+        "bytes": 102257,
+        "sha256": "e9d233da4fa527ba7a9c395ce5d45a73f4f80e2ebaedebddb68c6d8521a8883b"
+      }
+    },
+    "officeval_087": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_087.json",
+        "bytes": 806,
+        "sha256": "dca65b54c8eb1649dd8e414bb6b3f8af70a7b9aec016be7c37282d628aa91ae2"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_087.json",
+        "bytes": 6164,
+        "sha256": "672f44a4ccbe909ac4f68f661f9f3996ca34ea5adb7da37ccd4ae6244baf4011"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_087/分层作业设计.xlsx",
+          "bytes": 9881,
+          "sha256": "0bc3215fd148b142d3c59e8b4efb2f96801e0422266beb2ddfbe5116bcad7319"
+        },
+        {
+          "path": "task_files/officeval_087/识字主题分层作业.xlsx",
+          "bytes": 25266,
+          "sha256": "84435090526fb2d9277e0e53dd9aff072bc27524935ead63647ef956eb1d663d"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_087_verifier.py",
+        "bytes": 47451,
+        "sha256": "df0eb24669c5e1c2b380c8df179293eeb9202707b63e3471b083c5ae034a63a5"
+      }
+    },
+    "officeval_088": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_088.json",
+        "bytes": 2904,
+        "sha256": "8381bc253bd7348851b40e9e3a064db4e32fd8f07a1e39acecd3917dd2f75d23"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_088.json",
+        "bytes": 8301,
+        "sha256": "5f310a4e206b48b6c8370cd412ac6bac02fc43c4965858cefd23dceef6403b39"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_088/云溪5.0 D3滚筒洗衣机产品说明文档.docx",
+          "bytes": 146871,
+          "sha256": "0f8ec77c24de31a8f685ab1089048605362e3b56e3cf823866d39006a860a8dc"
+        },
+        {
+          "path": "task_files/officeval_088/小天鹅12KG滚筒洗衣机产品说明文档.docx",
+          "bytes": 373753,
+          "sha256": "ad6e809a51bdc87fc667e1b52e2bc4e4560d547da57d835683a952beb32272dd"
+        },
+        {
+          "path": "task_files/officeval_088/模板.docx",
+          "bytes": 9141,
+          "sha256": "f3229e51c2c17c9a4dd8f4a13cb062625ca015448bfe865a51f8069377ecf782"
+        },
+        {
+          "path": "task_files/officeval_088/米家8KG滚筒洗衣机产品说明文档.docx",
+          "bytes": 352544,
+          "sha256": "e9cf7aff2d8de144d3b12c55af3416de4cb0a2d4246bfb499fd35894a583ed35"
+        },
+        {
+          "path": "task_files/officeval_088/统帅三桶懒人洗衣机产品说明文档.docx",
+          "bytes": 48531,
+          "sha256": "7c0cb03ac0c675531a3985a10694789f889e4907b7cef3032878915cec7504fa"
+        },
+        {
+          "path": "task_files/officeval_088/美的8KG波轮洗衣机产品说明文档.docx",
+          "bytes": 349724,
+          "sha256": "31c54e300fc61c34c0c1ee5fcc771b76e0f7eb11b46dd06c48f34bfeeacf2ef8"
+        },
+        {
+          "path": "task_files/officeval_088/选货汇总表_模板2_已填充 (1).xlsx",
+          "bytes": 7970,
+          "sha256": "ce9b586633945c4fee7b7d4d5c2ad149c2ed67a63591a4979f799bcfeb19724f"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_088_verifier.py",
+        "bytes": 69707,
+        "sha256": "c3b92b1fcb24f691ae5499e4b2c6b736b53b0164ebb86fd931ba2fb201ed907d"
+      }
+    },
+    "officeval_089": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_089.json",
+        "bytes": 810,
+        "sha256": "d43db843b1637af324d793851a57e8e37a6a2e9b964a81aafc35a99ce52a81fb"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_089.json",
+        "bytes": 6861,
+        "sha256": "70881563d79a37cc09d8a2fe2dc3fe56304f7d361b9a8768f63a83ae7c8151b2"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_089/企业财务统计总表.xlsx",
+          "bytes": 11497,
+          "sha256": "ca1142c98a2411495b59fd42a07b9a9e8f2f67c703af68481e69f65a72dd093d"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_089_verifier.py",
+        "bytes": 51571,
+        "sha256": "dc02a723f09fbd7f6a0156a8db9de20bf393de888a3041b515ee60791321b6d8"
+      }
+    },
+    "officeval_090": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_090.json",
+        "bytes": 578,
+        "sha256": "b4363cde91f5744f5cec80ebfefb5618cc4672058709132c0dfc34430c223aa7"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_090.json",
+        "bytes": 3878,
+        "sha256": "de31a0a4aa2f0b8794b731141da61e70de458cc37003626de5004906c5950092"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_090/子表数据提取到汇总表.xlsx",
+          "bytes": 255288,
+          "sha256": "fad1409b1b0d8cb9f7ef08a482d1c2102eef277b6ca0a68753e9b88ad2bc12ed"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_090_verifier.py",
+        "bytes": 29820,
+        "sha256": "5624ac6ffb8f1343f2b49d91a6fec2f389fe610e90ecfed17ee2df7876259ffa"
+      }
+    },
+    "officeval_091": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_091.json",
+        "bytes": 1217,
+        "sha256": "f54a509daa0e0cfc99410eac7dd16a4d79a2f99db91125eddc8a67d3f8ca5568"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_091.json",
+        "bytes": 1616,
+        "sha256": "ebcb90b062a31327f19b017633cc0a9d0649ff22356c460fc2761303527ce2fb"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_091/2026年区域渠道销量统计表.xlsx",
+          "bytes": 12903,
+          "sha256": "afcc3774aebb6962b279ee2fa3461fe4a8fbdbe7759cca5a931ce7edbb5fa5be"
+        },
+        {
+          "path": "task_files/officeval_091/image_001.png",
+          "bytes": 2223634,
+          "sha256": "ece31a54f2498779bb24fb2144e2478e3fed76a265b6d06bc81851ae2720420b"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_091_verifier.py",
+        "bytes": 17982,
+        "sha256": "31f511e3308c16f58450b6eed104f1a60c9d3cd06d4c8227e86b831fa7147f63"
+      }
+    },
+    "officeval_092": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_092.json",
+        "bytes": 985,
+        "sha256": "a1efaef3d2875990b2311f3856e928a32976b53dde1062b366599ab7e12ada86"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_092.json",
+        "bytes": 5634,
+        "sha256": "c0563c1db6b40718dd4b2d07cfe6ae062154a3376050c22394446592cd09391f"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_092/智慧农业示范园建设项目报价表.xlsx",
+          "bytes": 141248,
+          "sha256": "1f09aeac32d262643acb6976cb9540e31cc2602da7eb1716bb2d1f18ae66e959"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_092_verifier.py",
+        "bytes": 30245,
+        "sha256": "b27446bfc886259e2ebd4d7a25c8cf87add84d3f3e4dbdd52276ced48706e62d"
+      }
+    },
+    "officeval_093": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_093.json",
+        "bytes": 960,
+        "sha256": "ea591e16c0c9a8fd6ec02aebd606ed0b982d51a43a8ed70d33b2bc82eb4106bb"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_093.json",
+        "bytes": 2305,
+        "sha256": "e0a276caa827764c896f704911d2ee2038780d97fb1ce1aa142b445a0c90d2bc"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_093/image_001.png",
+          "bytes": 308752,
+          "sha256": "2bfc100ef7af1feaa290342b8ab9aa9084c60218776ed6e22cc87618393d6f7b"
+        },
+        {
+          "path": "task_files/officeval_093/日常信息处理能力观察表.xlsx",
+          "bytes": 11190,
+          "sha256": "4276a7eb19b7389f91c401c83a7109112354b1ae422fc8069c4b686a09724da0"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_093_verifier.py",
+        "bytes": 61145,
+        "sha256": "41f3bc81fbd2051c5e2b31e1750f003373f0b3e8949800b8cd270b5794543cda"
+      }
+    },
+    "officeval_094": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_094.json",
+        "bytes": 878,
+        "sha256": "829a1c8fa6272963dd1540e58cc6cbddf900688c5e48d24ee2b8d4f012626ae0"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_094.json",
+        "bytes": 3144,
+        "sha256": "53c3db4759fd2123b162781c3e4dc6e1a6117af36215043bdc8179130215a4a1"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_094/image_001.png",
+          "bytes": 101456,
+          "sha256": "b5034f4c7ae6627b757538fc51f806db2c3ea2d5370a477ecf4f0e5649efb974"
+        },
+        {
+          "path": "task_files/officeval_094/七年级地理探究成绩登记.xlsx",
+          "bytes": 10789,
+          "sha256": "7ac6c1e3538b8cb753e9b89c5250c9ad80f8211d13af2cf13aec0b074f88385f"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_094_verifier.py",
+        "bytes": 53543,
+        "sha256": "8269ffdb41be4e472211e51599c90edec64af4872b16391e2939da9fe8e04e79"
+      }
+    },
+    "officeval_095": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_095.json",
+        "bytes": 954,
+        "sha256": "7363b55a927f869848aa8d4c5036504cf163287cfe9befcee966dcb7de4d02d5"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_095.json",
+        "bytes": 2498,
+        "sha256": "e12711030855e57032dde90b796ba0c411e159dda85f70189e37ac1de8ea614c"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_095/image (1).png",
+          "bytes": 81488,
+          "sha256": "92519257266b76c58a0390b16f7bdf3f1895d27fe9fe72b56dd6f092d797203e"
+        },
+        {
+          "path": "task_files/officeval_095/乡村公共服务调查汇总.xlsx",
+          "bytes": 10189,
+          "sha256": "398056fb26b546701309f480ffd7a209759345ef2816c371cb30b52f13822c8f"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_095_verifier.py",
+        "bytes": 40850,
+        "sha256": "9cc9cd90cdf958d43747d16df23c58d3a442ccd5a4e135027548c68c4e50ae9a"
+      }
+    },
+    "officeval_096": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_096.json",
+        "bytes": 836,
+        "sha256": "20c794da9b47117d135662a5dcfcbe820f93308997c16c48ca3f8c08e4c1b50f"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_096.json",
+        "bytes": 1941,
+        "sha256": "0318d3feac1cd10e7a6232fa6b823cc08513d3c62a08adf7b513fdb15291c1ab"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_096/image_001.jpg",
+          "bytes": 336727,
+          "sha256": "869c95ca8b85c9d016d8b001ba52394114089528d107e738479345b2bbab61c9"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_096_verifier.py",
+        "bytes": 55210,
+        "sha256": "7d9e1ef24757e0353902cec3effcb92ed04d8dbfb47852461fa435a2fda25bec"
+      }
+    },
+    "officeval_097": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_097.json",
+        "bytes": 574,
+        "sha256": "57c7e7588e56c4aeed3123f57ff4e325f54e66bd1562cfe84d1e330a7a83981d"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_097.json",
+        "bytes": 3282,
+        "sha256": "c9939efca5962d8e5e3e8713bfa9983539648da29c83f8a74e74147d580d35bc"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_097/数据.xlsx",
+          "bytes": 11689,
+          "sha256": "ccddb528215d981934ea3d32f5c93ce0560c8f7d5cce3799b7d14eda0c8c8352"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_097_verifier.py",
+        "bytes": 45477,
+        "sha256": "c76e7fa85f5a1d9e92cacd46e86da8d28008380fad31bc89390b4e72ed4d9bea"
+      }
+    },
+    "officeval_098": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_098.json",
+        "bytes": 950,
+        "sha256": "06979de339687daecdd31ead004b23b199f67050b5b85280e033b09333ed00e6"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_098.json",
+        "bytes": 3599,
+        "sha256": "84374b1b75bc87237828ca17c6af48b6375e1be550f84b4cd1bf58ac75cbdbab"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_098/满意度调查.xlsx",
+          "bytes": 6388,
+          "sha256": "9a26098a68f5fa451f2800ffbb7cacd3b229ba19e5cdd6ba2ccbc57d42cd3f47"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_098_verifier.py",
+        "bytes": 69931,
+        "sha256": "998c8ce7e167a0d7f41a1da467c7c08fdb729e1379616b966b43404594b07ff6"
+      }
+    },
+    "officeval_099": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_099.json",
+        "bytes": 575,
+        "sha256": "703a65ce95d21a64f09150988cb848b051348d9d4a85831554deffa7212b1521"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_099.json",
+        "bytes": 3030,
+        "sha256": "3f7157de3d74dc84f1a1685faca6a3a2eed967e9b1f1e794d90f6c156e42a475"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_099/调查结果.xlsx",
+          "bytes": 11239,
+          "sha256": "bc10b07b2c4156d3b7913ce4647a24a43892a6c8138f35f7554d04da92b0b09f"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_099_verifier.py",
+        "bytes": 41434,
+        "sha256": "a5e3079f7c361d29c60de727b799f40955220444e37bb07e46b8b0a06d068bfa"
+      }
+    },
+    "officeval_100": {
+      "comRequired": false,
+      "task": {
+        "path": "task-en/officeval_100.json",
+        "bytes": 870,
+        "sha256": "f4f7902d3f519c4343f1082f81cbdb81d69af35030a6d29d22e194ddd46af79c"
+      },
+      "rubric": {
+        "path": "rubrics-en/officeval_100.json",
+        "bytes": 3255,
+        "sha256": "b4f9b9f3d680f3779c9a1ce74bb24de5cecd456f9ea58a76de656e2e9e82220b"
+      },
+      "inputs": [
+        {
+          "path": "task_files/officeval_100/图表示例.png",
+          "bytes": 830592,
+          "sha256": "af22f491c66672355a1780a4fc6a4fa7f65aefdd46d756826bd82b31fa1be060"
+        },
+        {
+          "path": "task_files/officeval_100/工作簿1.xlsx",
+          "bytes": 7450,
+          "sha256": "678c06e17903ed4a05d0e8c605248b95a9a2e60fac214ca4d939410728eb9248"
+        }
+      ],
+      "verifier": {
+        "path": "verifiers/officeval_100_verifier.py",
+        "bytes": 72922,
+        "sha256": "15b3c22f57e123d2886bc121c5998fa84b4f5d2558e2bedddb12aa751664cf96"
+      }
+    }
+  }
+}

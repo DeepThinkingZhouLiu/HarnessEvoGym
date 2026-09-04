@@ -141,12 +141,12 @@ Experiment 通过 `spec.adapters.environment` 选择执行 backend：
 | AgentBay | `environments/omegause-officeval-agentbay.yml` | AgentBay SDK、API key、Image ID 和 Policy ID |
 
 仓库提供的一轮配置默认使用 Local Docker。切换到 AgentBay 时，把 Experiment 中的
-environment 改为 `environments/omegause-officeval-agentbay.yml`，并把该文件中的
-`spec.docker.agentBay.pythonExecutable` 改成安装了 AgentBay SDK 的 Python 绝对路径。
-运行前再设置：
+environment 改为 `environments/omegause-officeval-agentbay.yml`。运行前通过环境变量
+注入安装了 AgentBay SDK 的 Python 绝对路径和 AgentBay 参数：
 
 ```bash
 export AGENTBAY_API_KEY=your-agentbay-key
+export HARNESS_RSI_AGENTBAY_PYTHON=/absolute/path/to/python
 export HARNESS_RSI_AGENTBAY_IMAGE_ID=your-image-id
 export HARNESS_RSI_AGENTBAY_POLICY_ID=your-policy-id
 ```
@@ -160,27 +160,48 @@ export HARNESS_RSI_AGENTBAY_POLICY_ID=your-policy-id
 一轮 GRHS 进化，以及对最终 Champion 的 5 题 sealed Final：
 
 ```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${RSI_OFFICEVAL_DATASET_ROOT:?set RSI_OFFICEVAL_DATASET_ROOT to the pinned Dataset checkout}"
+: "${RSI_OFFICEVAL_EVALUATOR_ROOT:?set RSI_OFFICEVAL_EVALUATOR_ROOT to the pinned Evaluator checkout}"
+
+export RSI_PROVIDER_BASE_URL="${RSI_PROVIDER_BASE_URL:-https://api.zcloudapi.com/v1}"
+if [[ -z "${RSI_PROVIDER_API_KEY:-}" ]]; then
+  read -rsp "Provider API key: " RSI_PROVIDER_API_KEY
+  echo
+  export RSI_PROVIDER_API_KEY
+fi
+
+if ! docker info >/dev/null 2>&1; then
+  if command -v colima >/dev/null 2>&1; then
+    colima start
+  else
+    echo "Docker daemon is unavailable; start Docker Desktop or another Docker backend." >&2
+    exit 1
+  fi
+fi
+
+GRHS_CONFIG="${GRHS_CONFIG:-experiments/cowork-grhs-one-round.json}"
+GRHS_BENCHMARK="${GRHS_BENCHMARK:-benchmarks/cowork-omegause-officeval-linux-v1/benchmark-grhs-12-9-5.json}"
+GRHS_RUN_ID="${GRHS_RUN_ID:-grhs-one-round-$(date -u +%Y%m%d-%H%M%S)}"
+
 npm ci
 git submodule update --init --recursive
-
-export RSI_OFFICEVAL_DATASET_ROOT=/absolute/path/to/OmegaUse-OfficeVal-Dataset
-export RSI_OFFICEVAL_EVALUATOR_ROOT=/absolute/path/to/OmegaUse-OfficeVal
-export RSI_PROVIDER_BASE_URL=https://api.zcloudapi.com/v1
-read -rsp "Provider API key: " RSI_PROVIDER_API_KEY && echo
-export RSI_PROVIDER_API_KEY
-
-GRHS_CONFIG=experiments/cowork-grhs-one-round.json
-GRHS_RUN_ID=grhs-one-round-$(date -u +%Y%m%d-%H%M%S)
-
 npm run check
-npm run rsi -- benchmark validate \
-  --config benchmarks/cowork-omegause-officeval-linux-v1/benchmark-grhs-12-9-5.json
+npm run rsi -- benchmark validate --config "$GRHS_BENCHMARK"
 npm run rsi -- experiment validate --config "$GRHS_CONFIG"
 npm run rsi -- experiment preflight --config "$GRHS_CONFIG"
 npm run rsi -- runtime build --experiment "$GRHS_CONFIG"
 npm run rsi -- experiment run --config "$GRHS_CONFIG" --run-id "$GRHS_RUN_ID"
 npm run rsi -- experiment finalize --run ".rsi/runs/$GRHS_RUN_ID"
+
+echo "GRHS run completed: .rsi/runs/$GRHS_RUN_ID"
 ```
+
+脚本不包含用户目录或凭据。Linux、Docker Desktop 和已经启动 Docker daemon 的环境会
+直接使用当前 Docker context；仅当 Docker 不可用且本机安装了 Colima 时才自动启动
+Colima。`GRHS_CONFIG`、`GRHS_BENCHMARK` 和 `GRHS_RUN_ID` 均可由调用方覆盖。
 
 `experiment run` 只读取 Feedback 和 Selection；只有最后一条 `experiment finalize`
 能够读取 Final。`.rsi/` 是本地运行状态和结果目录，不会随 GitHub 上传；可复现所需的

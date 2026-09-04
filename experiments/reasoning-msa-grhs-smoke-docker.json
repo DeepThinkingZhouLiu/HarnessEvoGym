@@ -1,0 +1,49 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "EvolutionExperiment",
+  "metadata": {
+    "id": "reasoning-msa-grhs-smoke-docker"
+  },
+  "spec": {
+    "adapters": {
+      "target": "adapters/targets/msa-minimal-reasoning.yml",
+      "updater": "adapters/updaters/deepseek-harness.yml",
+      "environment": "environments/text-reasoning-grhs-smoke.yml",
+      "provider": "adapters/providers/zcloud-openai.yml"
+    },
+    "benchmark": "benchmarks/text-reasoning-smoke/benchmark.json",
+    "policy": "evaluation/policies/text-reasoning-smoke.json",
+    "models": {
+      "solver": {
+        "provider": "zcloud-openai",
+        "model": "gpt-5.6-terra",
+        "maxTokens": 4096,
+        "reasoningEffort": "high"
+      },
+      "updater": {
+        "provider": "zcloud-openai",
+        "model": "gpt-5.6-terra",
+        "maxTokens": 1024,
+        "reasoningEffort": "high"
+      }
+    },
+    "evolution": {
+      "mutationLevel": "l2",
+      "generations": 1,
+      "trialsPerInstance": 1,
+      "seeds": [
+        20260904
+      ],
+      "grhs": {
+        "groupSize": 2,
+        "minimumValidCandidates": 2,
+        "regressionPenalty": 0.5,
+        "costPenalty": 0.05,
+        "complexityPenalty": 0.05,
+        "advantageEpsilon": 1e-8,
+        "priorLearningRate": 0.1,
+        "promotionMargin": 0
+      }
+    }
+  }
+}

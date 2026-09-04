@@ -191,3 +191,23 @@ Benchmark、Environment、Policy 和 Experiment 配置均已提交到仓库。
 - 单元测试覆盖确定性、组内打分、平分、失败 Candidate、预算耗尽和 rollback。
 - `npm run check`、`npm test` 与 `experiment validate` 全部通过。
 - 完成一轮进化后，对锁定 Champion 运行 Final Partition 的 5 个 task，并在交接结果中报告。
+
+## 本次验收结果
+
+- GRHS 与恢复定向测试通过：12/12。
+- 完整 `npm test` 通过：439/439。
+- `npm run check`、GRHS experiment validate 和 12 → 9 → 5 benchmark validate 均通过。
+- Final 5 题均完成 H0 与 s001 的配对评测，没有 `error`、`timeout` 或缺失记录。
+
+| Final task | H0 reward | s001 reward | 差值 |
+| --- | ---: | ---: | ---: |
+| `officeval_011` | 1 | 0 | -1 |
+| `officeval_015` | 0 | 0 | 0 |
+| `officeval_026` | 0 | 0 | 0 |
+| `officeval_027` | 0 | 0 | 0 |
+| `officeval_033` | 0 | 0 | 0 |
+
+H0 Final mean reward 为 0.2，s001 为 0，`deltaMeanReward = -0.2`。因此 Selection
+阶段的晋升已经成功，当前 Champion 仍是 `g001-grhs-s001-l2`；但这次晋升没有在
+Final 5 题上泛化。完整 trial 和评测报告保存在本地 `.rsi/runs/`，该目录不会上传 GitHub，
+所以上表是随仓库交付的实验结果记录。

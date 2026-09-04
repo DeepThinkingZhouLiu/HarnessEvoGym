@@ -92,6 +92,7 @@ if (bundle.experiment.evolution.grhs?.groupSize !== 2
 }
 
 const generation = 1
+const discardedFailure = state.spec.failure ? structuredClone(state.spec.failure) : null
 const baselineId = state.spec.baselineId
 const level = state.spec.mutationLevel
 const siblingIds = [1, 2].map((member) =>
@@ -253,7 +254,10 @@ state.spec.recoveries = [
     at: new Date().toISOString(),
     mode: 'checkpoint-only-quick9',
     selectionTasks: requiredIds.length,
-    modelRequests: 0,
+    decisionModelRequests: 0,
+    ...(discardedFailure ? {
+      discardedFailedRuntimeAttempt: discardedFailure,
+    } : {}),
   },
 ]
 

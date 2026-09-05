@@ -1336,6 +1336,24 @@ export async function loadExperimentBundle(experimentPath, repositoryRoot) {
       `adapter=${strategy.id}`,
     ])
   }
+  const strategyIsGrhs = strategy.protocol === 'builtin-v1'
+    && strategy.implementation === 'group-relative-harness'
+  if (recipe.spec.moduleSearch.group?.enabled || strategyIsGrhs) {
+    if (!recipe.spec.moduleSearch.group?.enabled) {
+      throw new ProtocolError(
+        'group-relative-harness Strategy 必须在 EvolutionRecipe 中声明 moduleSearch.group',
+      )
+    }
+    if (!strategyIsGrhs) {
+      throw new ProtocolError('GRHS 分组搜索必须使用 builtin-v1/group-relative-harness Strategy')
+    }
+    if (strategy.configuration.groupSize !== recipe.spec.moduleSearch.group.size) {
+      throw new ProtocolError('GRHS Strategy groupSize 与 EvolutionRecipe group.size 不一致', [
+        `recipe=${recipe.spec.moduleSearch.group.size}`,
+        `strategy=${strategy.configuration.groupSize ?? '(missing)'}`,
+      ])
+    }
+  }
   if (benchmark.source.adapter !== environment.id) {
     throw new ProtocolError('Benchmark 与 Environment Adapter 不匹配', [
       `Benchmark=${benchmark.source.adapter}`,

@@ -1,0 +1,15 @@
+apiVersion: harness-rsi/v1alpha1
+kind: SearchStrategyAdapter
+
+metadata:
+  id: group-relative-harness
+  name: Group Relative Harness Search
+
+spec:
+  protocol: builtin-v1
+  implementation: group-relative-harness
+  configuration:
+    groupSize: 4
+    minimumValidCandidates: 2
+    advantageEpsilon: 1.0e-8
+    priorLearningRate: 0.1

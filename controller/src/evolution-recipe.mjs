@@ -51,11 +51,66 @@ function regionIds(value, label, { optional = false } = {}) {
   return Object.freeze(output)
 }
 
+function normalizeGroupSearch(input, strategy) {
+  if (input === undefined || input === null) return null
+  const group = object(input, 'EvolutionRecipe.spec.moduleSearch.group')
+  rejectUnknown(
+    group,
+    new Set(['enabled', 'size']),
+    'EvolutionRecipe.spec.moduleSearch.group',
+  )
+  if (group.enabled !== true) {
+    throw new ProtocolError('EvolutionRecipe moduleSearch.group.enabled 必须为 true')
+  }
+  if (strategy !== 'group-relative-harness') {
+    throw new ProtocolError('moduleSearch.group 只能与 group-relative-harness Strategy 一起使用')
+  }
+  const size = group.size
+  if (!Number.isSafeInteger(size) || size < 2 || size > 32) {
+    throw new ProtocolError('EvolutionRecipe moduleSearch.group.size 必须是 2..32 的整数')
+  }
+  return Object.freeze({ enabled: true, size })
+}
+
+function validateGroupBudgetCompatibility(population, groupSize) {
+  const branchCount = population.concurrency.n_branches
+  const totalBudget = population.budget.total_budget
+  let allocations
+  let bonusPool = 0
+  if (population.competition.enabled) {
+    const perBranch = Math.floor((totalBudget * population.budget.beta) / branchCount)
+    allocations = Array(branchCount).fill(perBranch)
+    bonusPool = totalBudget - perBranch * branchCount
+  } else {
+    allocations = Array.from({ length: branchCount }, (_, index) => {
+      const base = Math.floor(totalBudget / branchCount)
+      return base + (index < totalBudget % branchCount ? 1 : 0)
+    })
+  }
+  if (allocations.some((allocation) => allocation % groupSize !== 0)) {
+    throw new ProtocolError(
+      'GRHS 的每个 Branch 可用基础 Budget 必须是 group.size 的整数倍，避免产生不完整 sibling Group',
+    )
+  }
+  if (population.competition.enabled) {
+    if (population.competition.bonus_grant_unit % groupSize !== 0) {
+      throw new ProtocolError(
+        'GRHS Competition 的 bonus_grant_unit 必须是 group.size 的整数倍',
+      )
+    }
+    if (bonusPool % groupSize !== 0) {
+      throw new ProtocolError(
+        'GRHS Competition 的 bonus Budget 总额必须是 group.size 的整数倍，避免产生不完整 sibling Group',
+      )
+    }
+  }
+}
+
 function normalizeModuleSearch(input) {
   const search = object(input, 'EvolutionRecipe.spec.moduleSearch')
   rejectUnknown(
     search,
-    new Set(['authority', 'riskCeiling', 'strategy', 'includeRegions', 'excludeRegions']),
+    new Set(['authority', 'riskCeiling', 'strategy', 'includeRegions', 'excludeRegions', 'group']),
     'EvolutionRecipe.spec.moduleSearch',
   )
   if (!AUTHORITIES.includes(search.authority)) {
@@ -80,6 +135,7 @@ function normalizeModuleSearch(input) {
     search.excludeRegions,
     'EvolutionRecipe moduleSearch.excludeRegions',
   )
+  const group = normalizeGroupSearch(search.group, strategy)
   if (includeRegions !== null) {
     const excluded = new Set(excludeRegions)
     const overlap = includeRegions.filter((id) => excluded.has(id))
@@ -93,6 +149,7 @@ function normalizeModuleSearch(input) {
     strategy,
     includeRegions,
     excludeRegions,
+    group,
   })
 }
 
@@ -194,6 +251,9 @@ export function normalizeEvolutionRecipe(input) {
   rejectUnknown(spec, new Set(['population', 'moduleSearch', 'checkpointing']), 'EvolutionRecipe.spec')
   const population = freezePopulation(normalizeControllerConfig(spec.population))
   const moduleSearch = normalizeModuleSearch(spec.moduleSearch)
+  if (moduleSearch.group?.enabled) {
+    validateGroupBudgetCompatibility(population, moduleSearch.group.size)
+  }
   const checkpointing = normalizeCheckpointing(
     spec.checkpointing,
     population.budget.total_budget,

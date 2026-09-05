@@ -3,10 +3,13 @@ import { randomUUID } from 'node:crypto'
 import { MUTATION_RISK_LEVELS, validateMutationPlan } from './mutation-catalog.mjs'
 import { ProtocolError } from './protocol.mjs'
 import { createProgressiveRiskExpansionStrategy } from './strategies/progressive-risk-expansion.mjs'
+import { createGrhsStrategy } from './strategies/group-relative-harness.mjs'
 
 const BUILTIN_STRATEGIES = new Map()
 const MAXIMUM_PROTOCOL_BYTES = 256 * 1024
 const MAXIMUM_STATE_BYTES = 64 * 1024
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u
+const REGION_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
 // Docker CLI 可能从 ~/.docker/config.json 隐式注入代理变量。即使 Strategy 断网，
 // 也要显式传空，避免宿主代理地址或其中的凭据进入不可信容器。
 const EMPTY_STANDARD_PROXY_ENVIRONMENT = Object.freeze(Object.fromEntries([
@@ -96,6 +99,11 @@ function rejectSensitiveContextKeys(value, path = '$') {
 function expectArray(value, label) {
   if (!Array.isArray(value)) throw new ProtocolError(`${label} 必须是数组`)
   return value
+}
+
+function rejectUnknown(value, allowed, label) {
+  const unknown = Object.keys(value).filter((key) => !allowed.has(key))
+  if (unknown.length > 0) throw new ProtocolError(`${label} 含有未知字段`, unknown)
 }
 
 function publicCatalog(value) {
@@ -277,6 +285,72 @@ registerBuiltinSearchStrategy('linear-hill-climb', linearHillClimb)
 
 registerBuiltinSearchStrategy('progressive-risk-expansion', createProgressiveRiskExpansionStrategy)
 
+registerBuiltinSearchStrategy('group-relative-harness', createGrhsStrategy)
+
+function publicGroupContext(value, groupSize) {
+  const context = jsonClone(value, 'Search Strategy Group Context', MAXIMUM_PROTOCOL_BYTES)
+  if (context === null || typeof context !== 'object' || Array.isArray(context)) {
+    throw new ProtocolError('Search Strategy Group Context 必须是对象')
+  }
+  rejectSensitiveContextKeys(context)
+  const candidates = expectArray(context.candidates, 'Search Strategy group candidates').map((candidate, index) => {
+    if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      throw new ProtocolError(`Search Strategy group candidate[${index}] 必须是对象`)
+    }
+    rejectUnknown(
+      candidate,
+      new Set(['id', 'regionIds', 'valid', 'promotionEligible', 'qualityDelta']),
+      `Search Strategy group candidate[${index}]`,
+    )
+    if (typeof candidate.id !== 'string' || !SAFE_ID.test(candidate.id)) {
+      throw new ProtocolError(`Search Strategy group candidate[${index}].id 格式无效`)
+    }
+    const regionIds = expectArray(candidate.regionIds, `Search Strategy candidate[${index}] regionIds`)
+    if (regionIds.length === 0 || regionIds.some((id) => typeof id !== 'string' || !REGION_ID.test(id))) {
+      throw new ProtocolError(`Search Strategy candidate[${index}].regionIds 格式无效`)
+    }
+    if (new Set(regionIds).size !== regionIds.length) {
+      throw new ProtocolError(`Search Strategy candidate[${index}].regionIds 不能重复`)
+    }
+    const valid = candidate.valid === true
+    const promotionEligible = candidate.promotionEligible === true
+    if (promotionEligible && !valid) {
+      throw new ProtocolError(`Search Strategy candidate[${index}] 未通过 valid 不能 promotionEligible`)
+    }
+    const qualityDelta = candidate.qualityDelta === null || candidate.qualityDelta === undefined
+      ? null
+      : finiteContextNumber(candidate.qualityDelta, `Search Strategy candidate[${index}] qualityDelta`)
+    if (valid && qualityDelta === null) {
+      throw new ProtocolError(`Search Strategy candidate[${index}] 有效时 qualityDelta 不能为空`)
+    }
+    if (!valid && qualityDelta !== null) {
+      throw new ProtocolError(`Search Strategy candidate[${index}] 无效时 qualityDelta 必须为 null`)
+    }
+    return { id: candidate.id, regionIds, valid, promotionEligible, qualityDelta }
+  })
+  if (candidates.length !== groupSize) {
+    throw new ProtocolError(`Search Strategy group candidates 必须包含 ${groupSize} 个 sibling`)
+  }
+  if (new Set(candidates.map((candidate) => candidate.id)).size !== candidates.length) {
+    throw new ProtocolError('Search Strategy group candidates 的 ID 不能重复')
+  }
+  return {
+    runId: context.runId,
+    generation: context.generation,
+    riskCeiling: context.riskCeiling,
+    catalog: publicCatalog(context.catalog),
+    championId: context.championId,
+    candidates,
+  }
+}
+
+function finiteContextNumber(value, label) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new ProtocolError(`${label} 必须是有限数字`)
+  }
+  return value
+}
+
 async function runDockerStrategy({ adapter, docker, operation, context, state }) {
   if (!docker || typeof docker.run !== 'function') {
     throw new ProtocolError('docker-json-v1 Search Strategy 需要 Docker Driver')
@@ -339,6 +413,8 @@ export function createSearchStrategyDriver({ adapter, docker = null }) {
   return {
     id: adapter.id,
     protocol: adapter.protocol,
+    grouped: implementation?.grouped === true,
+    groupSize: implementation?.groupSize ?? null,
     async preflight() {
       if (adapter.protocol === 'builtin-v1') return { available: true, protocol: adapter.protocol }
       if (!docker || typeof docker.imageExists !== 'function') {
@@ -382,6 +458,29 @@ export function createSearchStrategyDriver({ adapter, docker = null }) {
         }),
       }
     },
+    async proposeGroup(rawContext, previousState = null) {
+      if (!implementation?.grouped || typeof implementation.proposeGroup !== 'function') {
+        throw new ProtocolError(`Search Strategy ${adapter.id} 不支持分组 proposeGroup()`)
+      }
+      const context = publicContext(rawContext, 'propose')
+      const state = jsonClone(previousState, 'Search Strategy State')
+      rejectSensitiveContextKeys(state, '$.strategy.state')
+      const output = await implementation.proposeGroup(context, state)
+      const nextState = jsonClone(output?.state, 'Search Strategy State')
+      rejectSensitiveContextKeys(nextState, '$.strategy.state')
+      if (!Array.isArray(output?.plans) || output.plans.length !== implementation.groupSize) {
+        throw new ProtocolError(`Search Strategy ${adapter.id} 必须返回 ${implementation.groupSize} 个 MutationPlan`)
+      }
+      const plans = output.plans.map((plan, index) => validateMutationPlan(plan, {
+        catalog: context.catalog,
+        riskCeiling: context.riskCeiling,
+        allowedParentIds: context.allowedParentIds,
+        expectedGeneration: context.generation,
+      }))
+      const ids = plans.map((plan) => plan.metadata.id)
+      if (new Set(ids).size !== ids.length) throw new ProtocolError('分组 Search Strategy 返回了重复 MutationPlan ID')
+      return { state: nextState, plans }
+    },
     async observe(rawContext, previousState = null) {
       const context = publicContext(rawContext, 'observe')
       const state = jsonClone(previousState, 'Search Strategy State')
@@ -396,6 +495,24 @@ export function createSearchStrategyDriver({ adapter, docker = null }) {
       }
       rejectSensitiveContextKeys(nextState, '$.strategy.state')
       return { state: nextState, exhausted }
+    },
+    async observeGroup(rawContext, previousState = null) {
+      if (!implementation?.grouped || typeof implementation.observeGroup !== 'function') {
+        throw new ProtocolError(`Search Strategy ${adapter.id} 不支持分组 observeGroup()`)
+      }
+      const context = publicGroupContext(rawContext, implementation.groupSize)
+      const state = jsonClone(previousState, 'Search Strategy State')
+      rejectSensitiveContextKeys(state, '$.strategy.state')
+      const output = await implementation.observeGroup(context, state)
+      const nextState = jsonClone(output?.state, 'Search Strategy State')
+      rejectSensitiveContextKeys(nextState, '$.strategy.state')
+      const exhausted = output?.exhausted ?? false
+      if (typeof exhausted !== 'boolean') throw new ProtocolError('Search Strategy observeGroup.exhausted 必须是布尔值')
+      return {
+        state: nextState,
+        exhausted,
+        decision: jsonClone(output?.decision, 'GRHS Group Decision'),
+      }
     },
   }
 }

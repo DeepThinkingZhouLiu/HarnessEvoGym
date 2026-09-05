@@ -200,3 +200,65 @@ test('主表 Recipe 固定 N1/N2-B16、L1+L2+L3 与 Branch checkpoint', async ()
     )
   }
 })
+
+test('GRHS Recipe 按每个 Branch 的预算校验完整 Group', () => {
+  const make = (total, branches = 2) => normalizeEvolutionRecipe({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'EvolutionRecipe',
+    spec: {
+      population: controllerConfig('independent', { total }),
+      moduleSearch: {
+        authority: 'strategy-directed',
+        riskCeiling: 'l3',
+        strategy: 'group-relative-harness',
+        group: { enabled: true, size: 4 },
+      },
+      checkpointing: {
+        budgetMilestones: [0, total],
+        branchGenerationMilestones: [1],
+      },
+    },
+  })
+  assert.equal(make(16).spec.moduleSearch.group.size, 4)
+  assert.throws(() => make(10), /每个 Branch.*整数倍/u)
+  assert.throws(() => normalizeEvolutionRecipe({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'EvolutionRecipe',
+    spec: {
+      population: controllerConfig('independent', { total: 16 }),
+      moduleSearch: {
+        authority: 'strategy-directed',
+        riskCeiling: 'l3',
+        strategy: 'linear-hill-climb',
+        group: { enabled: true, size: 4 },
+      },
+    },
+  }), /只能与 group-relative-harness/u)
+})
+
+test('GRHS Competition 同时校验基础预算、奖励单位和奖励池都能组成完整 Group', () => {
+  const make = ({ total, beta = 0.5, bonusGrantUnit = 4 }) => normalizeEvolutionRecipe({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'EvolutionRecipe',
+    spec: {
+      population: {
+        mode: 'competition',
+        concurrency: { n_branches: 2 },
+        budget: { total_budget: total, beta },
+        peer_sharing: { enabled: false },
+        competition: { enabled: true, bonus_grant_unit: bonusGrantUnit },
+      },
+      moduleSearch: {
+        authority: 'strategy-directed',
+        riskCeiling: 'l3',
+        strategy: 'group-relative-harness',
+        group: { enabled: true, size: 4 },
+      },
+    },
+  })
+
+  assert.equal(make({ total: 16 }).spec.population.budget.total_budget, 16)
+  assert.throws(() => make({ total: 16, bonusGrantUnit: 2 }), /bonus_grant_unit.*整数倍/u)
+  assert.throws(() => make({ total: 24, bonusGrantUnit: 4 }), /基础 Budget.*整数倍/u)
+  assert.throws(() => make({ total: 16, beta: 0.25, bonusGrantUnit: 4 }), /基础 Budget.*整数倍/u)
+})

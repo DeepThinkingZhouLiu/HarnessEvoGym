@@ -10,6 +10,7 @@ import { normalizeEvolutionRecipe } from '../src/evolution-recipe.mjs'
 import { PopulationOrchestrator } from '../src/population-orchestrator.mjs'
 
 const FINGERPRINT = 'a'.repeat(64)
+const DIGEST = 'b'.repeat(64)
 
 function digest(value) {
   return createHash('sha256').update(value).digest('hex')
@@ -199,6 +200,139 @@ test('SearchStrategy 耗尽后 Branch 可提前停止并保留未用 Population 
   assert.equal(result.state.budget.consumed, 2)
   assert.equal(result.state.budget.totalBudget, 4)
   assert.ok(result.state.branches.every((branch) => branch.status === 'stopped'))
+})
+
+test('Population 将 GRHS Group 作为一个 Step 累计完整 sibling Budget 并保存分组 Checkpoint', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'population-grhs-'))
+  const campaignsRoot = join(root, 'campaigns')
+  await mkdir(campaignsRoot)
+  const recipe = normalizeEvolutionRecipe({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'EvolutionRecipe',
+    spec: {
+      population: {
+        mode: 'single',
+        concurrency: { n_branches: 1 },
+        budget: { total_budget: 4, beta: 0 },
+        peer_sharing: { enabled: false },
+        competition: { enabled: false },
+      },
+      moduleSearch: {
+        authority: 'strategy-directed',
+        riskCeiling: 'l3',
+        strategy: 'group-relative-harness',
+        group: { enabled: true, size: 4 },
+      },
+      checkpointing: {
+        budgetMilestones: [0, 4],
+        branchGenerationMilestones: [1],
+        capture: { populationBest: true, branchIncumbents: true, latestAttempts: true },
+      },
+    },
+  })
+  const h0 = createEvaluationSummary({ candidateId: 'branch-001-h0', metric: 'mean-reward', value: 0.1 })
+  const candidate = createEvaluationSummary({ candidateId: 'g001-grhs-s001-l3', metric: 'mean-reward', value: 0.2 })
+  const baseline = createEvaluationSummary({ candidateId: 'branch-001-h0', metric: 'mean-reward', value: 0.1 })
+  const projection = (steps, lastStep = null) => ({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'BranchProjection',
+    branchId: 'branch-001',
+    status: 'active',
+    completedSteps: steps,
+    incumbent: {
+      candidateId: steps === 0 ? h0.candidateId : candidate.candidateId,
+      revision: DIGEST,
+      digest: DIGEST,
+      evaluation: steps === 0 ? h0 : candidate,
+    },
+    lastStep,
+  })
+  let advanced = false
+  const orchestrator = new PopulationOrchestrator({
+    loadedCampaign: {
+      fingerprint: FINGERPRINT,
+      config: { apiVersion: 'harness-rsi/v1alpha1', kind: 'EvolutionExperiment', metadata: { id: 'grhs' } },
+      recipe,
+    },
+    campaignsRoot,
+    campaignId: 'grhs-population',
+    createBranch() {
+      return {
+        async initialize() { return projection(0) },
+        async inspect() {
+          if (!advanced) return projection(0)
+          return projection(1, {
+            stepId: 'epoch-0001-branch-001',
+            stepNumber: 1,
+            candidateId: candidate.candidateId,
+            candidateRevision: DIGEST,
+            candidateDigest: DIGEST,
+            budgetConsumed: 4,
+            groupId: 'generation-0001-grhs',
+            groupSize: 4,
+            groupCandidateIds: [
+              'g001-grhs-s001-l3', 'g001-grhs-s002-l3', 'g001-grhs-s003-l3', 'g001-grhs-s004-l3',
+            ],
+            decision: 'promoted',
+            ranking: { eligible: true, evaluation: candidate, baselineEvaluation: baseline },
+            group: {
+              groupId: 'generation-0001-grhs',
+              groupSize: 4,
+              groupCandidateIds: [
+                'g001-grhs-s001-l3', 'g001-grhs-s002-l3', 'g001-grhs-s003-l3', 'g001-grhs-s004-l3',
+              ],
+              winnerCandidateId: candidate.candidateId,
+              rollbackReason: null,
+              candidates: [
+                {
+                  id: 'g001-grhs-s001-l3', mutationPlanId: 'plan-001', regionIds: ['reasoning-profile'],
+                  valid: true, promotionEligible: true, utility: 0.1, relativeAdvantage: 0,
+                },
+                {
+                  id: 'g001-grhs-s002-l3', mutationPlanId: 'plan-002', regionIds: ['reasoning-profile'],
+                  valid: true, promotionEligible: false, utility: 0.1, relativeAdvantage: 0,
+                },
+                {
+                  id: 'g001-grhs-s003-l3', mutationPlanId: 'plan-003', regionIds: ['reasoning-profile'],
+                  valid: true, promotionEligible: false, utility: 0.1, relativeAdvantage: 0,
+                },
+                {
+                  id: 'g001-grhs-s004-l3', mutationPlanId: 'plan-004', regionIds: ['reasoning-profile'],
+                  valid: true, promotionEligible: false, utility: 0.1, relativeAdvantage: 0,
+                },
+              ],
+              proposalPriorBefore: { 'reasoning-profile': 1 },
+              proposalPriorAfter: { 'reasoning-profile': 1 },
+            },
+          })
+        },
+        async advanceOne({ stepId }) {
+          advanced = true
+          return {
+            apiVersion: 'harness-rsi/v1alpha1',
+            kind: 'BranchStepResult',
+            stepId,
+            budgetConsumed: 4,
+            projection: await this.inspect(),
+          }
+        },
+        async exportPeerEvidence() { return { sourcePath: join(root, 'evidence.jsonl'), entries: [] } },
+        async exportBest() { return { candidateId: candidate.candidateId, revision: DIGEST, digest: DIGEST, evaluation: candidate, changedFiles: [], diffStat: '', patch: '', workspace: root, implementationRoot: root } },
+      }
+    },
+  })
+  await orchestrator.initialize()
+  const state = await orchestrator.run()
+  assert.equal(state.status, 'CLOSED')
+  assert.equal(state.budget.consumed, 4)
+  assert.equal(state.branches[0].consumed, 4)
+  assert.equal(state.checkpoints.length, 2)
+  const branchCheckpoint = JSON.parse(await readFile(join(
+    campaignsRoot,
+    'grhs-population',
+    state.branchCheckpoints[0].path,
+  ), 'utf8'))
+  assert.equal(branchCheckpoint.latestAttempt.groupSize, 4)
 })
 
 test('Branch 基础设施异常会暂停 Population，不能伪装成 0 分后关闭', async () => {

@@ -344,3 +344,48 @@ test('Search Strategy State 拒绝会被 JSON 静默改写的值', async () => {
     await assert.rejects(driver.propose(await context(), invalid), /非有限数字|非 JSON 值/u)
   }
 })
+
+function grhsAdapter(configuration = {}) {
+  return validateSearchStrategyAdapter({
+    apiVersion: 'harness-rsi/v1alpha1',
+    kind: 'SearchStrategyAdapter',
+    metadata: { id: 'group-relative-harness' },
+    spec: {
+      protocol: 'builtin-v1',
+      implementation: 'group-relative-harness',
+      configuration: { groupSize: 4, minimumValidCandidates: 2, ...configuration },
+    },
+  })
+}
+
+test('GRHS 生成同父同 generation 的固定 sibling Group', async () => {
+  const driver = createSearchStrategyDriver({ adapter: grhsAdapter() })
+  const input = await context()
+  const proposed = await driver.proposeGroup(input)
+  assert.equal(proposed.plans.length, 4)
+  assert.equal(new Set(proposed.plans.map((plan) => plan.metadata.id)).size, 4)
+  for (const plan of proposed.plans) {
+    assert.equal(plan.spec.generation, input.generation)
+    assert.deepEqual(plan.spec.parentIds, [input.championId])
+  }
+})
+
+test('GRHS 组内 relative advantage 只在有效 sibling 中计算并选出最大 utility', async () => {
+  const driver = createSearchStrategyDriver({ adapter: grhsAdapter() })
+  const input = await context()
+  const proposed = await driver.proposeGroup(input)
+  const observed = await driver.observeGroup({
+    ...input,
+    candidates: proposed.plans.map((plan, index) => ({
+      id: `g001-grhs-s00${index + 1}-l1`,
+      regionIds: plan.spec.regionIds,
+      valid: index !== 3,
+      promotionEligible: index !== 3,
+      qualityDelta: index === 0 ? 0.1 : index === 1 ? 0.2 : index === 2 ? -0.1 : null,
+    })),
+  }, proposed.state)
+  assert.equal(observed.decision.validCandidates, 3)
+  assert.equal(observed.decision.promotedCandidateId, 'g001-grhs-s002-l1')
+  assert.equal(observed.decision.relativeUpdateApplied, true)
+  assert.equal(observed.state.pendingGroup, null)
+})

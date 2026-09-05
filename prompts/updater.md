@@ -4,6 +4,7 @@
 当前基线：`{{ baseline.revision }}`
 本轮变异层级：`{{ mutation.level }}`
 本轮获准搜索模块：`{{ mutation.regions }}`
+分组搜索上下文：{{ group.context }}
 可写路径：`{{ mutation.writablePaths }}`
 永久只读路径：`{{ mutation.readOnlyPaths }}`
 语义硬约束：

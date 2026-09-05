@@ -118,3 +118,49 @@ test('Cowork 恢复拒绝把符号链接当成 Controller 产物归档', async (
     /普通目录/u,
   )
 })
+
+test('GRHS 恢复保留已完成 sibling，只归档半成品并保留共享 Group 产物', async () => {
+  const runRoot = await mkdtemp(join(tmpdir(), 'cowork-recovery-grhs-partial-'))
+  const complete = join(runRoot, 'candidates', 'g001-grhs-s001-l2')
+  const partial = join(runRoot, 'candidates', 'g001-grhs-s002-l2')
+  const generation = join(runRoot, 'generations', 'generation-1')
+  const groupRoot = join(generation, 'grhs-group')
+  const shared = join(groupRoot, 'shared.checkpoint.json')
+  const results = join(runRoot, 'results', 'generation-1')
+  await Promise.all([
+    mkdir(join(complete, 'workspace'), { recursive: true }),
+    mkdir(partial, { recursive: true }),
+    mkdir(groupRoot, { recursive: true }),
+    mkdir(results, { recursive: true }),
+  ])
+  await writeFile(shared, '{"kind":"GrhsStageCheckpoint"}\n')
+  await writeFile(join(groupRoot, 'sibling-001.checkpoint.json'), '{"kind":"GrhsStageCheckpoint"}\n')
+  for (const name of ['manifest.json', 'mutation-diff.json', 'mutation-report.json']) {
+    await writeFile(join(complete, name), '{}\n')
+  }
+
+  const archived = await archiveIncompleteCoworkGeneration({
+    runRoot,
+    state: {
+      metadata: { status: 'running' },
+      spec: {
+        generationsCompleted: 0,
+        mutationLevel: 'l2',
+        searchStrategy: { id: 'group-relative-harness' },
+        candidates: [{ id: 'h0', digest: 'a'.repeat(64) }],
+      },
+    },
+    preserveTrialCheckpoints: true,
+    now: () => new Date('2026-08-27T00:00:00.000Z'),
+  })
+
+  assert.ok(archived)
+  assert.equal(await exists(complete), true)
+  assert.equal(await exists(partial), false)
+  assert.equal(await exists(generation), true)
+  assert.equal(await exists(shared), true)
+  assert.equal(await exists(results), true)
+  assert.deepEqual(archived.manifest.spec.archived, [
+    'candidates/g001-grhs-s002-l2',
+  ])
+})

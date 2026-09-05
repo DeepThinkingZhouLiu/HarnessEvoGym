@@ -1,0 +1,20 @@
+apiVersion: harness-rsi/v1alpha1
+kind: EvolutionRecipe
+spec:
+  population:
+    mode: single
+    concurrency: { n_branches: 1 }
+    budget: { total_budget: 4, beta: 0 }
+    peer_sharing: { enabled: false }
+    competition: { enabled: false }
+  moduleSearch:
+    authority: strategy-directed
+    riskCeiling: l3
+    strategy: group-relative-harness
+    group:
+      enabled: true
+      size: 4
+  checkpointing:
+    budgetMilestones: [0, 4]
+    branchGenerationMilestones: [1]
+    capture: { populationBest: true, branchIncumbents: true, latestAttempts: true }

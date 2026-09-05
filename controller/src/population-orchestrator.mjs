@@ -174,6 +174,7 @@ export function formatPopulationStatus(state) {
       baseBudget: branch.baseBudget,
       bonusBudget: branch.bonusBudget,
       consumed: branch.consumed,
+      completedSteps: branch.completedSteps ?? branch.consumed,
       remaining: branchRemaining(branch),
       incumbent: branch.incumbent === null ? null : structuredClone(branch.incumbent),
       lastDeltaScore: branch.lastDeltaScore ?? null,
@@ -237,9 +238,11 @@ export class PopulationOrchestrator {
 
   async #handle(branchId) {
     if (!this.handles.has(branchId)) {
+      const branchPlan = this.plan.branches.find((entry) => entry.branchId === branchId)
       this.handles.set(branchId, Promise.resolve(this.createBranch({
         branchId,
         branchesRoot: this.store.branchesRoot,
+        baseBudget: branchPlan?.baseBudget ?? null,
       })).then((handle) => {
         const driver = handle?.orchestrator
           ? createReasoningBranchDriver({
@@ -261,6 +264,8 @@ export class PopulationOrchestrator {
       baseBudget,
       bonusBudget: 0,
       consumed: 0,
+      // GRHS 下一个 Step 是 K 个 Candidate 的完整组，不能用 Candidate 数反推 Step 数。
+      completedSteps: 0,
       incumbent: null,
       lastDeltaScore: null,
       peerLogPath: `/opt/harness-rsi/peer-logs/${branchId}.jsonl`,
@@ -331,6 +336,7 @@ export class PopulationOrchestrator {
     const projections = baselineSettlements.map((settlement) => settlement.value)
     const branches = state.branches.map((branch, index) => ({
       ...branch,
+      completedSteps: projections[index].completedSteps,
       incumbent: publicIncumbent(projections[index]),
       status: branchStatus(branch, projections[index]),
     }))
@@ -676,14 +682,20 @@ export class PopulationOrchestrator {
       if (projection.branchId !== branch.branchId) {
         throw new ProtocolError(`Population 恢复得到了错误的 Branch：${projection.branchId}`)
       }
+      const expectedSteps = branch.completedSteps ?? branch.consumed
       const inFlight = state.inFlightWave?.participants.find(
         (participant) => participant.branchId === branch.branchId,
       )
-      const maximumCompleted = inFlight ? inFlight.beforeSteps + 1 : branch.consumed
-      if (projection.completedSteps < branch.consumed
-          || projection.completedSteps > maximumCompleted) {
+      if (inFlight && inFlight.beforeSteps !== expectedSteps) {
+        throw new ProtocolError(`${branch.branchId} in-flight Wave 起点与 Population Step 不一致`, [
+          `population=${expectedSteps}`,
+          `wave=${inFlight.beforeSteps}`,
+        ])
+      }
+      const maximumCompleted = inFlight ? inFlight.beforeSteps + 1 : expectedSteps
+      if (projection.completedSteps < expectedSteps || projection.completedSteps > maximumCompleted) {
         throw new ProtocolError(`${branch.branchId} 恢复后 Step 与 Population Budget 不一致`, [
-          `population=${branch.consumed}`,
+          `populationSteps=${expectedSteps}`,
           `branch=${projection.completedSteps}`,
         ])
       }
@@ -691,10 +703,16 @@ export class PopulationOrchestrator {
         if (branch.consumed !== 0 || projection.completedSteps !== 0 || state.inFlightWave) {
           throw new ProtocolError(`${branch.branchId} Baseline 恢复后出现非法进化 Step`)
         }
-      } else if (projection.completedSteps === branch.consumed) {
+      } else if (!inFlight && projection.completedSteps === expectedSteps) {
         assertRestoredIncumbent(branch, projection)
-      } else if (!inFlight || projection.lastStep === null) {
-        throw new ProtocolError(`${branch.branchId} 超前 Step 缺少对应的 in-flight 记录`)
+      } else if (inFlight && projection.completedSteps === inFlight.beforeSteps) {
+        assertRestoredIncumbent(branch, projection)
+      } else if (inFlight && projection.completedSteps === inFlight.beforeSteps + 1
+          && projection.lastStep !== null) {
+        // Branch 已完成当前 Wave，但 Population 还没有提交结算；#runChildRound
+        // 会复用这个稳定 Step，不会重复评测。
+      } else {
+        throw new ProtocolError(`${branch.branchId} 恢复后 Step 缺少合法的 in-flight 记录`)
       }
       return projection
     }))
@@ -713,6 +731,7 @@ export class PopulationOrchestrator {
       }
       const branches = resumed.branches.map((branch, index) => ({
         ...branch,
+        completedSteps: restoredProjections[index].completedSteps,
         incumbent: publicIncumbent(restoredProjections[index]),
         status: branchStatus(branch, restoredProjections[index]),
       }))
@@ -801,6 +820,13 @@ export class PopulationOrchestrator {
     const snapshots = await Promise.all(participants.map(async (branch) => {
       const driver = await this.#handle(branch.branchId)
       const projection = await driver.inspect()
+      const expectedSteps = branch.completedSteps ?? branch.consumed
+      if (projection.completedSteps !== expectedSteps) {
+        throw new ProtocolError(`${branch.branchId} 当前 Step 与 Population 冻结状态不一致`, [
+          `population=${expectedSteps}`,
+          `branch=${projection.completedSteps}`,
+        ])
+      }
       return {
         branchId: branch.branchId,
         beforeSteps: projection.completedSteps,
@@ -869,7 +895,7 @@ export class PopulationOrchestrator {
         apiVersion: 'harness-rsi/v1alpha1',
         kind: 'BranchStepResult',
         stepId: projection.lastStep.stepId,
-        budgetConsumed: 1,
+        budgetConsumed: projection.lastStep?.budgetConsumed ?? 1,
         projection,
       }
     }
@@ -912,6 +938,10 @@ export class PopulationOrchestrator {
       if (!stopped && stepResult.budgetConsumed === 0) {
         throw new ProtocolError(`${participant.branchId} 未产生本轮 Candidate`)
       }
+      const remainingBefore = state.branches.find((branch) => branch.branchId === participant.branchId)
+      if (stepResult.budgetConsumed > branchRemaining(remainingBefore)) {
+        throw new ProtocolError(`${participant.branchId} 本轮消耗 Budget 超过剩余额度`)
+      }
       const primary = candidate?.ranking?.evaluation?.primary
       const validationScore = primary
         ? (primary.direction === 'minimize' ? -primary.value : primary.value)
@@ -943,6 +973,7 @@ export class PopulationOrchestrator {
       const updated = {
         ...branch,
         consumed,
+        completedSteps: result.projection.completedSteps,
         incumbent: publicIncumbent(result.projection),
         lastDeltaScore: result.deltaScore,
       }

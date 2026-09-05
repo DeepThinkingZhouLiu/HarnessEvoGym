@@ -8,6 +8,7 @@ import {
   archiveFailedFinalAttempt,
   claimFinalAttempt,
   claimFinalRecoveryAttempt,
+  deduplicateGrhsCandidates,
 } from '../src/cowork-orchestrator.mjs'
 
 test('Final Attempt 使用原子文件领取，并发调用也只能成功一次', async () => {
@@ -40,6 +41,21 @@ test('Final Recovery Claim 保留原 Attempt 和前后 Controller Revision，且
   assert.equal(saved.spec.recoveredFromAttemptId, claim.recoveredFromAttemptId)
   assert.equal(saved.spec.evolutionControllerRevision, claim.evolutionControllerRevision)
   assert.equal(saved.spec.finalizerControllerRevision, claim.finalizerControllerRevision)
+})
+
+test('GRHS 组内相同 Digest 只保留第一个 sibling', () => {
+  const candidates = [
+    { id: 'sibling-1', digest: 'a'.repeat(64), valid: true, promotionEligible: true, qualityDelta: 0.2 },
+    { id: 'sibling-2', digest: 'a'.repeat(64), valid: true, promotionEligible: true, qualityDelta: 0.3 },
+    { id: 'sibling-3', digest: 'b'.repeat(64), valid: true, promotionEligible: true, qualityDelta: 0.1 },
+  ]
+  const result = deduplicateGrhsCandidates(candidates)
+  assert.equal(result[0].valid, true)
+  assert.equal(result[1].valid, false)
+  assert.equal(result[1].promotionEligible, false)
+  assert.equal(result[1].qualityDelta, null)
+  assert.equal(result[1].rejection.stage, 'group-deduplication')
+  assert.equal(result[2].valid, true)
 })
 
 function trialRoot(runRoot, candidateId, partition, attemptId) {

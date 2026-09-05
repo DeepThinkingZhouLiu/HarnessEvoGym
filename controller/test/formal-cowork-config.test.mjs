@@ -218,6 +218,8 @@ test('训练集内晋升主表五 Mode 合并原 18+8 为公共 26 题并保持 
     assert.equal(bundle.benchmark.partitions.final.instanceIds.length, 18)
     assert.equal(bundle.updater.id, 'codex-cli')
     assert.equal(bundle.target.id, 'msa-minimal-cowork-rsi')
+    assert.equal(bundle.experiment.models.solver.reasoningEffort, 'high')
+    assert.equal(bundle.experiment.models.updater.reasoningEffort, 'xhigh')
   }
 })
 

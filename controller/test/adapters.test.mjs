@@ -98,7 +98,7 @@ test('Codex Updater 固定官方 distribution、版本与内容摘要', async ()
   assert.equal(bundle.updater.protocol, 'codex-exec-v1')
   assert.equal(bundle.updater.source, null)
   assert.equal(bundle.updater.runtime.package, '@openai/codex')
-  assert.equal(bundle.updater.runtime.version, '0.149.1')
+  assert.equal(bundle.updater.runtime.version, '0.153.4')
   assert.equal(bundle.updater.runtime.providerId, 'zcloud')
   assert.equal(bundle.updater.runtime.distributionDigest.length, 64)
 

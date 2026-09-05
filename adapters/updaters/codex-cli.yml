@@ -17,8 +17,8 @@ spec:
     bwrapPath: /usr/bin/bwrap
     setprivPath: /usr/bin/setpriv
     package: "@openai/codex"
-    version: 0.149.1
-    distributionDigest: 995f8089b1d270bfa242e93325502be9331946b8fc0c7ec916a31bbe16c937a5
+    version: 0.153.4
+    distributionDigest: bdc3d5259b37555217ea371c8d3a60a4560a5fe7f08ab061ba60101baa7acf6e
     providerId: zcloud
     maximumModelRequests: 64
     secretEnvironment:

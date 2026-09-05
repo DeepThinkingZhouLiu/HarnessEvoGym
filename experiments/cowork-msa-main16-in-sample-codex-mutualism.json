@@ -15,7 +15,7 @@
     "policy": "evaluation/policies/cowork-officeval-in-sample-rsi.json",
     "models": {
       "solver": { "provider": "zcloud-openai", "model": "gpt-5.6-terra", "maxTokens": 8192, "reasoningEffort": "high" },
-      "updater": { "provider": "zcloud-openai", "model": "gpt-5.6-terra", "maxTokens": 8192, "reasoningEffort": "high" }
+      "updater": { "provider": "zcloud-openai", "model": "gpt-5.6-terra", "maxTokens": 8192, "reasoningEffort": "xhigh" }
     },
     "evolution": { "mutationLevel": "l3", "generations": 16, "trialsPerInstance": 1, "seeds": [20260827] }
   }

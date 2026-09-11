@@ -12,7 +12,7 @@
     "adapters": {
       "target": "adapters/targets/msa-minimal-cowork-rsi.yml",
       "updater": "adapters/updaters/claude-code-docker.yml",
-      "environment": "environments/cowork-bench-full.yml",
+      "environment": "environments/cowork-bench-agentbay.yml",
       "providers": {
         "solver": "adapters/providers/zcloud-openai.yml",
         "updater": "adapters/providers/zcloud-anthropic.yml"

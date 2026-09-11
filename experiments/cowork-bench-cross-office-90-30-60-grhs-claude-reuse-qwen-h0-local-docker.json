@@ -1,0 +1,30 @@
+{
+  "apiVersion": "harness-rsi/v1alpha1",
+  "kind": "EvolutionExperiment",
+  "metadata": { "id": "cowork-bench-cross-office-90-30-60-grhs-claude-reuse-qwen-h0-local-docker" },
+  "spec": {
+    "recipe": "recipes/population-grhs-formal/single-b4.yml",
+    "adapters": {
+      "target": "adapters/targets/msa-minimal-cowork-rsi.yml",
+      "updater": "adapters/updaters/claude-code-docker.yml",
+      "environment": "environments/cowork-bench-full.yml",
+      "providers": {
+        "solver": "adapters/providers/zcloud-openai.yml",
+        "updater": "adapters/providers/zcloud-anthropic.yml"
+      },
+      "strategy": "adapters/strategies/group-relative-harness.yml"
+    },
+    "benchmark": "benchmarks/cowork-bench-cross-office-90-30-60/benchmark.json",
+    "policy": "evaluation/policies/cowork-bench-full-rsi.json",
+    "models": {
+      "solver": { "provider": "zcloud-openai", "model": "qwen3.8-max", "maxTokens": 65536, "reasoningEffort": "high" },
+      "updater": { "provider": "zcloud-anthropic", "model": "claude-sonnet-5", "maxTokens": 65536, "reasoningEffort": "high" }
+    },
+    "evolution": {
+      "mutationLevel": "l3",
+      "generations": 1,
+      "trialsPerInstance": 1,
+      "seeds": [20260910]
+    }
+  }
+}

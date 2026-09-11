@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import {
   chmod,
@@ -8,7 +9,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
-import { hostname } from 'node:os'
+import { hostname, uptime } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 
 import { ProtocolError } from './protocol.mjs'
@@ -21,6 +22,17 @@ async function readText(path) {
 }
 
 async function processStartToken(pid) {
+  if (process.platform !== 'linux') {
+    const result = await new Promise((resolve, reject) => {
+      execFile('ps', ['-p', String(pid), '-o', 'lstart='], (error, stdout) => {
+        if (error) reject(error)
+        else resolve(stdout)
+      })
+    })
+    const token = result.trim()
+    if (!token) throw new Error('ps lacks start time')
+    return token
+  }
   const text = await readText(`/proc/${pid}/stat`)
   const close = text.lastIndexOf(')')
   if (close < 0) throw new Error('invalid proc stat')
@@ -33,7 +45,9 @@ async function processStartToken(pid) {
 async function currentIdentity() {
   return {
     host: hostname(),
-    bootId: await readText('/proc/sys/kernel/random/boot_id'),
+    bootId: process.platform === 'linux'
+      ? await readText('/proc/sys/kernel/random/boot_id')
+      : String(Math.floor(Date.now() / 1000 - uptime())),
     startToken: await processStartToken(process.pid),
   }
 }

@@ -5,7 +5,7 @@ checkpoint，在另一台机器上继续同一个 Final attempt，不能创建�
 
 ## 运行身份与当前状态
 
-记录时间：2026-09-13 17:40 CST。
+迁移快照停止时间：2026-09-13 17:46 CST。
 
 | 项目 | 值 |
 | --- | --- |
@@ -13,7 +13,7 @@ checkpoint，在另一台机器上继续同一个 Final attempt，不能创建�
 | 当前 champion | `h0` |
 | Final attempt ID | `8f7542e1-1553-47cb-9d42-a69f55e1fdaa` |
 | Final startedAt | `2026-09-13T06:18:07.457Z` |
-| Final checkpoint | 记录时 `42/60`，源机器仍在继续运行 |
+| Final checkpoint | `44/60`，源机器已经停止 |
 | Final 状态 | `finalizing` |
 | 冻结 Controller revision | `0c0b9f10cfac1839de3408556fd8d5705c376822` |
 | Benchmark revision | `597038105268fa86ddb1c129c9c58db5f80a3a68` |
@@ -93,6 +93,19 @@ shasum -a 256 "$HANDOFF_DEST" > "$HANDOFF_DEST.sha256"
 ```
 
 在开始传输后不要让源机器继续同一个 Final，否则源、目标两份 checkpoint 会分叉。
+
+本次指定服务器使用以下路径。`/home/panningxin` 所在根分区空间不足，因此实际数据保存
+在 `/data`，并在工作目录下建立软链接：
+
+```text
+/data/panningxin/cowork-grhs-final-handoff-20260913
+/home/panningxin/cowork-grhs-final-handoff-20260913
+  -> /data/panningxin/cowork-grhs-final-handoff-20260913
+```
+
+迁移归档、SHA-256 文件和本文档都应位于该目录。解压时仍应恢复为
+`/tmp/HarnessEvoGym-run.Mj9CiN` 和
+`/tmp/cowork-evolution-benchmark-597038105`。
 
 ## 在目标机器恢复
 

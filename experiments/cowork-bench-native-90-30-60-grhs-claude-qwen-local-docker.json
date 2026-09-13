@@ -17,7 +17,7 @@
     "benchmark": "benchmarks/cowork-bench-native-90-30-60/benchmark.json",
     "policy": "evaluation/policies/cowork-bench-full-rsi.json",
     "models": {
-      "solver": { "provider": "zcloud-openai", "model": "qwen3.8-max", "maxTokens": 65536, "reasoningEffort": "high" },
+      "solver": { "provider": "zcloud-openai", "model": "gpt-5.6-terra", "maxTokens": 65536, "reasoningEffort": "high" },
       "updater": { "provider": "zcloud-anthropic", "model": "claude-sonnet-5", "maxTokens": 65536, "reasoningEffort": "high" }
     },
     "evolution": {

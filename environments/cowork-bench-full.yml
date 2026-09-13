@@ -16,7 +16,7 @@ spec:
     workspacePath: /workspace
     environmentAssets: environments/omegause-officeval-assets
     # 2 个并发约需 16 GiB 容器内存额度；确认宿主资源后最多可调到 8。
-    maximumConcurrentTrials: 2
+    maximumConcurrentTrials: 8
     maximumSolverAttempts: 5
     workspaceLimits:
       maximumFiles: 10000
@@ -31,7 +31,7 @@ spec:
   docker:
     binary: docker
     network: bridge
-    runAsCurrentUser: true
+    runAsCurrentUser: false
     resources:
       cpus: 4
       memory: 8g

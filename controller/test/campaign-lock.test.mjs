@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { tmpdir, uptime } from 'node:os'
 import { join } from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
 import test from 'node:test'
@@ -33,12 +33,14 @@ test('campaign lock reclaims a dead same-host owner', async () => {
   const lock = join(root, '.locks', 'campaign-2.lock')
   await mkdir(lock, { recursive: true })
   const host = (await import('node:os')).hostname()
-  const bootId = (await import('node:fs/promises')).readFile('/proc/sys/kernel/random/boot_id', 'utf8')
+  const bootId = process.platform === 'linux'
+    ? (await (await import('node:fs/promises')).readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim()
+    : String(Math.floor(Date.now() / 1000 - uptime()))
   await writeFile(join(lock, 'owner.json'), JSON.stringify({
     nonce: 'stale',
     pid: 2_147_483_647,
     host,
-    bootId: (await bootId).trim(),
+    bootId,
     startToken: '0',
   }))
   const release = await acquireCampaignLock({

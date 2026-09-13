@@ -79,16 +79,15 @@ docker ps --format '{{.Names}}' | \
   grep '^84fd7d69cda0-h0-.*-solver$'
 ```
 
-随后从文件系统根目录打包，以保留 `private/tmp/...` 路径。`HANDOFF_DEST` 应指向空间
-充足的外接盘或传输目录：
+随后从 `/tmp` 打包两个完整目录。`HANDOFF_DEST` 应指向空间充足的外接盘或传输目录：
 
 ```bash
 export HANDOFF_DEST=/absolute/path/to/cowork-grhs-final-handoff-20260913.tar.gz
 
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-tar -C / -czf "$HANDOFF_DEST" \
-  private/tmp/HarnessEvoGym-run.Mj9CiN \
-  private/tmp/cowork-evolution-benchmark-597038105
+tar -C /tmp -czf "$HANDOFF_DEST" \
+  HarnessEvoGym-run.Mj9CiN \
+  cowork-evolution-benchmark-597038105
 shasum -a 256 "$HANDOFF_DEST" > "$HANDOFF_DEST.sha256"
 ```
 
@@ -107,14 +106,21 @@ shasum -a 256 "$HANDOFF_DEST" > "$HANDOFF_DEST.sha256"
 `/tmp/HarnessEvoGym-run.Mj9CiN` 和
 `/tmp/cowork-evolution-benchmark-597038105`。
 
+2026-09-13 实际上传的归档约 2.4 GiB，SHA-256 为：
+
+```text
+90b04d36908d8f947716a3e94ac5cdcf4e3be2e1db9c75dfb808d576a39fe9e8
+```
+
 ## 在目标机器恢复
 
 目标机器需要 macOS、Node.js 24、Docker Desktop 和 tmux。先验证压缩包，再恢复到文件
 系统根目录：
 
 ```bash
+cd /home/panningxin/cowork-grhs-final-handoff-20260913
 shasum -a 256 -c cowork-grhs-final-handoff-20260913.tar.gz.sha256
-tar -C / -xzf cowork-grhs-final-handoff-20260913.tar.gz
+tar -C /tmp -xzf cowork-grhs-final-handoff-20260913.tar.gz
 
 git -C /tmp/HarnessEvoGym-run.Mj9CiN rev-parse HEAD
 git -C /tmp/cowork-evolution-benchmark-597038105 rev-parse HEAD
